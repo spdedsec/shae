@@ -32,6 +32,7 @@ pub enum Token {
     False,
     Null,
     Break,
+    Use,
     Continue,
 
     // Identifiers & Literals
@@ -97,6 +98,7 @@ impl fmt::Display for Token {
             Token::False => write!(f, "'false'"),
             Token::Null => write!(f, "'null'"),
             Token::Break => write!(f, "'break'"),
+            Token::Use => write!(f, "'use'"),
             Token::Continue => write!(f, "'continue'"),
             Token::Ident(s) => write!(f, "identifier '{}'", s),
             Token::StringLit(s) => write!(f, "string \"{}\"", s),

@@ -102,6 +102,10 @@ pub enum Expr {
     Array(Vec<Expr>),
     Map(Vec<(String, Expr)>),
     Interpolated(Vec<InterpPart>),
+    Use {
+        path: Box<Expr>,
+        span: Span,
+    },
     Binary {
         left: Box<Expr>,
         op: BinaryOp,
@@ -161,6 +165,7 @@ impl Expr {
 
             Expr::StructInit { span, .. } => Some(*span),
             Expr::Match { span, .. } => Some(*span),
+            Expr::Use { span, .. } => Some(*span),
 
             // We could extract spans from Array, Map, Interpolated if we wanted,
             // but for runtime errors, typical sources are variables, properties, function calls, and operators.

@@ -56,4 +56,13 @@ impl Environment {
         }
         names
     }
+
+    pub fn export_map(&self) -> indexmap::IndexMap<String, Value> {
+        let mut map = indexmap::IndexMap::new();
+        for (k, v) in &self.values {
+            map.insert(k.clone(), v.clone());
+        }
+        map
+    }
 }
+
