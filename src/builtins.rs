@@ -42,6 +42,9 @@ pub fn register(env: &mut Environment) {
         ("json_parse", builtin_json_parse),
         ("json_stringify", builtin_json_stringify),
         ("serve", builtin_serve),
+        ("read", builtin_read),
+        ("write", builtin_write),
+        ("fetch", builtin_fetch),
     ];
     for (name, func) in builtins {
         env.define(
@@ -385,4 +388,45 @@ fn builtin_serve(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
         }
     }
     Ok(Value::Null)
+}
+
+fn builtin_read(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("read", 1, &args, span)?;
+    if let Value::String(path) = &args[0] {
+        match std::fs::read_to_string(path) {
+            Ok(content) => Ok(Value::String(content)),
+            Err(e) => Err(RuntimeError::new(format!("Failed to read file '{}': {}", path, e)).at(span)),
+        }
+    } else {
+        Err(RuntimeError::new("read expects a string path".into()).at(span))
+    }
+}
+
+fn builtin_write(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("write", 2, &args, span)?;
+    if let (Value::String(path), Value::String(content)) = (&args[0], &args[1]) {
+        match std::fs::write(path, content) {
+            Ok(_) => Ok(Value::Null),
+            Err(e) => Err(RuntimeError::new(format!("Failed to write to file '{}': {}", path, e)).at(span)),
+        }
+    } else {
+        Err(RuntimeError::new("write expects (string path, string content)".into()).at(span))
+    }
+}
+
+fn builtin_fetch(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("fetch", 1, &args, span)?;
+    if let Value::String(url) = &args[0] {
+        match reqwest::blocking::get(url) {
+            Ok(response) => {
+                match response.text() {
+                    Ok(text) => Ok(Value::String(text)),
+                    Err(e) => Err(RuntimeError::new(format!("Failed to read response from '{}': {}", url, e)).at(span)),
+                }
+            }
+            Err(e) => Err(RuntimeError::new(format!("Failed to fetch '{}': {}", url, e)).at(span)),
+        }
+    } else {
+        Err(RuntimeError::new("fetch expects a string url".into()).at(span))
+    }
 }
