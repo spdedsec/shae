@@ -1,4 +1,0 @@
-fn add(a, b) {
-    return a + b
-}
-let PI = 3.1415

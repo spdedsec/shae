@@ -1,3 +1,0 @@
-let math = use "scratch/math.shae"
-print(math.add(10, 20))
-print(math.PI)
