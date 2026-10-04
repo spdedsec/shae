@@ -28,6 +28,10 @@ Builtin {
         name: String,
         func: BuiltinFn,
     },
+    BoundMethod {
+        object: Box<Value>,
+        method: String,
+    },
     StructDef {
         name: String,
         fields: Vec<String>,
@@ -63,6 +67,7 @@ impl Value {
             Value::Map(_) => "map",
             Value::Function { .. } => "function",
 Value::Builtin { .. } => "builtin_function",
+            Value::BoundMethod { .. } => "bound_method",
             Value::StructDef { .. } => "struct_def",
             Value::StructInstance { name: _, .. } => "struct_instance",
             Value::EnumDef { .. } => "enum_def",
@@ -79,7 +84,7 @@ Value::Builtin { .. } => "builtin_function",
             Value::String(s) => !s.is_empty(),
             Value::Array(a) => !a.borrow().is_empty(),
             Value::Map(m) => !m.borrow().is_empty(),
-Value::Function { .. } | Value::Builtin { .. } => true,
+Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. } => true,
             Value::StructDef { .. } | Value::StructInstance { .. } => true,
             Value::EnumDef { .. } | Value::EnumConstructor { .. } | Value::EnumInstance { .. } => true,
         }
@@ -117,6 +122,7 @@ Value::Function { .. } | Value::Builtin { .. } => true,
                 }
             }
 Value::Builtin { name, .. } => format!("<builtin {}>", name),
+            Value::BoundMethod { method, .. } => format!("<bound method {}>", method),
             Value::StructDef { name, .. } => format!("<struct {}>", name),
             Value::StructInstance { name, fields } => {
                 let map = fields.borrow();
@@ -183,6 +189,7 @@ Value::Builtin { name, .. } => format!("<builtin {}>", name),
                 JsonValue::String(format!("<fn {}>", name.as_deref().unwrap_or("anon")))
             }
 Value::Builtin { name, .. } => JsonValue::String(format!("<builtin {}>", name)),
+            Value::BoundMethod { method, .. } => JsonValue::String(format!("<bound method {}>", method)),
             Value::StructDef { name, .. } => JsonValue::String(format!("<struct {}>", name)),
             Value::StructInstance { name, fields } => {
                 let mut map = serde_json::Map::new();
