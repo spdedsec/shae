@@ -1,42 +1,79 @@
 pub mod ast;
+pub mod builtins;
 pub mod env;
 pub mod eval;
 pub mod lexer;
 pub mod parser;
+pub mod suggest;
 pub mod token;
 pub mod value;
 
-use eval::{Evaluator, RuntimeError};
-use lexer::LexerError;
-use parser::ParserError;
 use thiserror::Error;
-use value::Value;
 
-#[derive(Error, Debug, PartialEq)]
+#[derive(Error, Debug)]
 pub enum ShaeError {
-    #[error("{0}")]
-    Lexer(#[from] LexerError),
+    #[error(transparent)]
+    Lexer(#[from] lexer::LexerError),
 
-    #[error("{0}")]
-    Parser(#[from] ParserError),
+    #[error(transparent)]
+    Parser(#[from] parser::ParserError),
 
-    #[error("{0}")]
-    Runtime(#[from] RuntimeError),
+    #[error(transparent)]
+    Runtime(#[from] eval::RuntimeError),
 }
 
-/// Executes a Shae script and returns the result of execution.
-pub fn run(source: &str) -> Result<Value, ShaeError> {
-    let tokens = lexer::tokenize(source)?;
-    let program = parser::parse(tokens)?;
-    let mut evaluator = Evaluator::new();
-    let result = evaluator.eval_program(&program)?;
-    Ok(result)
+pub fn render_error(err: &ShaeError, source: &str) -> String {
+    let (line, col, msg) = match err {
+        ShaeError::Lexer(lexer::LexerError::UnexpectedChar {
+            line, col, hint, ..
+        }) => (*line, *col, format!("{} {}", err, hint)),
+        ShaeError::Lexer(e) => {
+            // we could match to get line/col for other lexer errors
+            let msg = e.to_string();
+            return msg;
+        }
+        ShaeError::Parser(parser::ParserError::Advice { line, col, .. }) => {
+            (*line, *col, err.to_string())
+        }
+        ShaeError::Parser(parser::ParserError::UnexpectedToken { line, col, .. }) => {
+            (*line, *col, err.to_string())
+        }
+        ShaeError::Parser(parser::ParserError::Lexer(e)) => {
+            return render_error(&ShaeError::Lexer(e.clone()), source);
+        }
+        ShaeError::Runtime(e) => {
+            if let Some(span) = e.span {
+                (span.line, span.col, e.to_string())
+            } else {
+                return e.to_string();
+            }
+        }
+    };
+
+    let mut lines = source.lines();
+    if let Some(source_line) = lines.nth(line.saturating_sub(1)) {
+        let caret = " ".repeat(col.saturating_sub(1)) + "^";
+        format!(
+            "{}\n\n  {} | {}\n  {} | {}",
+            msg,
+            line,
+            source_line,
+            " ".repeat(line.to_string().len()),
+            caret
+        )
+    } else {
+        msg
+    }
 }
 
-/// Runs a script against an existing persistent evaluator (useful for REPL).
-pub fn run_in_evaluator(source: &str, evaluator: &mut Evaluator) -> Result<Value, ShaeError> {
+pub fn run(source: &str) -> Result<value::Value, ShaeError> {
+    let mut ev = eval::Evaluator::new();
+    run_in_evaluator(source, &mut ev)
+}
+
+pub fn run_in_evaluator(source: &str, ev: &mut eval::Evaluator) -> Result<value::Value, ShaeError> {
     let tokens = lexer::tokenize(source)?;
     let program = parser::parse(tokens)?;
-    let result = evaluator.eval_program(&program)?;
-    Ok(result)
+    let val = ev.eval_program(&program)?;
+    Ok(val)
 }

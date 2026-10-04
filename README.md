@@ -92,7 +92,7 @@ $ shae
   |____/|_| |_|\__,_|\___| 
   The programming language that respects your sanity.
 
-Shae v0.1.0 Interactive REPL
+Shae v0.2.0 Interactive REPL
 Type 'exit' or press Ctrl+D to quit.
 
 shae> let double = fn(x) { x * 2 }

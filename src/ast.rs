@@ -1,10 +1,24 @@
+use std::rc::Rc;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub line: usize,
+    pub col: usize,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub statements: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Stmt {
+pub struct Stmt {
+    pub kind: StmtKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StmtKind {
     Let {
         name: String,
         init: Expr,
@@ -15,8 +29,8 @@ pub enum Stmt {
     },
     FnDef {
         name: String,
-        params: Vec<String>,
-        body: Vec<Stmt>,
+        params: Rc<Vec<String>>,
+        body: Rc<Vec<Stmt>>,
     },
     If {
         condition: Expr,
@@ -39,37 +53,70 @@ pub enum Stmt {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum InterpPart {
+    Text(String),
+    Expr(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Literal(Literal),
-    Variable(String),
+    Variable {
+        name: String,
+        span: Span,
+    },
     Array(Vec<Expr>),
     Map(Vec<(String, Expr)>),
+    Interpolated(Vec<InterpPart>),
     Binary {
         left: Box<Expr>,
         op: BinaryOp,
         right: Box<Expr>,
+        span: Span,
     },
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,
+        span: Span,
     },
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
+        span: Span,
     },
     Get {
         target: Box<Expr>,
         property: String,
-        safe: bool, // true for ?.
+        safe: bool,
+        span: Span,
     },
     Index {
         target: Box<Expr>,
         index: Box<Expr>,
+        span: Span,
     },
     Lambda {
-        params: Vec<String>,
-        body: Vec<Stmt>,
+        params: Rc<Vec<String>>,
+        body: Rc<Vec<Stmt>>,
+        span: Span,
     },
+}
+
+impl Expr {
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            Expr::Variable { span, .. } => Some(*span),
+            Expr::Binary { span, .. } => Some(*span),
+            Expr::Unary { span, .. } => Some(*span),
+            Expr::Call { span, .. } => Some(*span),
+            Expr::Get { span, .. } => Some(*span),
+            Expr::Index { span, .. } => Some(*span),
+            Expr::Lambda { span, .. } => Some(*span),
+            // We could extract spans from Array, Map, Interpolated if we wanted,
+            // but for runtime errors, typical sources are variables, properties, function calls, and operators.
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,24 +129,24 @@ pub enum Literal {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
-    Add,      // +
-    Sub,      // -
-    Mul,      // *
-    Div,      // /
-    Mod,      // %
-    Eq,       // ==
-    NotEq,    // !=
-    Lt,       // <
-    LtEq,     // <=
-    Gt,       // >
-    GtEq,     // >=
-    And,      // &&
-    Or,       // ||
-    Coalesce, // ??
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    NotEq,
+    Lt,
+    LtEq,
+    Gt,
+    GtEq,
+    And,
+    Or,
+    Coalesce,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
-    Not, // !
-    Neg, // -
+    Not,
+    Neg,
 }
