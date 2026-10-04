@@ -205,8 +205,9 @@ impl Lexer {
                             col: start_col,
                         });
                     } else {
-                        tokens.push(SpannedToken {
-                            token: Token::Bang,
+                        return Err(LexerError::UnexpectedChar {
+                            ch: '!',
+                            hint: " Did you mean 'not' or '!='?".to_string(),
                             line: self.line,
                             col: start_col,
                         });
@@ -247,26 +248,6 @@ impl Lexer {
                             col: start_col,
                         });
                     }
-                }
-                '&' if self.peek(1) == Some('&') => {
-                    let start_col = self.col;
-                    self.advance();
-                    self.advance();
-                    tokens.push(SpannedToken {
-                        token: Token::And,
-                        line: self.line,
-                        col: start_col,
-                    });
-                }
-                '|' if self.peek(1) == Some('|') => {
-                    let start_col = self.col;
-                    self.advance();
-                    self.advance();
-                    tokens.push(SpannedToken {
-                        token: Token::Or,
-                        line: self.line,
-                        col: start_col,
-                    });
                 }
                 '?' => {
                     let start_col = self.col;
@@ -567,6 +548,9 @@ impl Lexer {
             "null" => Token::Null,
             "break" => Token::Break,
             "continue" => Token::Continue,
+            "and" => Token::And,
+            "or" => Token::Or,
+            "not" => Token::Not,
             _ => Token::Ident(s),
         };
 

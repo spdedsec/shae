@@ -730,10 +730,10 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Expr, ParserError> {
-        if self.match_token(Token::Bang) || self.match_token(Token::Minus) {
+        if self.match_token(Token::Not) || self.match_token(Token::Minus) {
             let op_tok = self.tokens[self.cursor - 1].clone();
             let op = match op_tok.token {
-                Token::Bang => UnaryOp::Not,
+                Token::Not => UnaryOp::Not,
                 Token::Minus => UnaryOp::Neg,
                 _ => unreachable!(),
             };

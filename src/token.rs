@@ -65,7 +65,7 @@ pub enum Token {
     GtEq,        // >=
     And,         // &&
     Or,          // ||
-    Bang,        // !
+    Not,        // !
 
     Eof,
 }
@@ -117,9 +117,9 @@ impl fmt::Display for Token {
             Token::LtEq => write!(f, "'<='"),
             Token::Gt => write!(f, "'>'"),
             Token::GtEq => write!(f, "'>='"),
-            Token::And => write!(f, "'&&'"),
-            Token::Or => write!(f, "'||'"),
-            Token::Bang => write!(f, "'!'"),
+            Token::And => write!(f, "'and'"),
+            Token::Or => write!(f, "'or'"),
+            Token::Not => write!(f, "'not'"),
             Token::Eof => write!(f, "end of file"),
         }
     }
