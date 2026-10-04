@@ -1034,6 +1034,14 @@ fn parse_struct_def(&mut self, _line: usize, _col: usize) -> Result<Stmt, Parser
             Token::False => Ok(Expr::Literal(Literal::Bool(false))),
             Token::True => Ok(Expr::Literal(Literal::Bool(true))),
             Token::Null => Ok(Expr::Literal(Literal::Null)),
+Token::Use => {
+                let path = self.parse_expression()?;
+                Ok(Expr::Use {
+                    path: Box::new(path),
+                    span,
+                })
+            }
+
             Token::NumberLit(n) => Ok(Expr::Literal(Literal::Number(n))),
             Token::StringLit(s) => Ok(Expr::Literal(Literal::String(s))),
             Token::Ident(name) => Ok(Expr::Variable { name, span }),
