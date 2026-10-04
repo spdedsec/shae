@@ -10,6 +10,7 @@ pub struct RuntimeError {
     pub message: String,
     pub hint: Option<String>,
     pub span: Option<Span>,
+    pub stack: Vec<(String, crate::ast::Span)>,
 }
 
 impl RuntimeError {
@@ -18,6 +19,7 @@ impl RuntimeError {
             message,
             hint: None,
             span: None,
+            stack: Vec::new(),
         }
     }
 
@@ -522,6 +524,24 @@ Expr::Use { path, span } => {
                         }
                     }
                     return self.eval_expr(right, env);
+                }
+                
+                if *op == BinaryOp::Pipe {
+                    let left_val = self.eval_expr(left, env)?;
+                    match &**right {
+                        Expr::Call { callee, args, span: call_span } => {
+                            let callee_val = self.eval_expr(callee, env)?;
+                            let mut evaled_args = vec![left_val];
+                            for arg in args {
+                                evaled_args.push(self.eval_expr(arg, env)?);
+                            }
+                            return self.call_value(&callee_val, evaled_args, *call_span);
+                        }
+                        _ => {
+                            let func_val = self.eval_expr(right, env)?;
+                            return self.call_value(&func_val, vec![left_val], *span);
+                        }
+                    }
                 }
 
                 let left_val = self.eval_expr(left, env)?;
@@ -1142,8 +1162,22 @@ Expr::Use { path, span } => {
             }
 
             other => Err(RuntimeError::new(format!("Cannot call {}", other.type_name())).at(span)),
-        };        self.depth -= 1;
-        res
+        };
+        self.depth -= 1;
+        match res {
+            Ok(v) => Ok(v),
+            Err(mut e) => {
+                let func_name = match callee {
+                    Value::Function { name, .. } => name.clone().unwrap_or_else(|| "anonymous".to_string()),
+                    Value::Builtin { name, .. } => name.clone(),
+                    Value::BoundMethod { method, .. } => method.clone(),
+                    Value::EnumConstructor { variant_name, .. } => variant_name.clone(),
+                    _ => "unknown".to_string(),
+                };
+                e.stack.push((func_name, span));
+                Err(e)
+            }
+        }
     }
 
 fn match_pattern(&self, pattern: &crate::ast::Pattern, val: &Value) -> Option<Vec<(String, Value)>> {

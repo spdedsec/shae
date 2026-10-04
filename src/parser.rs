@@ -696,7 +696,25 @@ fn parse_struct_def(&mut self, _line: usize, _col: usize) -> Result<Stmt, Parser
     }
 
     fn parse_expression(&mut self) -> Result<Expr, ParserError> {
-        self.parse_logical_or()
+        self.parse_pipe()
+    }
+
+    fn parse_pipe(&mut self) -> Result<Expr, ParserError> {
+        let mut expr = self.parse_logical_or()?;
+        while self.match_token(Token::Pipe) {
+            let op_tok = self.tokens[self.cursor - 1].clone();
+            let right = self.parse_logical_or()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op: BinaryOp::Pipe,
+                right: Box::new(right),
+                span: Span {
+                    line: op_tok.line,
+                    col: op_tok.col,
+                },
+            };
+        }
+        Ok(expr)
     }
 
     fn parse_logical_or(&mut self) -> Result<Expr, ParserError> {

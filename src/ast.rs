@@ -197,6 +197,7 @@ pub enum BinaryOp {
     GtEq,
     And,
     Or,
+    Pipe,
     Coalesce,
 }
 

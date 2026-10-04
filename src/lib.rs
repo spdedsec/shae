@@ -43,7 +43,14 @@ pub fn render_error(err: &ShaeError, source: &str) -> String {
         }
         ShaeError::Runtime(e) => {
             if let Some(span) = e.span {
-                (span.line, span.col, e.to_string())
+                let mut out = e.to_string();
+                if !e.stack.is_empty() {
+                    out.push_str("\n\nStack Trace:");
+                    for (func, sp) in e.stack.iter().rev() {
+                        out.push_str(&format!("\n  at {} (line {}:{})", func, sp.line, sp.col));
+                    }
+                }
+                (span.line, span.col, out)
             } else {
                 return e.to_string();
             }
