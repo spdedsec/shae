@@ -16,7 +16,7 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 - String & array methods (`.trim()`, `.map()`, `.filter()`, `.reduce()`, `.sort()`, `.sum()`).
 - File I/O (`read()`, `write()`) and network requests (`fetch(url)`).
 - Error handling mechanisms (e.g., `try` block or `Result` types).
-- Module system (`use "file.shae"`).
+- [x] Module system (`use "file.shae"`).
 - Multi-line REPL.
 - Built-in `approx(a, b)` for approximate float comparisons.
 - `shae check` (linter) and `shae fmt` (formatter).
