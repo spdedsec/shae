@@ -18,6 +18,12 @@ pub struct Stmt {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct EnumVariant {
+    pub name: String,
+    pub fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum StmtKind {
     Let {
         name: String,
@@ -50,12 +56,40 @@ pub enum StmtKind {
     Break,
     Continue,
     Expr(Expr),
+
+    StructDef {
+        name: String,
+        fields: Vec<String>,
+    },
+    EnumDef {
+        name: String,
+        variants: Vec<EnumVariant>,
+    },
+
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InterpPart {
     Text(String),
     Expr(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Box<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    Wildcard,
+    Variable(String),
+    Literal(Literal),
+    Enum {
+        enum_name: String,
+        variant_name: String,
+        fields: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -95,6 +129,18 @@ pub enum Expr {
         index: Box<Expr>,
         span: Span,
     },
+
+    StructInit {
+        name: String,
+        fields: Vec<(String, Expr)>,
+        span: Span,
+    },
+    Match {
+        target: Box<Expr>,
+        arms: Vec<MatchArm>,
+        span: Span,
+    },
+
     Lambda {
         params: Rc<Vec<String>>,
         body: Rc<Vec<Stmt>>,
@@ -112,6 +158,10 @@ impl Expr {
             Expr::Get { span, .. } => Some(*span),
             Expr::Index { span, .. } => Some(*span),
             Expr::Lambda { span, .. } => Some(*span),
+
+            Expr::StructInit { span, .. } => Some(*span),
+            Expr::Match { span, .. } => Some(*span),
+
             // We could extract spans from Array, Map, Interpolated if we wanted,
             // but for runtime errors, typical sources are variables, properties, function calls, and operators.
             _ => None,

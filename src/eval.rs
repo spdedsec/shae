@@ -1,6 +1,6 @@
 use crate::ast::{BinaryOp, Expr, InterpPart, Literal, Program, Span, Stmt, StmtKind, UnaryOp};
 use crate::env::Environment;
-use crate::value::{BuiltinFn, IndexError, Value, resolve_index};
+use crate::value::{IndexError, Value, resolve_index};
 use std::cell::RefCell;
 use std::rc::Rc;
 use thiserror::Error;
@@ -116,6 +116,24 @@ impl Evaluator {
         env: &Rc<RefCell<Environment>>,
     ) -> Result<Signal, RuntimeError> {
         match &stmt.kind {
+StmtKind::StructDef { name, fields } => {
+                env.borrow_mut().define(name.clone(), Value::StructDef {
+                    name: name.clone(),
+                    fields: fields.clone(),
+                });
+                Ok(Signal::None)
+            }
+            StmtKind::EnumDef { name, variants } => {
+                let mut var_map = indexmap::IndexMap::new();
+                for v in variants {
+                    var_map.insert(v.name.clone(), v.fields.clone());
+                }
+                env.borrow_mut().define(name.clone(), Value::EnumDef {
+                    name: name.clone(),
+                    variants: std::rc::Rc::new(var_map),
+                });
+                Ok(Signal::None)
+            }
             StmtKind::Expr(expr) => {
                 let val = self.eval_expr(expr, env).map_err(|e| e.or_at(stmt.span))?;
                 Ok(Signal::Value(val))
@@ -281,6 +299,13 @@ impl Evaluator {
                 if let Value::Map(m) = base_val {
                     m.borrow_mut().insert(property.clone(), value);
                     Ok(())
+                } else if let Value::StructInstance { name, fields } = base_val {
+                    if fields.borrow().contains_key(property) {
+                        fields.borrow_mut().insert(property.clone(), value);
+                        Ok(())
+                    } else {
+                        Err(RuntimeError::new(format!("Struct '{}' has no field '{}'", name, property)).at(*span))
+                    }
                 } else {
                     Err(RuntimeError::new(format!(
                         "Cannot set property '{}' on {}",
@@ -347,7 +372,7 @@ impl Evaluator {
         expr: &Expr,
         env: &Rc<RefCell<Environment>>,
     ) -> Result<Value, RuntimeError> {
-        let span = expr.span();
+        let _span = expr.span();
         match expr {
             Expr::Literal(Literal::Null) => Ok(Value::Null),
             Expr::Literal(Literal::Bool(b)) => Ok(Value::Bool(*b)),
@@ -386,6 +411,48 @@ impl Evaluator {
                     m.insert(k.clone(), val);
                 }
                 Ok(Value::Map(Rc::new(RefCell::new(m))))
+            }
+Expr::StructInit { name, fields, span } => {
+                let def = env.borrow().get(name);
+                if let Some(Value::StructDef { fields: def_fields, .. }) = def {
+                    if fields.len() != def_fields.len() {
+                        return Err(RuntimeError::new(format!("Struct '{}' expects {} fields, but got {}.", name, def_fields.len(), fields.len())).at(*span));
+                    }
+                    
+                    let mut instance_fields = indexmap::IndexMap::new();
+                    let mut provided = std::collections::HashSet::new();
+                    for (f_name, f_expr) in fields {
+                        if !def_fields.contains(f_name) {
+                            return Err(RuntimeError::new(format!("Struct '{}' has no field '{}'.", name, f_name)).at(*span));
+                        }
+                        provided.insert(f_name.clone());
+                        let val = self.eval_expr(f_expr, env)?;
+                        instance_fields.insert(f_name.clone(), val);
+                    }
+                    if provided.len() != def_fields.len() {
+                        return Err(RuntimeError::new(format!("Struct '{}' initialization is missing fields.", name)).at(*span));
+                    }
+                    
+                    Ok(Value::StructInstance {
+                        name: name.clone(),
+                        fields: std::rc::Rc::new(std::cell::RefCell::new(instance_fields)),
+                    })
+                } else {
+                    Err(RuntimeError::new(format!("'{}' is not a struct.", name)).at(*span))
+                }
+            }
+            Expr::Match { target, arms, span } => {
+                let target_val = self.eval_expr(target, env)?;
+                for arm in arms {
+                    if let Some(bindings) = self.match_pattern(&arm.pattern, &target_val) {
+                        let match_env = std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new_with_parent(env.clone())));
+                        for (k, v) in bindings {
+                            match_env.borrow_mut().define(k, v);
+                        }
+                        return self.eval_expr(&arm.body, &match_env);
+                    }
+                }
+                Err(RuntimeError::new("Non-exhaustive match. No pattern matched the value.".into()).at(*span))
             }
             Expr::Interpolated(parts) => {
                 let mut res = String::new();
@@ -587,8 +654,28 @@ impl Evaluator {
                     }
                     return Err(RuntimeError::new("Cannot read property of null".into()).at(*span));
                 }
-
                 match base {
+
+                    Value::StructInstance { name, fields } => {
+                        if let Some(val) = fields.borrow().get(property) {
+                            Ok(Some(val.clone()))
+                        } else if *safe || lenient {
+                            Ok(None)
+                        } else {
+                            Err(RuntimeError::new(format!("Struct '{}' has no field '{}'", name, property)).at(*span))
+                        }
+                    }
+                    Value::EnumDef { name, variants } => {
+                        if let Some(params) = variants.get(property) {
+                            Ok(Some(Value::EnumConstructor {
+                                enum_name: name.clone(),
+                                variant_name: property.clone(),
+                                params: params.clone(),
+                            }))
+                        } else {
+                            Err(RuntimeError::new(format!("Enum '{}' has no variant '{}'", name, property)).at(*span))
+                        }
+                    }
                     Value::Map(m) => {
                         let map = m.borrow();
                         if let Some(v) = map.get(property) {
@@ -857,11 +944,60 @@ impl Evaluator {
                     Ok(_) => Ok(Value::Null),
                     Err(e) => Err(e),
                 }
+            }Value::EnumConstructor { enum_name, variant_name, params } => {
+                if args.len() != params.len() {
+                    self.depth -= 1;
+                    return Err(RuntimeError::new(format!(
+                        "Enum variant {}.{} expects {} arguments, got {}",
+                        enum_name, variant_name, params.len(), args.len()
+                    )).at(span));
+                }
+                Ok(Value::EnumInstance {
+                    enum_name: enum_name.clone(),
+                    variant_name: variant_name.clone(),
+                    values: args,
+                })
             }
+
             Value::Builtin { func, .. } => func(self, args, span),
             other => Err(RuntimeError::new(format!("Cannot call {}", other.type_name())).at(span)),
-        };
-        self.depth -= 1;
+        };        self.depth -= 1;
         res
+    }
+
+fn match_pattern(&self, pattern: &crate::ast::Pattern, val: &Value) -> Option<Vec<(String, Value)>> {
+        use crate::ast::{Pattern, Literal};
+        match pattern {
+            Pattern::Wildcard => Some(Vec::new()),
+            Pattern::Variable(name) => Some(vec![(name.clone(), val.clone())]),
+            Pattern::Literal(lit) => {
+                let lit_val = match lit {
+                    Literal::Number(n) => Value::Number(*n),
+                    Literal::String(s) => Value::String(s.clone()),
+                    Literal::Bool(b) => Value::Bool(*b),
+                    Literal::Null => Value::Null,
+                };
+                if val == &lit_val {
+                    Some(Vec::new())
+                } else {
+                    None
+                }
+            }
+            Pattern::Enum { enum_name, variant_name, fields } => {
+                if let Value::EnumInstance { enum_name: v_enum, variant_name: v_variant, values } = val {
+                    if enum_name == v_enum && variant_name == v_variant {
+                        if fields.len() != values.len() {
+                            return None;
+                        }
+                        let mut bindings = Vec::new();
+                        for (f, v) in fields.iter().zip(values.iter()) {
+                            bindings.push((f.clone(), v.clone()));
+                        }
+                        return Some(bindings);
+                    }
+                }
+                None
+            }
+        }
     }
 }
