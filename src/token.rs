@@ -19,6 +19,7 @@ pub enum Token {
     
     // Symbols
     FatArrow,      // =>
+    Pipe,          // |>
     Underscore,    // _
     Let,
     Fn,
@@ -85,6 +86,7 @@ impl fmt::Display for Token {
             Token::Enum => write!(f, "'enum'"),
             Token::Match => write!(f, "'match'"),
             Token::FatArrow => write!(f, "'=>'"),
+            Token::Pipe => write!(f, "'|>'"),
             Token::Underscore => write!(f, "'_'"),
             Token::Let => write!(f, "'let'"),
             Token::Fn => write!(f, "'fn'"),

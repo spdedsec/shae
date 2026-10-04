@@ -176,6 +176,25 @@ impl Lexer {
                 '/' => tokens.push(self.single(Token::Slash)),
                 '%' => tokens.push(self.single(Token::Percent)),
 
+                '|' => {
+                    let start_col = self.col;
+                    self.advance();
+                    if self.current_char() == Some('>') {
+                        self.advance();
+                        tokens.push(SpannedToken {
+                            token: Token::Pipe,
+                            line: self.line,
+                            col: start_col,
+                        });
+                    } else {
+                        return Err(LexerError::UnexpectedChar {
+                            ch: '|',
+                            line: self.line,
+                            col: start_col,
+                            hint: "Did you mean `|>`?".into(),
+                        });
+                    }
+                }
                 '=' => {
                     let start_col = self.col;
                     self.advance();
