@@ -1,6 +1,16 @@
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum StrPart {
+    Text(String),
+    Code {
+        src: String,
+        line: usize,
+        col: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Keywords
     Let,
@@ -21,40 +31,41 @@ pub enum Token {
     Ident(String),
     StringLit(String),
     NumberLit(f64),
+    Interp(Vec<StrPart>),
 
     // Symbols & Punctuation
-    LParen,        // (
-    RParen,        // )
-    LBrace,        // {
-    RBrace,        // }
-    LBracket,      // [
-    RBracket,      // ]
-    Comma,         // ,
-    Colon,         // :
-    Semicolon,     // ; (optional, allowed but not required)
-    Dot,           // .
-    Question,      // ?
-    DoubleQuestion,// ??
-    Arrow,         // ->
+    LParen,         // (
+    RParen,         // )
+    LBrace,         // {
+    RBrace,         // }
+    LBracket,       // [
+    RBracket,       // ]
+    Comma,          // ,
+    Colon,          // :
+    Semicolon,      // ; (optional, allowed but not required)
+    Dot,            // .
+    Question,       // ?
+    DoubleQuestion, // ??
+    Arrow,          // ->
 
     // Operators
-    Plus,          // +
-    Minus,         // -
-    Star,          // *
-    Slash,         // /
-    Percent,       // %
-    Equals,        // =
-    PlusEquals,    // +=
-    MinusEquals,   // -=
-    EqEq,          // ==
-    NotEq,         // !=
-    Lt,            // <
-    LtEq,          // <=
-    Gt,            // >
-    GtEq,          // >=
-    And,           // &&
-    Or,            // ||
-    Bang,          // !
+    Plus,        // +
+    Minus,       // -
+    Star,        // *
+    Slash,       // /
+    Percent,     // %
+    Equals,      // =
+    PlusEquals,  // +=
+    MinusEquals, // -=
+    EqEq,        // ==
+    NotEq,       // !=
+    Lt,          // <
+    LtEq,        // <=
+    Gt,          // >
+    GtEq,        // >=
+    And,         // &&
+    Or,          // ||
+    Bang,        // !
 
     Eof,
 }
@@ -78,6 +89,7 @@ impl fmt::Display for Token {
             Token::Ident(s) => write!(f, "identifier '{}'", s),
             Token::StringLit(s) => write!(f, "string \"{}\"", s),
             Token::NumberLit(n) => write!(f, "number {}", n),
+            Token::Interp(_) => write!(f, "interpolated string"),
             Token::LParen => write!(f, "'('"),
             Token::RParen => write!(f, "')'"),
             Token::LBrace => write!(f, "'{{'"),

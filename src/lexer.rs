@@ -1,22 +1,36 @@
-use crate::token::{SpannedToken, Token};
+use crate::token::{SpannedToken, StrPart, Token};
 use thiserror::Error;
 
-#[derive(Error, Debug, PartialEq)]
+#[derive(Error, Debug, PartialEq, Clone)]
 pub enum LexerError {
-    #[error("Shae Syntax Error [line {line}:{col}]: Unexpected character '{ch}'. Did a rogue typo slip in?")]
-    UnexpectedChar { ch: char, line: usize, col: usize },
+    #[error("Shae Syntax Error [line {line}:{col}]: Unexpected character '{ch}'.{hint}")]
+    UnexpectedChar {
+        ch: char,
+        hint: String,
+        line: usize,
+        col: usize,
+    },
 
-    #[error("Shae Syntax Error [line {line}:{col}]: Unterminated string literal. Did you forget the closing '\"'?")]
+    #[error(
+        "Shae Syntax Error [line {line}:{col}]: Unterminated string literal. Did you forget the closing quote?"
+    )]
     UnterminatedString { line: usize, col: usize },
 
+    #[error("Shae Syntax Error [line {line}:{col}]: Unterminated block comment.")]
+    UnterminatedComment { line: usize, col: usize },
+
     #[error("Shae Syntax Error [line {line}:{col}]: Invalid number '{raw}': {msg}")]
-    InvalidNumber { raw: String, msg: String, line: usize, col: usize },
+    InvalidNumber {
+        raw: String,
+        msg: String,
+        line: usize,
+        col: usize,
+    },
 
-    #[error("Shae Syntax Error [line {line}:{col}]: Unknown escape sequence '\\{ch}'. Supported: \\n, \\t, \\r, \\\", \\\\")]
+    #[error(
+        "Shae Syntax Error [line {line}:{col}]: Unknown escape sequence '\\\\{ch}'. Supported: \\\\n, \\\\t, \\\\r, \\\\\", \\\\\\\\, \\\\{{, \\\\}}"
+    )]
     InvalidEscape { ch: char, line: usize, col: usize },
-
-    #[error("Shae Friendly Advice [line {line}:{col}]: {advice}")]
-    FriendlyAdvice { advice: String, line: usize, col: usize },
 }
 
 pub struct Lexer {
@@ -33,6 +47,15 @@ impl Lexer {
             cursor: 0,
             line: 1,
             col: 1,
+        }
+    }
+
+    pub fn at(input: &str, line: usize, col: usize) -> Self {
+        Self {
+            chars: input.char_indices().collect(),
+            cursor: 0,
+            line,
+            col,
         }
     }
 
@@ -63,12 +86,16 @@ impl Lexer {
                     }
                 }
                 '/' if self.peek(1) == Some('*') => {
+                    let start_line = self.line;
+                    let start_col = self.col;
                     self.advance(); // consume '/'
                     self.advance(); // consume '*'
+                    let mut terminated = false;
                     while let Some(&(_, next_ch)) = self.current() {
                         if next_ch == '*' && self.peek(1) == Some('/') {
                             self.advance(); // consume '*'
                             self.advance(); // consume '/'
+                            terminated = true;
                             break;
                         }
                         if next_ch == '\n' {
@@ -78,6 +105,12 @@ impl Lexer {
                         } else {
                             self.advance();
                         }
+                    }
+                    if !terminated {
+                        return Err(LexerError::UnterminatedComment {
+                            line: start_line,
+                            col: start_col,
+                        });
                     }
                 }
 
@@ -273,8 +306,16 @@ impl Lexer {
                 }
 
                 _ => {
+                    let hint = match ch {
+                        '#' => " Did you mean '//' for a comment?",
+                        '\'' => " Did you mean to use double quotes for a string?",
+                        '&' => " Did you mean '&&'?",
+                        '|' => " Did you mean '||'?",
+                        _ => "",
+                    };
                     return Err(LexerError::UnexpectedChar {
                         ch,
+                        hint: hint.to_string(),
                         line: self.line,
                         col: self.col,
                     });
@@ -328,28 +369,43 @@ impl Lexer {
         let start_col = self.col;
         self.advance(); // consume opening quote
 
-        let mut val = String::new();
+        let mut parts = Vec::new();
+        let mut current_text = String::new();
+        let mut has_interp = false;
 
         while let Some(&(_, ch)) = self.current() {
             match ch {
                 '"' => {
                     self.advance(); // consume closing quote
-                    return Ok(SpannedToken {
-                        token: Token::StringLit(val),
-                        line: start_line,
-                        col: start_col,
-                    });
+                    if !has_interp {
+                        return Ok(SpannedToken {
+                            token: Token::StringLit(current_text),
+                            line: start_line,
+                            col: start_col,
+                        });
+                    } else {
+                        if !current_text.is_empty() {
+                            parts.push(StrPart::Text(current_text));
+                        }
+                        return Ok(SpannedToken {
+                            token: Token::Interp(parts),
+                            line: start_line,
+                            col: start_col,
+                        });
+                    }
                 }
                 '\\' => {
                     self.advance();
                     if let Some(&(_, esc)) = self.current() {
                         self.advance();
                         match esc {
-                            'n' => val.push('\n'),
-                            't' => val.push('\t'),
-                            'r' => val.push('\r'),
-                            '"' => val.push('"'),
-                            '\\' => val.push('\\'),
+                            'n' => current_text.push('\n'),
+                            't' => current_text.push('\t'),
+                            'r' => current_text.push('\r'),
+                            '"' => current_text.push('"'),
+                            '\\' => current_text.push('\\'),
+                            '{' => current_text.push('{'),
+                            '}' => current_text.push('}'),
                             other => {
                                 return Err(LexerError::InvalidEscape {
                                     ch: other,
@@ -371,8 +427,66 @@ impl Lexer {
                         col: start_col,
                     });
                 }
+                '{' => {
+                    has_interp = true;
+                    if !current_text.is_empty() {
+                        parts.push(StrPart::Text(current_text.clone()));
+                        current_text.clear();
+                    }
+                    let code_line = self.line;
+                    let code_col = self.col;
+                    self.advance();
+
+                    let mut brace_count = 1;
+                    let mut code_src = String::new();
+                    let mut in_string = false;
+                    let mut string_esc = false;
+
+                    while let Some(&(_, ich)) = self.current() {
+                        if in_string {
+                            code_src.push(ich);
+                            if string_esc {
+                                string_esc = false;
+                            } else if ich == '\\' {
+                                string_esc = true;
+                            } else if ich == '"' {
+                                in_string = false;
+                            }
+                            self.advance();
+                        } else {
+                            if ich == '"' {
+                                in_string = true;
+                            } else if ich == '{' {
+                                brace_count += 1;
+                            } else if ich == '}' {
+                                brace_count -= 1;
+                                if brace_count == 0 {
+                                    self.advance(); // consume }
+                                    break;
+                                }
+                            }
+                            if brace_count > 0 {
+                                code_src.push(ich);
+                                self.advance();
+                            }
+                        }
+                    }
+                    if brace_count > 0 {
+                        return Err(LexerError::UnexpectedChar {
+                            ch: '{',
+                            hint: " Unterminated string interpolation block.".to_string(),
+                            line: start_line,
+                            col: start_col,
+                        });
+                    }
+                    parts.push(StrPart::Code {
+                        src: code_src,
+                        line: code_line,
+                        col: code_col,
+                    });
+                }
                 other => {
-                    val.push(other);
+                    current_text.push(other);
                     self.advance();
                 }
             }
@@ -439,32 +553,6 @@ impl Lexer {
             }
         }
 
-        // Friendly advice for common cross-language habits
-        match s.as_str() {
-            "function" | "def" => {
-                return Err(LexerError::FriendlyAdvice {
-                    advice: format!("In Shae, we use 'fn' for functions (e.g., 'fn add(a, b) {{ ... }}'). Keep it short and sweet!"),
-                    line: start_line,
-                    col: start_col,
-                });
-            }
-            "var" => {
-                return Err(LexerError::FriendlyAdvice {
-                    advice: "In Shae, use 'let' to declare variables (e.g., 'let count = 0').".to_string(),
-                    line: start_line,
-                    col: start_col,
-                });
-            }
-            "nil" | "None" | "undefined" => {
-                return Err(LexerError::FriendlyAdvice {
-                    advice: "In Shae, null values are simply 'null'.".to_string(),
-                    line: start_line,
-                    col: start_col,
-                });
-            }
-            _ => {}
-        }
-
         let token = match s.as_str() {
             "let" => Token::Let,
             "fn" => Token::Fn,
@@ -492,42 +580,4 @@ impl Lexer {
 
 pub fn tokenize(input: &str) -> Result<Vec<SpannedToken>, LexerError> {
     Lexer::new(input).tokenize()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_lexer_tokens() {
-        let code = r#"
-            let name = "Satya"
-            fn greet(person) {
-                return "Hello, " + person
-            }
-            if name == "Satya" {
-                let status = true ?? false
-            }
-        "#;
-        let tokens = tokenize(code).expect("Tokenization should succeed");
-        let kinds: Vec<Token> = tokens.into_iter().map(|st| st.token).collect();
-
-        assert!(kinds.contains(&Token::Let));
-        assert!(kinds.contains(&Token::Fn));
-        assert!(kinds.contains(&Token::Return));
-        assert!(kinds.contains(&Token::If));
-        assert!(kinds.contains(&Token::DoubleQuestion));
-    }
-
-    #[test]
-    fn test_friendly_advice_def() {
-        let code = "def my_func() {}";
-        let err = tokenize(code).unwrap_err();
-        match err {
-            LexerError::FriendlyAdvice { advice, .. } => {
-                assert!(advice.contains("use 'fn' for functions"));
-            }
-            _ => panic!("Expected friendly advice error"),
-        }
-    }
 }

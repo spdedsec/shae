@@ -1,27 +1,15 @@
-// Working with maps, arrays, closures, and null coalescing
+// Arrays and Maps in Shae
 
-let inventory = [
-    { item: "Laptop", price: 1200, in_stock: true },
-    { item: "Keyboard", price: 80, in_stock: false },
-    { item: "Mouse", price: 45, in_stock: true }
+let items = [
+    { name: "Laptop", price: 1200 },
+    { name: "Phone", price: 800 },
+    { name: "Headphones", price: 150 }
 ]
 
-print("Available Items:")
-for product in inventory {
-    if product.in_stock {
-        let tag = product.tag ?? "Standard"
-        print(" ->", product.item + ": $" + product.price + " [" + tag + "]")
-    }
-}
+print("We have \{len(items)} items.")
 
-// Function returning closure (decorator / factory pattern)
-fn discount_calculator(percentage) {
-    return fn(price) {
-        return price - (price * percentage / 100)
-    }
-}
+let first_item = items[0]
+print("First item: \{first_item.name} costs $\\{first_item.price}")
 
-let holiday_sale = discount_calculator(20)
-print("\nHoliday sale (20% off):")
-print("Laptop: $" + holiday_sale(1200))
-print("Mouse:  $" + holiday_sale(45))
+let bad_prop = first_item?.not_exist ?? "default_value"
+print("Fallback value: \{bad_prop}")

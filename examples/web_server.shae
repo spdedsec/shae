@@ -1,30 +1,18 @@
-// A full, zero-dependency web server in Shae!
-// Run with: shae run examples/web_server.shae
-// Open browser: http://localhost:8080
+// A simple web server in Shae
+let state = { visits: 0 }
 
-let visit_count = 0
-
-fn router(req) {
-    visit_count += 1
-
-    if req.path == "/api/status" {
-        return {
-            status: "online",
-            language: "Shae",
-            visitors: visit_count,
-            message: "Built-in web server with zero external libraries!"
-        }
+fn handler(req) {
+    print("Received", req.method, "request to", req.path)
+    state.visits += 1
+    
+    if req.path == "/" {
+        return "<h1>Welcome to Shae!</h1><p>Visits: \{state.visits}</p>"
+    } else if req.path == "/api" {
+        return state
     }
-
-    return "<html>" +
-        "<body style='font-family: system-ui; max-width: 600px; margin: 40px auto; padding: 20px; line-height: 1.6;'>" +
-        "<h1>✨ Welcome to Shae!</h1>" +
-        "<p>This web page is being served directly by a <b>Shae script</b> running a native HTTP runtime.</p>" +
-        "<p>You are visitor number: <b>" + visit_count + "</b></p>" +
-        "<p>Check out the JSON endpoint: <a href='/api/status'>/api/status</a></p>" +
-        "</body>" +
-        "</html>"
+    
+    return "404 Not Found"
 }
 
-print("Starting Shae Web Server...")
-serve(8080, router)
+print("Starting Shae server...")
+serve(8080, handler)

@@ -3,33 +3,44 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Environment {
-    bindings: HashMap<String, Value>,
+    values: HashMap<String, Value>,
     parent: Option<Rc<RefCell<Environment>>>,
 }
 
 impl Environment {
-    pub fn new() -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self {
-            bindings: HashMap::new(),
+    pub fn new() -> Self {
+        Self {
+            values: HashMap::new(),
             parent: None,
-        }))
+        }
     }
 
-    pub fn with_parent(parent: Rc<RefCell<Environment>>) -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self {
-            bindings: HashMap::new(),
+    pub fn new_with_parent(parent: Rc<RefCell<Environment>>) -> Self {
+        Self {
+            values: HashMap::new(),
             parent: Some(parent),
-        }))
+        }
     }
 
     pub fn define(&mut self, name: String, value: Value) {
-        self.bindings.insert(name, value);
+        self.values.insert(name, value);
+    }
+
+    pub fn set(&mut self, name: &str, value: Value) -> bool {
+        if self.values.contains_key(name) {
+            self.values.insert(name.to_string(), value);
+            true
+        } else if let Some(parent) = &self.parent {
+            parent.borrow_mut().set(name, value)
+        } else {
+            false
+        }
     }
 
     pub fn get(&self, name: &str) -> Option<Value> {
-        if let Some(val) = self.bindings.get(name) {
+        if let Some(val) = self.values.get(name) {
             Some(val.clone())
         } else if let Some(parent) = &self.parent {
             parent.borrow().get(name)
@@ -38,17 +49,11 @@ impl Environment {
         }
     }
 
-    pub fn set(&mut self, name: &str, value: Value) -> Result<(), String> {
-        if self.bindings.contains_key(name) {
-            self.bindings.insert(name.to_string(), value);
-            Ok(())
-        } else if let Some(parent) = &self.parent {
-            parent.borrow_mut().set(name, value)
-        } else {
-            Err(format!(
-                "Cannot assign to undefined variable '{}'. Did you forget 'let {} = ...'?",
-                name, name
-            ))
+    pub fn all_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.values.keys().cloned().collect();
+        if let Some(parent) = &self.parent {
+            names.extend(parent.borrow().all_names());
         }
+        names
     }
 }

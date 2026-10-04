@@ -1,5 +1,4 @@
-// Computing Fibonacci numbers in Shae
-
+// Calculate Fibonacci numbers
 fn fib(n) {
     if n <= 1 {
         return n
@@ -7,7 +6,8 @@ fn fib(n) {
     return fib(n - 1) + fib(n - 2)
 }
 
-print("Fibonacci Sequence (first 10 terms):")
-for i in range(10) {
-    print("fib(" + i + ") =", fib(i))
+let i = 0
+while i < 15 {
+    print("fib(\{i}) =", fib(i))
+    i += 1
 }

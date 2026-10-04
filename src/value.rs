@@ -1,12 +1,14 @@
 use crate::ast::Stmt;
 use crate::env::Environment;
+use crate::eval::{Evaluator, RuntimeError};
+use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
-pub type BuiltinFn = fn(Vec<Value>, Rc<RefCell<Environment>>) -> Result<Value, String>;
+pub type BuiltinFn =
+    fn(&mut Evaluator, Vec<Value>, crate::ast::Span) -> Result<Value, RuntimeError>;
 
 #[derive(Clone)]
 pub enum Value {
@@ -15,11 +17,11 @@ pub enum Value {
     Number(f64),
     String(String),
     Array(Rc<RefCell<Vec<Value>>>),
-    Map(Rc<RefCell<HashMap<String, Value>>>),
+    Map(Rc<RefCell<IndexMap<String, Value>>>),
     Function {
         name: Option<String>,
-        params: Vec<String>,
-        body: Vec<Stmt>,
+        params: Rc<Vec<String>>,
+        body: Rc<Vec<Stmt>>,
         closure: Rc<RefCell<Environment>>,
     },
     Builtin {
@@ -100,9 +102,15 @@ impl Value {
         match self {
             Value::Null => JsonValue::Null,
             Value::Bool(b) => JsonValue::Bool(*b),
-            Value::Number(n) => serde_json::Number::from_f64(*n)
-                .map(JsonValue::Number)
-                .unwrap_or(JsonValue::Null),
+            Value::Number(n) => {
+                if n.fract() == 0.0 && n.abs() <= 9007199254740991.0 {
+                    JsonValue::Number((*n as i64).into())
+                } else {
+                    serde_json::Number::from_f64(*n)
+                        .map(JsonValue::Number)
+                        .unwrap_or(JsonValue::Null)
+                }
+            }
             Value::String(s) => JsonValue::String(s.clone()),
             Value::Array(a) => {
                 let list: Vec<JsonValue> = a.borrow().iter().map(|v| v.to_json()).collect();
@@ -133,7 +141,7 @@ impl Value {
                 Value::Array(Rc::new(RefCell::new(list)))
             }
             JsonValue::Object(obj) => {
-                let mut map = HashMap::new();
+                let mut map = IndexMap::new();
                 for (k, v) in obj {
                     map.insert(k.clone(), Value::from_json(v));
                 }
@@ -148,7 +156,7 @@ impl PartialEq for Value {
         match (self, other) {
             (Value::Null, Value::Null) => true,
             (Value::Bool(a), Value::Bool(b)) => a == b,
-            (Value::Number(a), Value::Number(b)) => (a - b).abs() < f64::EPSILON,
+            (Value::Number(a), Value::Number(b)) => a == b, // exact float equality
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => *a.borrow() == *b.borrow(),
             (Value::Map(a), Value::Map(b)) => *a.borrow() == *b.borrow(),
@@ -167,4 +175,23 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.to_display())
     }
+}
+
+pub enum IndexError {
+    NotWhole,
+    OutOfRange(usize),
+}
+
+pub fn resolve_index(n: f64, len: usize) -> Result<usize, IndexError> {
+    if n.fract() != 0.0 {
+        return Err(IndexError::NotWhole);
+    }
+    let mut idx = n as isize;
+    if idx < 0 {
+        idx += len as isize;
+    }
+    if idx < 0 || idx >= len as isize {
+        return Err(IndexError::OutOfRange(len));
+    }
+    Ok(idx as usize)
 }
