@@ -13,7 +13,7 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 - Helpful hints in error messages with exact source code snippets and carets.
 
 ## Phase 2: Leverage
-- String & array methods (`.trim()`, `.map()`, `.filter()`, `.reduce()`, `.sort()`, `.sum()`).
+- [x] String - String & array methods (`.trim()`, `.map()`, `.filter()`, `.reduce()`, `.sort()`, `.sum()`). array methods (`.trim()`, `.map()`, `.filter()`, `.reduce()`, `.sort()`, `.sum()`).
 - File I/O (`read()`, `write()`) and network requests (`fetch(url)`).
 - Error handling mechanisms (e.g., `try` block or `Result` types).
 - [x] Module system (`use "file.shae"`).
