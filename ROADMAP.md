@@ -23,9 +23,9 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 
 ## Phase 3: Seriousness
 - Strict booleans in conditions (resolving the open design question of truthiness vs explicit booleans).
-- Aliases `and`, `or`, `not` for `&&`, `||`, `!`.
+- [x] Aliases `and`, `or`, `not` for `- Aliases `and`, `or`, `not` for `&&`, `||`, `!`.- Aliases `and`, `or`, `not` for `&&`, `||`, `!`.`, `||`, `!`.
 - Integer type support (currently all numbers are `f64`).
-- Structs, Enums, and pattern matching.
+- [x] Structs, Enums, and pattern matching.
 - Pipe operator `|>` for ergonomic data transformations.
 - Stack traces for runtime errors.
 - Concurrent and robust HTTP `serve` (request headers, bodies, status codes, routing).
