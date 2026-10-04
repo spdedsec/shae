@@ -186,6 +186,13 @@ impl Lexer {
                             line: self.line,
                             col: start_col,
                         });
+                    } else if self.current_char() == Some('>') {
+                        self.advance();
+                        tokens.push(SpannedToken {
+                            token: Token::FatArrow,
+                            line: self.line,
+                            col: start_col,
+                        });
                     } else {
                         tokens.push(SpannedToken {
                             token: Token::Equals,
@@ -535,6 +542,10 @@ impl Lexer {
         }
 
         let token = match s.as_str() {
+            "struct" => Token::Struct,
+            "enum" => Token::Enum,
+            "match" => Token::Match,
+            "_" => Token::Underscore,
             "let" => Token::Let,
             "fn" => Token::Fn,
             "return" => Token::Return,

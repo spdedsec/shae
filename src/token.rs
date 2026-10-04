@@ -13,6 +13,13 @@ pub enum StrPart {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Keywords
+    Struct,        // struct
+    Enum,          // enum
+    Match,         // match
+    
+    // Symbols
+    FatArrow,      // =>
+    Underscore,    // _
     Let,
     Fn,
     Return,
@@ -73,6 +80,11 @@ pub enum Token {
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Token::Struct => write!(f, "'struct'"),
+            Token::Enum => write!(f, "'enum'"),
+            Token::Match => write!(f, "'match'"),
+            Token::FatArrow => write!(f, "'=>'"),
+            Token::Underscore => write!(f, "'_'"),
             Token::Let => write!(f, "'let'"),
             Token::Fn => write!(f, "'fn'"),
             Token::Return => write!(f, "'return'"),

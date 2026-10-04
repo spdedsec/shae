@@ -25,11 +25,12 @@ pub enum ParserError {
 pub struct Parser {
     tokens: Vec<SpannedToken>,
     cursor: usize,
+    allow_struct: bool,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<SpannedToken>) -> Self {
-        Self { tokens, cursor: 0 }
+        Self { tokens, cursor: 0, allow_struct: true }
     }
 
     pub fn parse(&mut self) -> Result<Program, ParserError> {
@@ -113,6 +114,10 @@ impl Parser {
 
         let stmt = if self.match_token(Token::Let) {
             self.parse_let_statement(cur.line, cur.col)?
+} else if self.match_token(Token::Struct) {
+            self.parse_struct_def(cur.line, cur.col)?
+        } else if self.match_token(Token::Enum) {
+            self.parse_enum_def(cur.line, cur.col)?
         } else if self.match_token(Token::Fn) {
             self.parse_fn_statement(cur.line, cur.col)?
         } else if self.match_token(Token::If) {
@@ -147,6 +152,134 @@ impl Parser {
             self.parse_expression_statement()?
         };
         Ok(stmt)
+    }
+
+fn parse_struct_def(&mut self, _line: usize, _col: usize) -> Result<Stmt, ParserError> {
+        let name = if let Token::Ident(n) = &self.advance().token {
+            n.clone()
+        } else {
+            return Err(ParserError::UnexpectedToken {
+                message: "Expected struct name.".into(),
+                line: self.peek().line,
+                col: self.peek().col,
+            });
+        };
+
+        if !self.match_token(Token::LBrace) {
+            return Err(ParserError::UnexpectedToken {
+                message: "Expected '{' before struct fields.".into(),
+                line: self.peek().line,
+                col: self.peek().col,
+            });
+        }
+
+        let mut fields = Vec::new();
+        if self.peek().token != Token::RBrace {
+            loop {
+                if let Token::Ident(f) = &self.advance().token {
+                    fields.push(f.clone());
+                } else {
+                    return Err(ParserError::UnexpectedToken {
+                        message: "Expected field name.".into(),
+                        line: self.peek().line,
+                        col: self.peek().col,
+                    });
+                }
+                if !self.match_token(Token::Comma) {
+                    break;
+                }
+            }
+        }
+
+        if !self.match_token(Token::RBrace) {
+            return Err(ParserError::UnexpectedToken {
+                message: "Expected '}' after struct fields.".into(),
+                line: self.peek().line,
+                col: self.peek().col,
+            });
+        }
+
+        Ok(Stmt { kind: StmtKind::StructDef { name, fields }, span: Span { line: _line, col: _col } })
+    }
+
+    fn parse_enum_def(&mut self, _line: usize, _col: usize) -> Result<Stmt, ParserError> {
+        use crate::ast::EnumVariant;
+        
+        let name = if let Token::Ident(n) = &self.advance().token {
+            n.clone()
+        } else {
+            return Err(ParserError::UnexpectedToken {
+                message: "Expected enum name.".into(),
+                line: self.peek().line,
+                col: self.peek().col,
+            });
+        };
+
+        if !self.match_token(Token::LBrace) {
+            return Err(ParserError::UnexpectedToken {
+                message: "Expected '{' before enum variants.".into(),
+                line: self.peek().line,
+                col: self.peek().col,
+            });
+        }
+
+        let mut variants = Vec::new();
+        if self.peek().token != Token::RBrace {
+            loop {
+                let variant_name = if let Token::Ident(v) = &self.advance().token {
+                    v.clone()
+                } else {
+                    return Err(ParserError::UnexpectedToken {
+                        message: "Expected variant name.".into(),
+                        line: self.peek().line,
+                        col: self.peek().col,
+                    });
+                };
+                
+                let mut fields = Vec::new();
+                if self.match_token(Token::LParen) {
+                    if self.peek().token != Token::RParen {
+                        loop {
+                            if let Token::Ident(f) = &self.advance().token {
+                                fields.push(f.clone());
+                            } else {
+                                return Err(ParserError::UnexpectedToken {
+                                    message: "Expected field name.".into(),
+                                    line: self.peek().line,
+                                    col: self.peek().col,
+                                });
+                            }
+                            if !self.match_token(Token::Comma) {
+                                break;
+                            }
+                        }
+                    }
+                    if !self.match_token(Token::RParen) {
+                        return Err(ParserError::UnexpectedToken {
+                            message: "Expected ')' after variant fields.".into(),
+                            line: self.peek().line,
+                            col: self.peek().col,
+                        });
+                    }
+                }
+                
+                variants.push(EnumVariant { name: variant_name, fields });
+                
+                if !self.match_token(Token::Comma) {
+                    break;
+                }
+            }
+        }
+
+        if !self.match_token(Token::RBrace) {
+            return Err(ParserError::UnexpectedToken {
+                message: "Expected '}' after enum variants.".into(),
+                line: self.peek().line,
+                col: self.peek().col,
+            });
+        }
+
+        Ok(Stmt { kind: StmtKind::EnumDef { name, variants }, span: Span { line: _line, col: _col } })
     }
 
     fn parse_let_statement(&mut self, line: usize, col: usize) -> Result<Stmt, ParserError> {
@@ -322,7 +455,11 @@ impl Parser {
     }
 
     fn parse_condition(&mut self) -> Result<Expr, ParserError> {
-        let expr = self.parse_expression()?;
+        let prev = self.allow_struct;
+        self.allow_struct = false;
+        let expr = self.parse_expression();
+        self.allow_struct = prev;
+        let expr = expr?;
         if let Expr::Binary {
             op: BinaryOp::Eq, ..
         } = expr
@@ -671,7 +808,7 @@ impl Parser {
     fn parse_term(&mut self) -> Result<Expr, ParserError> {
         let mut expr = self.parse_factor()?;
         // Enforce same-line continuation for binary ops to fix newline `-2` bug
-        while (self.peek().token == Token::Plus || self.peek().token == Token::Minus) {
+        while self.peek().token == Token::Plus || self.peek().token == Token::Minus {
             let prev_line = self.tokens[self.cursor.saturating_sub(1)].line;
             if self.peek().line > prev_line {
                 break; // Do not parse binary minus/plus on a new line
@@ -699,9 +836,9 @@ impl Parser {
 
     fn parse_factor(&mut self) -> Result<Expr, ParserError> {
         let mut expr = self.parse_unary()?;
-        while (self.peek().token == Token::Star
+        while self.peek().token == Token::Star
             || self.peek().token == Token::Slash
-            || self.peek().token == Token::Percent)
+            || self.peek().token == Token::Percent
         {
             let prev_line = self.tokens[self.cursor.saturating_sub(1)].line;
             if self.peek().line > prev_line {
@@ -790,8 +927,8 @@ impl Parser {
                 };
             } else if self.match_token(Token::Dot) || self.match_token(Token::Question) {
                 let mut safe = false;
-                let mut line = self.tokens[self.cursor - 1].line;
-                let mut col = self.tokens[self.cursor - 1].col;
+                let line = self.tokens[self.cursor - 1].line;
+                let col = self.tokens[self.cursor - 1].col;
                 if self.tokens[self.cursor - 1].token == Token::Question {
                     if !self.match_token(Token::Dot) {
                         return Err(ParserError::UnexpectedToken {
@@ -835,6 +972,50 @@ impl Parser {
                     index: Box::new(index),
                     span,
                 };
+} else if self.allow_struct && self.peek().token == Token::LBrace {
+                if let Expr::Variable { name, .. } = &expr {
+                    let span = Span { line: self.tokens[self.cursor.saturating_sub(1)].line, col: self.tokens[self.cursor.saturating_sub(1)].col };
+                    self.advance();
+                    let mut fields = Vec::new();
+                    if self.peek().token != Token::RBrace {
+                        loop {
+                            let field_name = if let Token::Ident(n) = &self.advance().token {
+                                n.clone()
+                            } else {
+                                return Err(ParserError::UnexpectedToken {
+                                    message: "Expected field name in struct initialization.".into(),
+                                    line: self.peek().line,
+                                    col: self.peek().col,
+                                });
+                            };
+                            
+                            if !self.match_token(Token::Colon) {
+                                return Err(ParserError::UnexpectedToken {
+                                    message: "Expected ':' after field name.".into(),
+                                    line: self.peek().line,
+                                    col: self.peek().col,
+                                });
+                            }
+                            
+                            let val = self.parse_expression()?;
+                            fields.push((field_name, val));
+                            
+                            if !self.match_token(Token::Comma) {
+                                break;
+                            }
+                        }
+                    }
+                    if !self.match_token(Token::RBrace) {
+                        return Err(ParserError::UnexpectedToken {
+                            message: "Expected '}' after struct fields.".into(),
+                            line: self.peek().line,
+                            col: self.peek().col,
+                        });
+                    }
+                    expr = Expr::StructInit { name: name.clone(), fields, span };
+                } else {
+                    break;
+                }
             } else {
                 break;
             }
@@ -924,6 +1105,46 @@ impl Parser {
                 }
                 Ok(Expr::Map(elements))
             }
+Token::Match => {
+                let prev = self.allow_struct;
+                self.allow_struct = false;
+                let target = self.parse_expression()?;
+                self.allow_struct = prev;
+                
+                if !self.match_token(Token::LBrace) {
+                    return Err(ParserError::UnexpectedToken {
+                        message: "Expected '{' after match target.".into(),
+                        line: self.peek().line,
+                        col: self.peek().col,
+                    });
+                }
+                
+                let mut arms = Vec::new();
+                while self.peek().token != Token::RBrace && !self.is_at_end() {
+                    let pattern = self.parse_pattern()?;
+                    if !self.match_token(Token::FatArrow) {
+                        return Err(ParserError::UnexpectedToken {
+                            message: "Expected '=>' after match pattern.".into(),
+                            line: self.peek().line,
+                            col: self.peek().col,
+                        });
+                    }
+                    let body = self.parse_expression()?;
+                    arms.push(crate::ast::MatchArm { pattern, body: Box::new(body) });
+                    
+                    self.match_token(Token::Comma); // Optional trailing comma
+                }
+                
+                if !self.match_token(Token::RBrace) {
+                    return Err(ParserError::UnexpectedToken {
+                        message: "Expected '}' after match arms.".into(),
+                        line: self.peek().line,
+                        col: self.peek().col,
+                    });
+                }
+                
+                Ok(Expr::Match { target: Box::new(target), arms, span })
+            }
             Token::Fn => {
                 let (params, body) = self.parse_function_body()?;
                 Ok(Expr::Lambda {
@@ -955,8 +1176,70 @@ impl Parser {
             }),
         }
     }
-}
 
+fn parse_pattern(&mut self) -> Result<crate::ast::Pattern, ParserError> {
+        use crate::ast::{Pattern, Literal};
+        if self.match_token(Token::Underscore) {
+            return Ok(Pattern::Wildcard);
+        }
+        
+        let peek = self.peek().clone();
+        match peek.token {
+            Token::False => { self.advance(); Ok(Pattern::Literal(Literal::Bool(false))) }
+            Token::True => { self.advance(); Ok(Pattern::Literal(Literal::Bool(true))) }
+            Token::Null => { self.advance(); Ok(Pattern::Literal(Literal::Null)) }
+            Token::NumberLit(n) => { self.advance(); Ok(Pattern::Literal(Literal::Number(n))) }
+            Token::StringLit(s) => { self.advance(); Ok(Pattern::Literal(Literal::String(s))) }
+            Token::Ident(name) => {
+                self.advance();
+                if self.match_token(Token::Dot) {
+                    let variant = if let Token::Ident(v) = &self.advance().token {
+                        v.clone()
+                    } else {
+                        return Err(ParserError::UnexpectedToken {
+                            message: "Expected variant name after '.' in pattern.".into(),
+                            line: self.peek().line,
+                            col: self.peek().col,
+                        });
+                    };
+                    
+                    let mut fields = Vec::new();
+                    if self.match_token(Token::LParen) {
+                        if self.peek().token != Token::RParen {
+                            loop {
+                                if let Token::Ident(f) = &self.advance().token {
+                                    fields.push(f.clone());
+                                } else {
+                                    return Err(ParserError::UnexpectedToken {
+                                        message: "Expected identifier in pattern binding.".into(),
+                                        line: self.peek().line,
+                                        col: self.peek().col,
+                                    });
+                                }
+                                if !self.match_token(Token::Comma) { break; }
+                            }
+                        }
+                        if !self.match_token(Token::RParen) {
+                            return Err(ParserError::UnexpectedToken {
+                                message: "Expected ')' after pattern bindings.".into(),
+                                line: self.peek().line,
+                                col: self.peek().col,
+                            });
+                        }
+                    }
+                    Ok(Pattern::Enum { enum_name: name, variant_name: variant, fields })
+                } else {
+                    Ok(Pattern::Variable(name))
+                }
+            }
+            _ => Err(ParserError::UnexpectedToken {
+                message: "Expected pattern.".into(),
+                line: peek.line,
+                col: peek.col,
+            })
+        }
+    }
+}
 pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, ParserError> {
     Parser::new(tokens).parse()
 }
