@@ -1,0 +1,11 @@
+// The classic Hello World, Shae style.
+let greeting = "Hello, World!"
+print(greeting)
+
+let user = {
+    name: "Satya",
+    language: "Shae",
+    version: "0.1.0"
+}
+
+print("Welcome to", user.language, "v" + user.version + ",", user.name + "!")

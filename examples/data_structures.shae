@@ -1,0 +1,27 @@
+// Working with maps, arrays, closures, and null coalescing
+
+let inventory = [
+    { item: "Laptop", price: 1200, in_stock: true },
+    { item: "Keyboard", price: 80, in_stock: false },
+    { item: "Mouse", price: 45, in_stock: true }
+]
+
+print("Available Items:")
+for product in inventory {
+    if product.in_stock {
+        let tag = product.tag ?? "Standard"
+        print(" ->", product.item + ": $" + product.price + " [" + tag + "]")
+    }
+}
+
+// Function returning closure (decorator / factory pattern)
+fn discount_calculator(percentage) {
+    return fn(price) {
+        return price - (price * percentage / 100)
+    }
+}
+
+let holiday_sale = discount_calculator(20)
+print("\nHoliday sale (20% off):")
+print("Laptop: $" + holiday_sale(1200))
+print("Mouse:  $" + holiday_sale(45))
