@@ -24,14 +24,25 @@ Be familiar, fast, crash-proof, and productive from the very first minute. Zero 
 2. **Built-in Batteries (Web Servers Included)**  
    Why should building a simple HTTP service require external frameworks? Shae includes a native web engine (`serve(port, handler)`) directly in the standard library.
 
-3. **Safe by Default (No Null Crashes)**  
-   Property lookups and indexing never panic. If a field doesn't exist, it evaluates safely to `null`. The null-coalescing operator `??` provides graceful fallback values.
+3. **Safe by Default & Predictable Access**  
+   - Direct property access (`obj.prop`) is strict and provides helpful typo suggestions if a key doesn't exist.
+   - Safe navigation (`obj?.prop`) evaluates safely to `null`.
+   - Null coalescing (`obj.prop ?? default`) provides lenient fallback defaults without crashing.
 
-4. **Functions with Implicit Returns**  
+4. **Pragmatic Truthiness**  
+   Conditions in `if` and `while` use intuitive truthiness: `null`, `false`, `0`, `""`, `[]`, and `{}` are falsy. All non-empty collections, non-zero numbers, and objects evaluate to truthy.
+
+5. **Unified Numbers with Whole-Number Indexing**  
+   All numbers are 64-bit IEEE 754 floats (`f64`). Array and string indexing requires whole numbers (`arr[1]`), rejecting fractional indices (`arr[1.5]`) with clear runtime diagnostics. Whole numbers print cleanly without trailing decimals (`42`).
+
+6. **Functions with Implicit Returns**  
    Functions automatically return the result of their last evaluated expression, or an explicit `return`.
 
-5. **Friendly Compiler & Runtime Errors**  
+7. **Friendly Compiler & Runtime Errors**  
    Shae's diagnostics speak human. If you write `function` or `def`, Shae gently reminds you: *"In Shae, use 'fn' for functions. Less typing, more doing!"*
+
+8. **Stable Reference Runtime**  
+   The primary execution engine is the fast AST Tree-Walking Evaluator. An experimental bytecode VM is in development for high-performance execution.
 
 ---
 

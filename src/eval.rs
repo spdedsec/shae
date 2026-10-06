@@ -190,7 +190,6 @@ StmtKind::StructDef { name, fields } => {
                 }
             }
             StmtKind::While { condition, body } => {
-                let mut last_val = Value::Null;
                 loop {
                     let cond_val = self
                         .eval_expr(condition, env)
@@ -199,11 +198,10 @@ StmtKind::StructDef { name, fields } => {
                         break;
                     }
                     match self.eval_block(body, env)? {
-                        Signal::Value(v) => last_val = v,
+                        Signal::Value(_) | Signal::None => {}
                         Signal::Return(v) => return Ok(Signal::Return(v)),
                         Signal::Break => break,
                         Signal::Continue => continue,
-                        Signal::None => last_val = Value::Null,
                     }
                 }
                 Ok(Signal::None)
@@ -226,16 +224,14 @@ StmtKind::StructDef { name, fields } => {
                         .at(stmt.span));
                     }
                 };
-                let mut last_val = Value::Null;
                 for elem in elements {
                     let loop_env = Arc::new(RwLock::new(Environment::new_with_parent(env.clone())));
                     loop_env.write().unwrap().define(item.clone(), elem);
                     match self.eval_block(body, &loop_env)? {
-                        Signal::Value(v) => last_val = v,
+                        Signal::Value(_) | Signal::None => {}
                         Signal::Return(v) => return Ok(Signal::Return(v)),
                         Signal::Break => break,
                         Signal::Continue => continue,
-                        Signal::None => last_val = Value::Null,
                     }
                 }
                 Ok(Signal::None)
@@ -808,6 +804,20 @@ Expr::Use { path, span } => {
                             }
                         }
                     }
+                    Value::Task(t) => {
+                        if property == "join" || property == "wait" {
+                            Ok(Some(Value::BoundMethod {
+                                object: Box::new(Value::Task(t.clone())),
+                                method: property.clone(),
+                            }))
+                        } else {
+                            if *safe || lenient {
+                                Ok(None)
+                            } else {
+                                Err(RuntimeError::new(format!("Task has no property '{}'", property)).at(*span))
+                            }
+                        }
+                    }
                     other => {
                         if *safe || lenient {
                             Ok(None)
@@ -1164,6 +1174,18 @@ Expr::Use { path, span } => {
                         } else {
                             self.depth -= 1;
                             Err(RuntimeError::new("replace() arguments must be strings".into()).at(span))
+                        }
+                    }
+                    (Value::Task(t), "join") | (Value::Task(t), "wait") => {
+                        let mut guard = t.lock().unwrap();
+                        if let Some(handle) = guard.take() {
+                            match handle.join() {
+                                Ok(Ok(val)) => Ok(val),
+                                Ok(Err(e)) => Err(e),
+                                Err(_) => Err(RuntimeError::new("Spawned task panicked".into()).at(span)),
+                            }
+                        } else {
+                            Ok(Value::Null)
                         }
                     }
                     _ => {

@@ -6,12 +6,12 @@ fn handler(req) {
     state.visits += 1
     
     if req.path == "/" {
-        return "<h1>Welcome to Shae!</h1><p>Visits: \{state.visits}</p>"
+        return "<h1>Welcome to Shae!</h1><p>Visits: {state.visits}</p>"
     } else if req.path == "/api" {
         return state
     }
     
-    return "404 Not Found"
+    return { "status": 404, "body": "<h1>404 Not Found</h1>" }
 }
 
 print("Starting Shae server...")

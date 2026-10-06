@@ -8,6 +8,6 @@ fn fib(n) {
 
 let i = 0
 while i < 15 {
-    print("fib(\{i}) =", fib(i))
+    print("fib({i}) =", fib(i))
     i += 1
 }

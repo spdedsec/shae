@@ -10,8 +10,8 @@
   |____/|_| |_|\__,_|\___| 
 ```
 
-**The programming language that respects your sanity.**  
-*Fast, expressive, concurrent, and crash-proof general-purpose language with built-in HTTP servers and zero ceremony.*
+**A programming language. It runs, it does stuff, it leaves you alone.**  
+*Zero ceremony, built-in servers, effortless concurrency. Write code, ship it, go touch grass.*
 
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)]()
 [![Rust](https://img.shields.io/badge/built%20with-Rust%202024-orange.svg)](https://www.rust-lang.org/)
@@ -156,14 +156,23 @@ try {
 shae run main.shae
 shae main.shae
 
-# Static Linter (Check syntax without executing)
+# Static Linter (Detect syntax errors, typos, & undefined variables before running)
 shae check main.shae
+
+# Run Shae Test Suites (*_test.shae)
+shae test
+shae test tests/shae
 
 # Start Interactive REPL
 shae
+shae repl
+
+# Create a new project
+shae new my_app
 
 # Programming jokes & tips
 shae --joke
+shae --tip
 ```
 
 ---

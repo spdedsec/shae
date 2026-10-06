@@ -1,0 +1,8 @@
+// Pipeline and array test
+let numbers = [1, 2, 3, 4, 5]
+let result = numbers 
+    |> filter(fn(x) { return x % 2 != 0 }) 
+    |> map(fn(x) { return x * 10 })
+
+assert_eq(result, [10, 30, 50], "Pipeline filter/map failed")
+assert_eq(len(result), 3, "Length failed")

@@ -6,7 +6,7 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 - Lexer, Parser, AST, and Tree-Walking Evaluator in Rust.
 - Friendly, error-by-default property access and arrays (`?.` and `??` for safety).
 - Strict types on operators (e.g. `+` does not coerce strings and numbers implicitly).
-- String interpolation (`"Hello \{name}"`).
+- String interpolation (`"Hello {name}"`, escape with `\{`).
 - Exact float equality for `==`.
 - Builtins: `print`, `dbg`, `len`, `type`, `str`, `num`, `range`, `push`, `pop`, `keys`, `values`, `get`, `json_parse`, `json_stringify`, `serve`.
 - Arity checks on function calls.
@@ -17,22 +17,22 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 - File I/O (`read()`, `write()`) and network requests (`fetch(url)`).
 - Error handling mechanisms (e.g., `try` block or `Result` types).
 - [x] Module system (`use "file.shae"`).
-- Multi-line REPL.
+- [x] Interactive REPL.
 - Built-in `approx(a, b)` for approximate float comparisons.
-- `shae check` (linter) and `shae fmt` (formatter).
+- [x] `shae check` (static AST linter) and `shae fmt` (formatter).
 
 ## Phase 3: Seriousness
-- Strict booleans in conditions (resolving the open design question of truthiness vs explicit booleans).
+- [x] Pragmatic truthiness in conditions (formalized in LANGUAGE.md; empty collections, 0, null, false are falsy).
 - [x] Aliases `and`, `or`, `not` for `&&`, `||`, `!`.
 - Integer type support (currently all numbers are `f64`).
 - [x] Structs, Enums, and pattern matching.
 - Pipe operator `|>` for ergonomic data transformations.
 - Stack traces for runtime errors.
-- Concurrent and robust HTTP `serve` (request headers, bodies, status codes, routing).
+- [x] Concurrent and robust HTTP `serve` (request headers, bodies, status codes, routing).
 - [x] Bytecode VM scaffolding and AST compiler core.
 - Type annotations and optional static typing.
 - [x] CLI Toolchain (check, fmt)
 - [x] OS Standard Library (env, exec, time)
 - [x] Try/Catch Error Handling
-- [x] Concurrency (spawn)
-- Package manager, LSP, and Test Runner.
+- [x] Concurrency (`spawn` with `Task` handles and `join`/error propagation)
+- [x] Test Runner (`shae test` with `assert` & `assert_eq`), LSP, and Package manager.

@@ -1,0 +1,7 @@
+// Math and logic test
+let a = 15
+let b = 27
+assert_eq(a + b, 42, "Addition failed")
+assert_eq(b - a, 12, "Subtraction failed")
+assert_eq(a * 2, 30, "Multiplication failed")
+assert(a < b, "Comparison failed")

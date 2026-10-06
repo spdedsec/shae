@@ -6,10 +6,10 @@ let items = [
     { name: "Headphones", price: 150 }
 ]
 
-print("We have \{len(items)} items.")
+print("We have {len(items)} items.")
 
 let first_item = items[0]
-print("First item: \{first_item.name} costs $\\{first_item.price}")
+print("First item: {first_item.name} costs ${first_item.price}")
 
 let bad_prop = first_item?.not_exist ?? "default_value"
-print("Fallback value: \{bad_prop}")
+print("Fallback value: {bad_prop}")

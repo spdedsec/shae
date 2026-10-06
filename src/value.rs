@@ -4,6 +4,7 @@ use crate::eval::{Evaluator, RuntimeError};
 use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
 use std::sync::RwLock;
+use std::sync::Mutex;
 use std::fmt;
 use std::sync::Arc;
 
@@ -54,6 +55,7 @@ Builtin {
         variant_name: String,
         values: Vec<Value>,
     },
+    Task(Arc<Mutex<Option<std::thread::JoinHandle<Result<Value, RuntimeError>>>>>),
 }
 
 impl Value {
@@ -73,6 +75,7 @@ Value::Builtin { .. } => "builtin_function",
             Value::EnumDef { .. } => "enum_def",
             Value::EnumConstructor { .. } => "enum_constructor",
             Value::EnumInstance { .. } => "enum_instance",
+            Value::Task(_) => "task",
         }
     }
 
@@ -86,7 +89,7 @@ Value::Builtin { .. } => "builtin_function",
             Value::Map(m) => !m.read().unwrap().is_empty(),
 Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. } => true,
             Value::StructDef { .. } | Value::StructInstance { .. } => true,
-            Value::EnumDef { .. } | Value::EnumConstructor { .. } | Value::EnumInstance { .. } => true,
+            Value::EnumDef { .. } | Value::EnumConstructor { .. } | Value::EnumInstance { .. } | Value::Task(_) => true,
         }
     }
 
@@ -150,6 +153,7 @@ Value::Builtin { name, .. } => format!("<builtin {}>", name),
                     format!("{}.{}({})", enum_name, variant_name, vals.join(", "))
                 }
             }
+            Value::Task(_) => "<task>".to_string(),
         }
     }
 
@@ -209,6 +213,7 @@ Value::Builtin { name, .. } => JsonValue::String(format!("<builtin {}>", name)),
                 map.insert("values".to_string(), JsonValue::Array(list));
                 JsonValue::Object(map)
             }
+            Value::Task(_) => JsonValue::String("<task>".to_string()),
         }
     }
 
@@ -248,6 +253,7 @@ impl PartialEq for Value {
             (Value::EnumInstance { enum_name: e1, variant_name: v1, values: vals1 }, Value::EnumInstance { enum_name: e2, variant_name: v2, values: vals2 }) => {
                 e1 == e2 && v1 == v2 && vals1 == vals2
             }
+            (Value::Task(a), Value::Task(b)) => Arc::ptr_eq(a, b),
             _ => false,
         }
     }
