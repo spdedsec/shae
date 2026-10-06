@@ -1,0 +1,49 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum OpCode {
+    Return,
+    Constant,
+    Nil,
+    True,
+    False,
+    Pop,
+    GetLocal,
+    SetLocal,
+    GetGlobal,
+    DefineGlobal,
+    SetGlobal,
+    Equal,
+    Greater,
+    Less,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Not,
+    Negate,
+    Print,
+    Jump,
+    JumpIfFalse,
+    Loop,
+    Call,
+    Closure,
+    CloseUpvalue,
+    Class,
+    GetProperty,
+    SetProperty,
+    Method,
+    Invoke,
+    Inherit,
+    GetSuper,
+    SuperInvoke,
+    BuildList,
+    BuildMap,
+    IndexGet,
+    IndexSet,
+}
+
+impl From<u8> for OpCode {
+    fn from(byte: u8) -> Self {
+        unsafe { std::mem::transmute(byte) }
+    }
+}
