@@ -45,6 +45,9 @@ pub fn register(env: &mut Environment) {
         ("read", builtin_read),
         ("write", builtin_write),
         ("fetch", builtin_fetch),
+        ("time", builtin_time),
+        ("env", builtin_env),
+        ("exec", builtin_exec),
     ];
     for (name, func) in builtins {
         env.define(
@@ -428,5 +431,40 @@ fn builtin_fetch(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
         }
     } else {
         Err(RuntimeError::new("fetch expects a string url".into()).at(span))
+    }
+}
+
+fn builtin_time(_eval: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+    if let Ok(duration) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(Value::Number(duration.as_secs_f64()))
+    } else {
+        Ok(Value::Number(0.0))
+    }
+}
+
+fn builtin_env(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("env", 1, &args, span)?;
+    if let Value::String(k) = &args[0] {
+        if let Ok(val) = std::env::var(k) {
+            Ok(Value::String(val))
+        } else {
+            Ok(Value::Null)
+        }
+    } else {
+        Err(RuntimeError::new("env() key must be a string.".to_string()).at(span))
+    }
+}
+
+fn builtin_exec(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("exec", 1, &args, span)?;
+    if let Value::String(cmd) = &args[0] {
+        if let Ok(output) = std::process::Command::new("sh").arg("-c").arg(cmd).output() {
+            let out = String::from_utf8_lossy(&output.stdout).to_string();
+            Ok(Value::String(out))
+        } else {
+            Err(RuntimeError::new("Failed to execute command.".to_string()).at(span))
+        }
+    } else {
+        Err(RuntimeError::new("exec() command must be a string.".to_string()).at(span))
     }
 }
