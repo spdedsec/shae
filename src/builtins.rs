@@ -35,6 +35,8 @@ pub fn register(env: &mut Environment) {
         ("num", builtin_num),
         ("range", builtin_range),
         ("push", builtin_push),
+        ("map", builtin_map),
+        ("filter", builtin_filter),
         ("pop", builtin_pop),
         ("keys", builtin_keys),
         ("values", builtin_values),
@@ -478,4 +480,36 @@ fn builtin_spawn(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<
         let _ = spawn_eval.call_value(&func, vec![], span);
     });
     Ok(Value::Null)
+}
+
+fn builtin_map(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("map", 2, &args, span)?;
+    if let Value::Array(arr) = &args[0] {
+        let func = &args[1];
+        let mut new_arr = Vec::new();
+        for item in arr.read().unwrap().iter() {
+            let mapped = ev.call_value(func, vec![item.clone()], span)?;
+            new_arr.push(mapped);
+        }
+        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(new_arr))))
+    } else {
+        Err(RuntimeError::new("First argument to map must be an array".into()).at(span))
+    }
+}
+
+fn builtin_filter(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("filter", 2, &args, span)?;
+    if let Value::Array(arr) = &args[0] {
+        let func = &args[1];
+        let mut new_arr = Vec::new();
+        for item in arr.read().unwrap().iter() {
+            let cond = ev.call_value(func, vec![item.clone()], span)?;
+            if cond.is_truthy() {
+                new_arr.push(item.clone());
+            }
+        }
+        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(new_arr))))
+    } else {
+        Err(RuntimeError::new("First argument to filter must be an array".into()).at(span))
+    }
 }
