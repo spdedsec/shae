@@ -11,9 +11,9 @@
 ```
 
 **The programming language that respects your sanity.**  
-*Fast, expressive, and crash-proof general-purpose language with built-in HTTP servers and zero ceremony.*
+*Fast, expressive, concurrent, and crash-proof general-purpose language with built-in HTTP servers and zero ceremony.*
 
-[![Tests](https://img.shields.io/badge/tests-12%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)]()
 [![Rust](https://img.shields.io/badge/built%20with-Rust%202024-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -32,9 +32,11 @@ Most modern languages force you into an extreme:
 **Shae is built to be the sweet spot**:
 - 🚫 **No Boilerplate Cliches**: No semicolons. No parentheses around `if` or `while`.
 - 🌐 **Built-in Web Server**: Spin up a full HTTP server in 5 lines with zero external libraries.
-- 🛡️ **Zero Null Crashes**: Missing fields return `null` instead of panicking; fallback with `??`.
-- 🔁 **Closures & First-Class Functions**: Lambdas, higher-order functions, and implicit returns.
-- 💬 **Friendly Human Compiler**: Clear, witty error messages that guide you rather than lecture you.
+- ⚡ **True Concurrency**: Fire-and-forget OS background threads instantly using the `spawn()` builtin.
+- 🛡️ **Graceful Error Handling**: `try/catch` blocks and beautiful stack traces prevent complete server crashes.
+- 🧬 **Data Pipelines**: The Elixir-style pipe operator (`|>`) effortlessly chains functions.
+- 🧱 **Structs & Enums**: First-class support for strict data shapes and Rust-style `match` pattern matching.
+- 💬 **Friendly Human Compiler**: The `shae check` static linter provides clear, witty error messages that guide you rather than lecture you.
 
 ---
 
@@ -48,98 +50,101 @@ cd shae
 cargo install --path .
 ```
 
-### 2. Hello World (`hello.shae`)
+### 2. A "Max Level" API Server
 ```shae
-let name = "Satya"
-print("Welcome to Shae, " + name + "!")
-```
-Run it:
-```bash
-shae hello.shae
-```
+struct User { id, name }
+enum Response { Success(data), Error(msg) }
 
----
+let db = "users.json"
 
-### 3. Spin Up a Real Web Server in 5 Lines! (`server.shae`)
-```shae
-let visits = 0
+fn background_monitor() {
+    print("System OS User: " + env("USER"))
+    print("Disk Space: " + exec("df -h /").trim())
+}
+spawn(background_monitor) // Runs asynchronously on a background thread!
 
-fn router(req) {
-    visits += 1
-    return "<h1>Hello from Shae!</h1><p>Visitor count: " + visits + "</p>"
+fn api_handler(request) {
+    let start = time()
+    
+    let res = match request.path {
+        "/users" => {
+            let data = try { read(db) } catch (e) { "[]" }
+            Response.Success(json_parse(data) |> map(fn(u) { return u.name }))
+        },
+        _ => Response.Error("Not Found")
+    }
+    
+    return match res {
+        Response.Success(data) => { "status": "ok", "data": data },
+        Response.Error(msg) => { "status": "error", "message": msg }
+    }
 }
 
 print("Listening on http://localhost:8080...")
-serve(8080, router)
+serve(8080, api_handler)
 ```
+
 Run it:
 ```bash
-shae server.shae
-```
-Open [http://localhost:8080](http://localhost:8080) in your browser!
-
----
-
-### 4. Interactive REPL
-Just type `shae` into your terminal:
-```
-$ shae
-
-   ____  _                 
-  / ___|| |__   __ _  ___  
-  \___ \| '_ \ / _` |/ _ \ 
-   ___) | | | | (_| |  __/ 
-  |____/|_| |_|\__,_|\___| 
-  The programming language that respects your sanity.
-
-Shae v0.2.0 Interactive REPL
-Type 'exit' or press Ctrl+D to quit.
-
-shae> let double = fn(x) { x * 2 }
-shae> double(21)
-=> 42
-shae> let user = { name: "Satya" }
-shae> user.role ?? "Superuser"
-=> "Superuser"
-shae> exit
+shae run server.shae
 ```
 
 ---
 
 ## 🛠️ Language Features & Cheat Sheet
 
-### Closures & First-Class Functions
+### The Data Pipeline (`|>`)
+Pass data cleanly through transformations:
 ```shae
-fn make_counter() {
-    let count = 0
-    return fn() {
-        count += 1
-        return count
-    }
+let users = [
+    { name: "Alice", active: true },
+    { name: "Bob", active: false }
+]
+
+let active_names = users 
+    |> filter(fn(u) { return u.active }) 
+    |> map(fn(u) { return u.name })
+
+print(active_names) // ["Alice"]
+```
+
+### Structs, Enums, and Pattern Matching
+```shae
+struct Point { x, y }
+let p = Point { x: 10, y: 20 }
+
+enum Option { Some(value), None }
+let opt = Option.Some(42)
+
+match opt {
+    Option.Some(val) => print("Got: " + str(val)),
+    Option.None => print("Got nothing!")
 }
-
-let next = make_counter()
-print(next()) // 1
-print(next()) // 2
 ```
 
-### Negative Array Indexing & List Operations
+### Concurrency and Standard Library
 ```shae
-let stack = [10, 20, 30]
-print(stack[-1]) // 30 (last item, Python-style!)
+// Execute shell commands directly
+let files = exec("ls -la")
 
-push(stack, 40)
-let removed = pop(stack) // 40
-print("Length:", len(stack))
+// Fetch from APIs seamlessly
+let github = fetch("https://api.github.com/users/spdedsec")
+
+// File I/O
+write("log.txt", "Server started at " + str(time()))
+
+// True Multithreading
+fn heavy_task() { /* ... */ }
+spawn(heavy_task) 
 ```
 
-### Safe Navigation & Null Coalescing
+### Try/Catch
 ```shae
-let profile = { name: "Satya" }
-
-// No "Cannot read property of undefined" crashes!
-let bio = profile.bio ?? "Default Bio"
-let theme = profile?.settings?.theme ?? "dark"
+try {
+    let raw = read("missing_file.txt")
+} catch (err) {
+    print("Oops! Failed to load file: " + err)
+}
 ```
 
 ---
@@ -147,20 +152,18 @@ let theme = profile?.settings?.theme ?? "dark"
 ## 💡 CLI Commands
 
 ```bash
-# Run a script
-shae main.shae
+# Execute a script
 shae run main.shae
+shae main.shae
 
-# Start REPL
+# Static Linter (Check syntax without executing)
+shae check main.shae
+
+# Start Interactive REPL
 shae
-shae repl
-
-# Create a new Shae project
-shae new my_awesome_app
 
 # Programming jokes & tips
 shae --joke
-shae --tip
 ```
 
 ---
@@ -170,7 +173,7 @@ shae --tip
 ```bash
 cargo test
 ```
-Runs the 12 comprehensive unit and integration test suites covering lexer rules, Pratt parser precedence, closures, array mutations, loops, and native web server handling.
+Runs comprehensive unit and integration test suites covering the VM, evaluator, lexer rules, Pratt parser precedence, closures, array mutations, pipelines, stack traces, and native web server handling.
 
 ---
 

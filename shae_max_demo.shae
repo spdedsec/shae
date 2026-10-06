@@ -1,0 +1,97 @@
+// ==========================================
+// SHAE MAX LEVEL DEMONSTRATION SCRIPT
+// ==========================================
+// This script demonstrates the bleeding edge features of Shae:
+// - True Concurrency via OS threads (`spawn`)
+// - Graceful Error Handling (`try/catch`)
+// - System builtins (`env`, `exec`, `time`)
+// - Data Pipeline processing (`|>` operator)
+// - Enums, Structs, and Pattern Matching
+// - HTTP Web Server (`serve`)
+
+// 1. Data Structures (Enums and Structs)
+struct User { id, name, role }
+
+enum Response {
+    Success(data),
+    Error(message, code)
+}
+
+// 2. The Database Initialization (try/catch + JSON I/O)
+let db_file = "users.json"
+
+try {
+    let raw = read(db_file)
+    print("✅ Database loaded from disk.")
+} catch (e) {
+    print("⚠️ Database missing, generating default data...")
+    let json_data = [
+        { "id": 1, "name": "Admin", "role": "admin" },
+        { "id": 2, "name": "Alice", "role": "user" },
+        { "id": 3, "name": "Bob", "role": "user" }
+    ]
+    write(db_file, json_stringify(json_data))
+}
+
+// 3. Background Workers (Concurrency + OS Exec)
+fn system_monitor() {
+    let current_user = env("USER")
+    let pwd = exec("pwd")
+    print("🔍 [Worker] Running in background on thread! User: " + str(current_user))
+    print("🔍 [Worker] CWD: " + pwd.trim())
+}
+// ⚡ Instantly pushes this function to a background OS thread!
+spawn(system_monitor)
+
+// 4. Data Processing Pipelines (`|>`)
+fn get_standard_users(raw_json) {
+    let data = json_parse(raw_json)
+    
+    // Pipe operator elegantly transforms the data flowing left-to-right
+    let user_names = data 
+        |> filter(fn(u) { return u.role == "user" }) 
+        |> map(fn(u) { return u.name })
+        
+    return user_names
+}
+
+// 5. HTTP Request Handler
+fn api_handler(request) {
+    let start_time = time()
+    print("\n📡 Request: " + request.method + " " + request.path)
+    
+    let res = match request.path {
+        "/users" => Response.Success(get_standard_users(read(db_file))),
+        "/admin" => Response.Error("Unauthorized access attempt!", 403),
+        _ => Response.Error("Endpoint Not Found", 404)
+    }
+    
+    // Pattern Matching the Enum response
+    let final_response = match res {
+        Response.Success(data) => {
+            "status": "success",
+            "data": data
+        },
+        Response.Error(msg, code) => {
+            "status": "error",
+            "error_message": msg,
+            "status_code": code
+        }
+    }
+    
+    let elapsed = time() - start_time
+    print("⚡ Processed in " + str(elapsed) + " seconds")
+    
+    return final_response
+}
+
+// 6. Server Initialization
+let port = 8080
+print("\n🚀 Starting High-Performance Shae Server!")
+print("👉 Try visiting http://localhost:8080/users")
+print("👉 Try visiting http://localhost:8080/admin")
+print("👉 Try visiting http://localhost:8080/unknown")
+
+// Serve blocks the main thread and routes traffic to the handler
+// serve(port, api_handler) // Uncomment to run the blocking server
+exec("sleep 1")
