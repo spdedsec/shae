@@ -3,8 +3,8 @@ use crate::env::Environment;
 use crate::eval::{Evaluator, RuntimeError};
 use crate::value::Value;
 use indexmap::IndexMap;
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::RwLock;
+use std::sync::Arc;
 
 pub fn expect_args(
     name: &str,
@@ -48,6 +48,7 @@ pub fn register(env: &mut Environment) {
         ("time", builtin_time),
         ("env", builtin_env),
         ("exec", builtin_exec),
+        ("spawn", builtin_spawn),
     ];
     for (name, func) in builtins {
         env.define(
@@ -80,8 +81,8 @@ fn builtin_len(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Valu
     expect_args("len", 1, &args, span)?;
     match &args[0] {
         Value::String(s) => Ok(Value::Number(s.len() as f64)),
-        Value::Array(a) => Ok(Value::Number(a.borrow().len() as f64)),
-        Value::Map(m) => Ok(Value::Number(m.borrow().len() as f64)),
+        Value::Array(a) => Ok(Value::Number(a.read().unwrap().len() as f64)),
+        Value::Map(m) => Ok(Value::Number(m.read().unwrap().len() as f64)),
         other => {
             Err(RuntimeError::new(format!("Cannot get length of {}", other.type_name())).at(span))
         }
@@ -172,13 +173,13 @@ fn builtin_range(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
             current += step;
         }
     }
-    Ok(Value::Array(Rc::new(RefCell::new(res))))
+    Ok(Value::Array(Arc::new(RwLock::new(res))))
 }
 
 fn builtin_push(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     expect_args("push", 2, &args, span)?;
     if let Value::Array(arr) = &args[0] {
-        arr.borrow_mut().push(args[1].clone());
+        arr.write().unwrap().push(args[1].clone());
         Ok(Value::Null)
     } else {
         Err(RuntimeError::new("First argument to push must be an array".into()).at(span))
@@ -188,7 +189,7 @@ fn builtin_push(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
 fn builtin_pop(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     expect_args("pop", 1, &args, span)?;
     if let Value::Array(arr) = &args[0] {
-        arr.borrow_mut()
+        arr.write().unwrap()
             .pop()
             .ok_or_else(|| RuntimeError::new("Cannot pop from an empty array".into()).at(span))
     } else {
@@ -200,11 +201,11 @@ fn builtin_keys(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
     expect_args("keys", 1, &args, span)?;
     if let Value::Map(m) = &args[0] {
         let keys = m
-            .borrow()
+            .read().unwrap()
             .keys()
             .map(|k| Value::String(k.clone()))
             .collect();
-        Ok(Value::Array(Rc::new(RefCell::new(keys))))
+        Ok(Value::Array(Arc::new(RwLock::new(keys))))
     } else {
         Err(RuntimeError::new("Argument to keys must be a map".into()).at(span))
     }
@@ -217,8 +218,8 @@ fn builtin_values(
 ) -> Result<Value, RuntimeError> {
     expect_args("values", 1, &args, span)?;
     if let Value::Map(m) = &args[0] {
-        let values = m.borrow().values().cloned().collect();
-        Ok(Value::Array(Rc::new(RefCell::new(values))))
+        let values = m.read().unwrap().values().cloned().collect();
+        Ok(Value::Array(Arc::new(RwLock::new(values))))
     } else {
         Err(RuntimeError::new("Argument to values must be a map".into()).at(span))
     }
@@ -228,7 +229,7 @@ fn builtin_get(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Valu
     expect_args("get", 3, &args, span)?;
     match (&args[0], &args[1]) {
         (Value::Map(m), Value::String(k)) => {
-            if let Some(v) = m.borrow().get(k) {
+            if let Some(v) = m.read().unwrap().get(k) {
                 Ok(v.clone())
             } else {
                 Ok(args[2].clone())
@@ -354,7 +355,7 @@ fn builtin_serve(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
                 req_map.insert("path".to_string(), Value::String(path));
                 req_map.insert("query".to_string(), Value::String(query));
 
-                let req_val = Value::Map(Rc::new(RefCell::new(req_map)));
+                let req_val = Value::Map(Arc::new(RwLock::new(req_map)));
 
                 let res = ev.call_value(&handler, vec![req_val], span);
 
@@ -467,4 +468,14 @@ fn builtin_exec(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<V
     } else {
         Err(RuntimeError::new("exec() command must be a string.".to_string()).at(span))
     }
+}
+
+fn builtin_spawn(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("spawn", 1, &args, span)?;
+    let func = args[0].clone();
+    std::thread::spawn(move || {
+        let mut spawn_eval = Evaluator::new();
+        let _ = spawn_eval.call_value(&func, vec![], span);
+    });
+    Ok(Value::Null)
 }
