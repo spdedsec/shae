@@ -578,6 +578,8 @@ impl Lexer {
             "null" => Token::Null,
             "break" => Token::Break,
             "continue" => Token::Continue,
+            "try" => Token::Try,
+            "catch" => Token::Catch,
             "use" => Token::Use,
             "and" => Token::And,
             "or" => Token::Or,

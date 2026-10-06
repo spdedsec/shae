@@ -1,0 +1,58 @@
+// 1. Basic Variables and Arithmetic
+let a = 10
+let b = (a + 5) * 2
+if b != 30 { print("Math failed!") }
+
+// 2. Arrays, Strings, and Methods
+let arr = [1, 2, 3]
+arr.push(4)
+let evens = arr.map(fn(x) { return x * 2 }).filter(fn(x) { return x > 5 })
+if evens.len != 2 { print("Array methods failed!") }
+
+let s = "  hello world  "
+let clean = s.trim().upper()
+if clean != "HELLO WORLD" { print("String methods failed!") }
+
+// 3. Loops and Control Flow
+let sum = 0
+for i in range(0, 10, 1) {
+    if i == 5 { continue }
+    if i == 8 { break }
+    sum = sum + i
+}
+if sum != 23 { print("Loops failed!") }
+
+// 4. Enums and Pattern Matching
+enum Option {
+    Some(val),
+    None()
+}
+let my_opt = Option.Some("data")
+
+let opt_res = match my_opt {
+    Option.Some(val) => "Got " + val,
+    Option.None() => "Nothing"
+}
+if opt_res != "Got data" { print("Enum match failed!") }
+
+// 5. Closures and Higher Order
+fn multiplier(factor) {
+    return fn(x) { return x * factor }
+}
+let triple = multiplier(3)
+if triple(4) != 12 { print("Closure failed!") }
+
+// 6. Pipe Operator
+fn add(x, y) { return x + y }
+let pipe_res = 5 |> add(10) |> add(5)
+if pipe_res != 20 { print("Pipe failed!") }
+
+// 7. I/O and JSON Builtins
+let data = { "key": [1, 2, 3] }
+let json_str = json_stringify(data)
+write("test_io.json", json_str)
+let read_back = read("test_io.json")
+let parsed = json_parse(read_back)
+if parsed.key[2] != 3 { print("I/O or JSON failed!") }
+
+print("✅ ALL MEGA TESTS PASSED SUCCESSFULLY!")

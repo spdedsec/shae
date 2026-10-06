@@ -177,6 +177,18 @@ StmtKind::StructDef { name, fields } => {
                     Ok(Signal::None)
                 }
             }
+            
+            StmtKind::TryCatch { try_body, catch_ident, catch_body } => {
+                let try_env = std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new_with_parent(env.clone())));
+                match self.eval_block(try_body, &try_env) {
+                    Ok(sig) => Ok(sig),
+                    Err(e) => {
+                        let catch_env = std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new_with_parent(env.clone())));
+                        catch_env.borrow_mut().define(catch_ident.clone(), Value::String(e.message));
+                        self.eval_block(catch_body, &catch_env)
+                    }
+                }
+            }
             StmtKind::While { condition, body } => {
                 let mut last_val = Value::Null;
                 loop {
