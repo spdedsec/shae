@@ -35,6 +35,8 @@ pub enum Token {
     Break,
     Use,
     Continue,
+    Try,
+    Catch,
 
     // Identifiers & Literals
     Ident(String),
@@ -102,6 +104,8 @@ impl fmt::Display for Token {
             Token::Break => write!(f, "'break'"),
             Token::Use => write!(f, "'use'"),
             Token::Continue => write!(f, "'continue'"),
+            Token::Try => write!(f, "'try'"),
+            Token::Catch => write!(f, "'catch'"),
             Token::Ident(s) => write!(f, "identifier '{}'", s),
             Token::StringLit(s) => write!(f, "string \"{}\"", s),
             Token::NumberLit(n) => write!(f, "number {}", n),

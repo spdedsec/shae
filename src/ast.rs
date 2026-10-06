@@ -43,6 +43,11 @@ pub enum StmtKind {
         then_branch: Vec<Stmt>,
         else_branch: Option<Vec<Stmt>>,
     },
+    TryCatch {
+        try_body: Vec<Stmt>,
+        catch_ident: String,
+        catch_body: Vec<Stmt>,
+    },
     While {
         condition: Expr,
         body: Vec<Stmt>,
