@@ -1,141 +1,79 @@
-use clap::{Parser as ClapParser, Subcommand};
-use shae::eval::Evaluator;
-use shae::{render_error, run_in_evaluator};
+use std::env;
 use std::fs;
-use std::io::{self, Write};
-use std::path::PathBuf;
-use std::thread;
-
-#[derive(ClapParser)]
-#[command(
-    name = "shae",
-    about = "The programming language that respects your sanity"
-)]
-#[command(version = env!("CARGO_PKG_VERSION"))]
-struct Cli {
-    #[command(subcommand)]
-    command: Option<Commands>,
-
-    file: Option<PathBuf>,
-
-    #[arg(long)]
-    joke: bool,
-
-    #[arg(long)]
-    tip: bool,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    Run { file: PathBuf },
-    Repl,
-    New { name: String },
-}
+use std::process;
+use shae::run;
+use shae::lexer;
+use shae::parser;
 
 fn main() {
-    // Run everything in a thread with a large stack to prevent stack overflows
-    // from crashing the host process natively before our internal depth limit kicks in.
-    let builder = thread::Builder::new()
-        .name("shae-main".into())
-        .stack_size(256 * 1024 * 1024);
-
-    let handler = builder
-        .spawn(|| {
-            run_cli();
-        })
-        .unwrap();
-
-    handler.join().unwrap();
-}
-
-fn run_cli() {
-    let cli = Cli::parse();
-
-    if cli.joke {
-        println!("Why do programmers prefer dark mode? Because light attracts bugs.");
-        return;
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 {
+        println!("Usage: shae <command> <file>");
+        println!("Commands:");
+        println!("  run <file>    Execute a Shae script");
+        println!("  check <file>  Syntax check a Shae script");
+        println!("  fmt <file>    Format a Shae script (Coming soon)");
+        process::exit(1);
     }
-
-    if cli.tip {
-        println!("💡 Tip: Use `?.` to safely access properties that might be null.");
-        return;
-    }
-
-    if let Some(cmd) = cli.command {
-        match cmd {
-            Commands::Run { file } => run_file(file),
-            Commands::Repl => run_repl(),
-            Commands::New { name } => create_project(&name),
-        }
-    } else if let Some(file) = cli.file {
-        run_file(file);
+    
+    let command = if args.len() == 2 && !args[1].ends_with(".shae") {
+        "run".to_string()
+    } else if args.len() == 2 {
+        "run".to_string()
     } else {
-        run_repl();
-    }
-}
+        args[1].clone()
+    };
+    
+    let filename = if args.len() == 2 { &args[1] } else { &args[2] };
 
-fn run_file(path: PathBuf) {
-    let source = match fs::read_to_string(&path) {
+    let source = match fs::read_to_string(filename) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("Error reading file {}: {}", path.display(), e);
-            std::process::exit(1);
+            eprintln!("Error reading file {}: {}", filename, e);
+            process::exit(1);
         }
     };
-
-    let mut ev = Evaluator::new();
-    if let Err(e) = run_in_evaluator(&source, &mut ev) {
-        eprintln!("{}", render_error(&e, &source));
-        std::process::exit(1);
-    }
-}
-
-fn run_repl() {
-    println!("Shae {} REPL", env!("CARGO_PKG_VERSION"));
-    println!("Type 'exit' to quit");
-    let mut ev = Evaluator::new();
-    let mut input = String::new();
-
-    loop {
-        print!("> ");
-        io::stdout().flush().unwrap();
-        input.clear();
-        if io::stdin().read_line(&mut input).is_err() || input.trim() == "exit" {
-            break;
+    
+    match command.as_str() {
+        "run" => {
+            if let Err(e) = run(&source) {
+                eprintln!("{}", shae::render_error(&e, &source));
+                process::exit(1);
+            }
         }
-
-        if input.trim().is_empty() {
-            continue;
-        }
-
-        match run_in_evaluator(&input, &mut ev) {
-            Ok(val) => {
-                if !matches!(val, shae::value::Value::Null) {
-                    println!("{}", val.to_display());
+        "check" => {
+            println!("Checking syntax for {}...", filename);
+            match lexer::tokenize(&source) {
+                Ok(tokens) => {
+                    match parser::parse(tokens) {
+                        Ok(_) => {
+                            println!("✅ Syntax OK.");
+                        }
+                        Err(e) => {
+                            eprintln!("❌ Syntax Error: {:?}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("❌ Lexer Error: {:?}", e);
+                    process::exit(1);
                 }
             }
-            Err(e) => {
-                eprintln!("{}", render_error(&e, &input));
+        }
+        "fmt" => {
+            println!("Formatting is coming soon!");
+        }
+        _ => {
+            if args.len() == 2 {
+                if let Err(e) = run(&source) {
+                    eprintln!("{}", shae::render_error(&e, &source));
+                    process::exit(1);
+                }
+            } else {
+                eprintln!("Unknown command: {}", command);
+                process::exit(1);
             }
         }
     }
-}
-
-fn create_project(name: &str) {
-    let mut path = PathBuf::from(name);
-    if !path.exists() {
-        fs::create_dir_all(&path).unwrap();
-    }
-    path.push("main.shae");
-    let content = format!(
-        r#"// Welcome to {}!
-// Shae is a fast, fun, and strict-by-default language.
-
-let name = "World"
-print("Hello, \\{name}!")
-"#,
-        name
-    );
-    fs::write(&path, content).unwrap();
-    println!("Created new Shae project in {}", name);
 }
