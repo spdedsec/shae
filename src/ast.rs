@@ -24,9 +24,22 @@ pub struct EnumVariant {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum BindingPattern {
+    Ident(String),
+    Array {
+        elements: Vec<BindingPattern>,
+        rest: Option<String>,
+    },
+    Object {
+        fields: Vec<(String, Option<BindingPattern>)>,
+        rest: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum StmtKind {
     Let {
-        name: String,
+        pattern: BindingPattern,
         init: Expr,
     },
     Assign {
@@ -82,6 +95,7 @@ pub enum InterpPart {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    pub guard: Option<Box<Expr>>,
     pub body: Box<Expr>,
 }
 
@@ -90,10 +104,15 @@ pub enum Pattern {
     Wildcard,
     Variable(String),
     Literal(Literal),
+    Range {
+        start: Literal,
+        end: Literal,
+        inclusive: bool,
+    },
     Enum {
-        enum_name: String,
+        enum_name: Option<String>,
         variant_name: String,
-        fields: Vec<String>,
+        fields: Vec<Pattern>,
     },
 }
 

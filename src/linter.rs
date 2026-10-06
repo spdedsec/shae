@@ -1,4 +1,4 @@
-use crate::ast::{Expr, Literal, MatchArm, Pattern, Program, Span, Stmt, StmtKind};
+use crate::ast::{BindingPattern, Expr, MatchArm, Pattern, Program, Span, Stmt, StmtKind};
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -103,19 +103,9 @@ impl Linter {
 
     fn lint_stmt(&mut self, stmt: &Stmt) {
         match &stmt.kind {
-            StmtKind::Let { name, init } => {
+            StmtKind::Let { pattern, init } => {
                 self.lint_expr(init);
-                if let Some(scope) = self.scopes.last() {
-                    if scope.contains(name) {
-                        self.diagnostics.push(Diagnostic {
-                            severity: DiagnosticSeverity::Warning,
-                            message: format!("Variable '{}' is already declared in this scope", name),
-                            hint: Some("Consider reusing the existing variable or using a different name.".into()),
-                            span: stmt.span,
-                        });
-                    }
-                }
-                self.declare(name);
+                self.declare_binding_pattern(pattern, stmt.span);
             }
             StmtKind::Assign { target, value } => {
                 self.lint_expr(target);
@@ -278,9 +268,12 @@ impl Linter {
             }
             Expr::Match { target, arms, .. } => {
                 self.lint_expr(target);
-                for MatchArm { pattern, body } in arms {
+                for MatchArm { pattern, guard, body } in arms {
                     self.push_scope();
                     self.bind_pattern(pattern);
+                    if let Some(g) = guard {
+                        self.lint_expr(g);
+                    }
                     self.lint_expr(body);
                     self.pop_scope();
                 }
@@ -300,13 +293,51 @@ impl Linter {
 
     fn bind_pattern(&mut self, pattern: &Pattern) {
         match pattern {
-            Pattern::Wildcard | Pattern::Literal(Literal::Null) | Pattern::Literal(_) => {}
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => {}
             Pattern::Variable(v) => {
                 self.declare(v);
             }
             Pattern::Enum { fields, .. } => {
                 for f in fields {
-                    self.declare(f);
+                    self.bind_pattern(f);
+                }
+            }
+        }
+    }
+
+    fn declare_binding_pattern(&mut self, pattern: &BindingPattern, span: Span) {
+        match pattern {
+            BindingPattern::Ident(name) => {
+                if let Some(scope) = self.scopes.last() {
+                    if scope.contains(name) {
+                        self.diagnostics.push(Diagnostic {
+                            severity: DiagnosticSeverity::Warning,
+                            message: format!("Variable '{}' is already declared in this scope", name),
+                            hint: Some("Consider reusing the existing variable or using a different name.".into()),
+                            span,
+                        });
+                    }
+                }
+                self.declare(name);
+            }
+            BindingPattern::Array { elements, rest } => {
+                for elem in elements {
+                    self.declare_binding_pattern(elem, span);
+                }
+                if let Some(r) = rest {
+                    self.declare(r);
+                }
+            }
+            BindingPattern::Object { fields, rest } => {
+                for (name, opt_sub) in fields {
+                    if let Some(sub) = opt_sub {
+                        self.declare_binding_pattern(sub, span);
+                    } else {
+                        self.declare(name);
+                    }
+                }
+                if let Some(r) = rest {
+                    self.declare(r);
                 }
             }
         }

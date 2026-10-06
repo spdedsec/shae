@@ -57,6 +57,8 @@ pub enum Token {
     Colon,          // :
     Semicolon,      // ; (optional, allowed but not required)
     Dot,            // .
+    DotDot,         // ..
+    DotDotEq,       // ..=
     Question,       // ?
     DoubleQuestion, // ??
     Arrow,          // ->
@@ -132,6 +134,8 @@ impl fmt::Display for Token {
             Token::Colon => write!(f, "':'"),
             Token::Semicolon => write!(f, "';'"),
             Token::Dot => write!(f, "'.'"),
+            Token::DotDot => write!(f, "'..'"),
+            Token::DotDotEq => write!(f, "'..='"),
             Token::Question => write!(f, "'?'"),
             Token::DoubleQuestion => write!(f, "'??'"),
             Token::Arrow => write!(f, "'->'"),

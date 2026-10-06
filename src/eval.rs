@@ -156,9 +156,9 @@ StmtKind::StructDef { name, fields } => {
                 let val = self.eval_expr(expr, env).map_err(|e| e.or_at(stmt.span))?;
                 Ok(Signal::Value(val))
             }
-            StmtKind::Let { name, init } => {
+            StmtKind::Let { pattern, init } => {
                 let val = self.eval_expr(init, env).map_err(|e| e.or_at(stmt.span))?;
-                env.write().unwrap().define(name.clone(), val);
+                self.bind_pattern_value(pattern, val, env, stmt.span)?;
                 Ok(Signal::None)
             }
             StmtKind::Assign { target, value } => {
@@ -477,6 +477,12 @@ Expr::StructInit { name, fields, span } => {
                         let match_env = std::sync::Arc::new(std::sync::RwLock::new(crate::env::Environment::new_with_parent(env.clone())));
                         for (k, v) in bindings {
                             match_env.write().unwrap().define(k, v);
+                        }
+                        if let Some(guard) = &arm.guard {
+                            let guard_val = self.eval_expr(guard, &match_env)?;
+                            if !guard_val.is_truthy() {
+                                continue;
+                            }
                         }
                         return self.eval_expr(&arm.body, &match_env);
                     }
@@ -929,7 +935,8 @@ Expr::Use { path, span } => {
                             } else {
                                 Ok(Some(val))
                             }
-                        } else if property == "push" || property == "pop" || property == "map" || property == "filter" || property == "reduce" || property == "sum" || property == "sort" {
+                        } else if property == "push" || property == "pop" || property == "map" || property == "filter" || property == "reduce" || property == "sum" || property == "sort"
+                            || property == "find" || property == "some" || property == "every" || property == "flat" || property == "join" || property == "reverse" || property == "slice" {
                             Ok(Some(Value::BoundMethod {
                                 object: Box::new(Value::Array(a.clone())),
                                 method: property.clone()
@@ -945,7 +952,8 @@ Expr::Use { path, span } => {
                     Value::String(s) => {
                         if property == "len" {
                             Ok(Some(Value::Int(s.chars().count() as i64)))
-                        } else if property == "trim" || property == "upper" || property == "lower" || property == "split" || property == "replace" {
+                        } else if property == "trim" || property == "upper" || property == "lower" || property == "split" || property == "replace"
+                            || property == "starts_with" || property == "ends_with" || property == "contains" || property == "pad_start" || property == "lines" || property == "chars" {
                             Ok(Some(Value::BoundMethod {
                                 object: Box::new(Value::String(s.clone())),
                                 method: property.clone()
@@ -1309,6 +1317,144 @@ Expr::Use { path, span } => {
                         });
                         Ok(Value::Array(a.clone()))
                     }
+                    (Value::Array(a), "find") => {
+                        if args.len() != 1 {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("find() expects 1 argument (a function)".into()).at(span));
+                        }
+                        let func = &args[0];
+                        if !matches!(func, Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. }) {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("find() argument must be a function".into()).at(span));
+                        }
+                        let mut found = Value::Null;
+                        for item in a.read().unwrap().iter() {
+                            let matches = self.call_value(func, vec![item.clone()], span)?;
+                            if matches.is_truthy() {
+                                found = item.clone();
+                                break;
+                            }
+                        }
+                        Ok(found)
+                    }
+                    (Value::Array(a), "some") => {
+                        if args.len() != 1 {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("some() expects 1 argument (a function)".into()).at(span));
+                        }
+                        let func = &args[0];
+                        if !matches!(func, Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. }) {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("some() argument must be a function".into()).at(span));
+                        }
+                        for item in a.read().unwrap().iter() {
+                            let matches = self.call_value(func, vec![item.clone()], span)?;
+                            if matches.is_truthy() {
+                                return Ok(Value::Bool(true));
+                            }
+                        }
+                        Ok(Value::Bool(false))
+                    }
+                    (Value::Array(a), "every") => {
+                        if args.len() != 1 {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("every() expects 1 argument (a function)".into()).at(span));
+                        }
+                        let func = &args[0];
+                        if !matches!(func, Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. }) {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("every() argument must be a function".into()).at(span));
+                        }
+                        for item in a.read().unwrap().iter() {
+                            let matches = self.call_value(func, vec![item.clone()], span)?;
+                            if !matches.is_truthy() {
+                                return Ok(Value::Bool(false));
+                            }
+                        }
+                        Ok(Value::Bool(true))
+                    }
+                    (Value::Array(a), "flat") => {
+                        if !args.is_empty() {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("flat() expects 0 arguments".into()).at(span));
+                        }
+                        let mut flattened = Vec::new();
+                        for item in a.read().unwrap().iter() {
+                            if let Value::Array(nested) = item {
+                                for inner in nested.read().unwrap().iter() {
+                                    flattened.push(inner.clone());
+                                }
+                            } else {
+                                flattened.push(item.clone());
+                            }
+                        }
+                        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(flattened))))
+                    }
+                    (Value::Array(a), "join") => {
+                        let sep = if args.is_empty() {
+                            ",".to_string()
+                        } else if args.len() == 1 {
+                            match &args[0] {
+                                Value::String(s) => s.clone(),
+                                other => {
+                                    self.depth -= 1;
+                                    return Err(RuntimeError::new(format!("join() separator must be a string, got {}", other.type_name())).at(span));
+                                }
+                            }
+                        } else {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("join() expects 0 or 1 argument".into()).at(span));
+                        };
+                        let items: Vec<String> = a.read().unwrap().iter().map(|item| item.to_display()).collect();
+                        Ok(Value::String(items.join(&sep)))
+                    }
+                    (Value::Array(a), "reverse") => {
+                        if !args.is_empty() {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("reverse() expects 0 arguments".into()).at(span));
+                        }
+                        a.write().unwrap().reverse();
+                        Ok(Value::Array(a.clone()))
+                    }
+                    (Value::Array(a), "slice") => {
+                        let len = a.read().unwrap().len() as isize;
+                        let start = if !args.is_empty() {
+                            match to_i64_val(&args[0]) {
+                                Some(n) => n as isize,
+                                None => {
+                                    self.depth -= 1;
+                                    return Err(RuntimeError::new("slice() start index must be an integer".into()).at(span));
+                                }
+                            }
+                        } else {
+                            0
+                        };
+                        let end = if args.len() >= 2 {
+                            match to_i64_val(&args[1]) {
+                                Some(n) => n as isize,
+                                None => {
+                                    self.depth -= 1;
+                                    return Err(RuntimeError::new("slice() end index must be an integer".into()).at(span));
+                                }
+                            }
+                        } else {
+                            len
+                        };
+                        if args.len() > 2 {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("slice() expects 1 or 2 arguments".into()).at(span));
+                        }
+
+                        let norm_start = if start < 0 { (start + len).max(0) } else { start.min(len) } as usize;
+                        let norm_end = if end < 0 { (end + len).max(0) } else { end.min(len) } as usize;
+
+                        let sliced = if norm_start <= norm_end {
+                            a.read().unwrap()[norm_start..norm_end].to_vec()
+                        } else {
+                            Vec::new()
+                        };
+                        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(sliced))))
+                    }
                     // String methods
                     (Value::String(s), "trim") => {
                         if !args.is_empty() {
@@ -1356,6 +1502,98 @@ Expr::Use { path, span } => {
                             Err(RuntimeError::new("replace() arguments must be strings".into()).at(span))
                         }
                     }
+                    (Value::String(s), "starts_with") => {
+                        if args.len() != 1 {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("starts_with() expects 1 argument (prefix string)".into()).at(span));
+                        }
+                        if let Value::String(prefix) = &args[0] {
+                            Ok(Value::Bool(s.starts_with(prefix)))
+                        } else {
+                            self.depth -= 1;
+                            Err(RuntimeError::new("starts_with() prefix must be a string".into()).at(span))
+                        }
+                    }
+                    (Value::String(s), "ends_with") => {
+                        if args.len() != 1 {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("ends_with() expects 1 argument (suffix string)".into()).at(span));
+                        }
+                        if let Value::String(suffix) = &args[0] {
+                            Ok(Value::Bool(s.ends_with(suffix)))
+                        } else {
+                            self.depth -= 1;
+                            Err(RuntimeError::new("ends_with() suffix must be a string".into()).at(span))
+                        }
+                    }
+                    (Value::String(s), "contains") => {
+                        if args.len() != 1 {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("contains() expects 1 argument (substring)".into()).at(span));
+                        }
+                        if let Value::String(sub) = &args[0] {
+                            Ok(Value::Bool(s.contains(sub)))
+                        } else {
+                            self.depth -= 1;
+                            Err(RuntimeError::new("contains() argument must be a string".into()).at(span))
+                        }
+                    }
+                    (Value::String(s), "pad_start") => {
+                        if args.is_empty() || args.len() > 2 {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("pad_start() expects 1 or 2 arguments (target_length, [pad_string])".into()).at(span));
+                        }
+                        let target_len = match to_i64_val(&args[0]) {
+                            Some(n) if n >= 0 => n as usize,
+                            _ => {
+                                self.depth -= 1;
+                                return Err(RuntimeError::new("pad_start() target length must be a non-negative integer".into()).at(span));
+                            }
+                        };
+                        let pad_str = if args.len() == 2 {
+                            match &args[1] {
+                                Value::String(p) => p.clone(),
+                                _ => {
+                                    self.depth -= 1;
+                                    return Err(RuntimeError::new("pad_start() pad string must be a string".into()).at(span));
+                                }
+                            }
+                        } else {
+                            " ".to_string()
+                        };
+                        let current_len = s.chars().count();
+                        if current_len >= target_len || pad_str.is_empty() {
+                            Ok(Value::String(s.clone()))
+                        } else {
+                            let mut pad_needed = target_len - current_len;
+                            let mut result = String::new();
+                            while pad_needed > 0 {
+                                for ch in pad_str.chars() {
+                                    if pad_needed == 0 { break; }
+                                    result.push(ch);
+                                    pad_needed -= 1;
+                                }
+                            }
+                            result.push_str(&s);
+                            Ok(Value::String(result))
+                        }
+                    }
+                    (Value::String(s), "lines") => {
+                        if !args.is_empty() {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("lines() expects 0 arguments".into()).at(span));
+                        }
+                        let line_vals: Vec<Value> = s.lines().map(|line| Value::String(line.to_string())).collect();
+                        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(line_vals))))
+                    }
+                    (Value::String(s), "chars") => {
+                        if !args.is_empty() {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("chars() expects 0 arguments".into()).at(span));
+                        }
+                        let char_vals: Vec<Value> = s.chars().map(|ch| Value::String(ch.to_string())).collect();
+                        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(char_vals))))
+                    }
                     (Value::Task(t), "join") | (Value::Task(t), "wait") => {
                         let mut guard = t.lock().unwrap();
                         if let Some(handle) = guard.take() {
@@ -1394,7 +1632,7 @@ Expr::Use { path, span } => {
         }
     }
 
-fn match_pattern(&self, pattern: &crate::ast::Pattern, val: &Value) -> Option<Vec<(String, Value)>> {
+    fn match_pattern(&self, pattern: &crate::ast::Pattern, val: &Value) -> Option<Vec<(String, Value)>> {
         use crate::ast::{Pattern, Literal};
         match pattern {
             Pattern::Wildcard => Some(Vec::new()),
@@ -1414,20 +1652,181 @@ fn match_pattern(&self, pattern: &crate::ast::Pattern, val: &Value) -> Option<Ve
                     None
                 }
             }
+            Pattern::Range { start, end, inclusive } => {
+                match (val, start, end) {
+                    (Value::Int(v), Literal::Int(s), Literal::Int(e)) => {
+                        let in_range = if *inclusive {
+                            *v >= *s && *v <= *e
+                        } else {
+                            *v >= *s && *v < *e
+                        };
+                        if in_range { Some(Vec::new()) } else { None }
+                    }
+                    (Value::String(v), Literal::String(s), Literal::String(e)) => {
+                        let in_range = if *inclusive {
+                            v >= s && v <= e
+                        } else {
+                            v >= s && v < e
+                        };
+                        if in_range { Some(Vec::new()) } else { None }
+                    }
+                    _ => {
+                        let v_num = to_f64_val(val);
+                        let s_num = match start {
+                            Literal::Int(n) => Some(*n as f64),
+                            Literal::Float(n) | Literal::Number(n) => Some(*n),
+                            _ => None,
+                        };
+                        let e_num = match end {
+                            Literal::Int(n) => Some(*n as f64),
+                            Literal::Float(n) | Literal::Number(n) => Some(*n),
+                            _ => None,
+                        };
+                        if let (Some(v), Some(s), Some(e)) = (v_num, s_num, e_num) {
+                            let in_range = if *inclusive {
+                                v >= s && v <= e
+                            } else {
+                                v >= s && v < e
+                            };
+                            if in_range { Some(Vec::new()) } else { None }
+                        } else {
+                            None
+                        }
+                    }
+                }
+            }
             Pattern::Enum { enum_name, variant_name, fields } => {
                 if let Value::EnumInstance { enum_name: v_enum, variant_name: v_variant, values } = val {
-                    if enum_name == v_enum && variant_name == v_variant {
+                    let matches_name = match enum_name {
+                        Some(e) => e == v_enum && variant_name == v_variant,
+                        None => variant_name == v_variant,
+                    };
+                    if matches_name {
                         if fields.len() != values.len() {
                             return None;
                         }
                         let mut bindings = Vec::new();
-                        for (f, v) in fields.iter().zip(values.iter()) {
-                            bindings.push((f.clone(), v.clone()));
+                        for (f_pat, v) in fields.iter().zip(values.iter()) {
+                            if let Some(sub) = self.match_pattern(f_pat, v) {
+                                bindings.extend(sub);
+                            } else {
+                                return None;
+                            }
                         }
                         return Some(bindings);
                     }
                 }
                 None
+            }
+        }
+    }
+
+    fn bind_pattern_value(
+        &mut self,
+        pattern: &crate::ast::BindingPattern,
+        val: Value,
+        env: &Arc<RwLock<Environment>>,
+        span: Span,
+    ) -> Result<(), RuntimeError> {
+        use crate::ast::BindingPattern;
+        match pattern {
+            BindingPattern::Ident(name) => {
+                env.write().unwrap().define(name.clone(), val);
+                Ok(())
+            }
+            BindingPattern::Array { elements, rest } => {
+                let arr_guard = match &val {
+                    Value::Array(a) => a.read().unwrap().clone(),
+                    other => {
+                        return Err(RuntimeError::new(format!(
+                            "Cannot destructure non-array {} as array",
+                            other.type_name()
+                        ))
+                        .at(span));
+                    }
+                };
+                let mut idx = 0;
+                for elem_pat in elements {
+                    let elem_val = if idx < arr_guard.len() {
+                        arr_guard[idx].clone()
+                    } else {
+                        Value::Null
+                    };
+                    self.bind_pattern_value(elem_pat, elem_val, env, span)?;
+                    idx += 1;
+                }
+                if let Some(rest_name) = rest {
+                    let rest_vals = if idx < arr_guard.len() {
+                        arr_guard[idx..].to_vec()
+                    } else {
+                        Vec::new()
+                    };
+                    env.write().unwrap().define(
+                        rest_name.clone(),
+                        Value::Array(Arc::new(RwLock::new(rest_vals))),
+                    );
+                }
+                Ok(())
+            }
+            BindingPattern::Object { fields, rest } => {
+                let mut extracted_keys = std::collections::HashSet::new();
+                match &val {
+                    Value::Map(m) => {
+                        let map_guard = m.read().unwrap();
+                        for (field_name, opt_sub) in fields {
+                            extracted_keys.insert(field_name.clone());
+                            let field_val = map_guard.get(field_name).cloned().unwrap_or(Value::Null);
+                            if let Some(sub_pat) = opt_sub {
+                                self.bind_pattern_value(sub_pat, field_val, env, span)?;
+                            } else {
+                                env.write().unwrap().define(field_name.clone(), field_val);
+                            }
+                        }
+                        if let Some(rest_name) = rest {
+                            let mut rest_map = indexmap::IndexMap::new();
+                            for (k, v) in map_guard.iter() {
+                                if !extracted_keys.contains(k) {
+                                    rest_map.insert(k.clone(), v.clone());
+                                }
+                            }
+                            env.write().unwrap().define(
+                                rest_name.clone(),
+                                Value::Map(Arc::new(RwLock::new(rest_map))),
+                            );
+                        }
+                        Ok(())
+                    }
+                    Value::StructInstance { fields: struct_fields, .. } => {
+                        let fields_guard = struct_fields.read().unwrap();
+                        for (field_name, opt_sub) in fields {
+                            extracted_keys.insert(field_name.clone());
+                            let field_val = fields_guard.get(field_name).cloned().unwrap_or(Value::Null);
+                            if let Some(sub_pat) = opt_sub {
+                                self.bind_pattern_value(sub_pat, field_val, env, span)?;
+                            } else {
+                                env.write().unwrap().define(field_name.clone(), field_val);
+                            }
+                        }
+                        if let Some(rest_name) = rest {
+                            let mut rest_map = indexmap::IndexMap::new();
+                            for (k, v) in fields_guard.iter() {
+                                if !extracted_keys.contains(k) {
+                                    rest_map.insert(k.clone(), v.clone());
+                                }
+                            }
+                            env.write().unwrap().define(
+                                rest_name.clone(),
+                                Value::Map(Arc::new(RwLock::new(rest_map))),
+                            );
+                        }
+                        Ok(())
+                    }
+                    other => Err(RuntimeError::new(format!(
+                        "Cannot destructure non-object {} as object",
+                        other.type_name()
+                    ))
+                    .at(span)),
+                }
             }
         }
     }

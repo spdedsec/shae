@@ -126,7 +126,33 @@ impl Lexer {
                 ',' => tokens.push(self.single(Token::Comma)),
                 ':' => tokens.push(self.single(Token::Colon)),
                 ';' => tokens.push(self.single(Token::Semicolon)),
-                '.' => tokens.push(self.single(Token::Dot)),
+                '.' => {
+                    let start_col = self.col;
+                    self.advance();
+                    if self.current_char() == Some('.') {
+                        self.advance();
+                        if self.current_char() == Some('=') {
+                            self.advance();
+                            tokens.push(SpannedToken {
+                                token: Token::DotDotEq,
+                                line: self.line,
+                                col: start_col,
+                            });
+                        } else {
+                            tokens.push(SpannedToken {
+                                token: Token::DotDot,
+                                line: self.line,
+                                col: start_col,
+                            });
+                        }
+                    } else {
+                        tokens.push(SpannedToken {
+                            token: Token::Dot,
+                            line: self.line,
+                            col: start_col,
+                        });
+                    }
+                }
 
                 // Two-character operators with single-char fallbacks
                 '+' => {

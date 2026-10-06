@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, InterpPart, Literal, Program, Span, Stmt, StmtKind, UnaryOp};
+use crate::ast::{BinaryOp, BindingPattern, Expr, InterpPart, Literal, Program, Span, Stmt, StmtKind, UnaryOp};
 use crate::lexer::LexerError;
 use crate::token::{SpannedToken, StrPart, Token};
 use std::sync::Arc;
@@ -284,20 +284,110 @@ fn parse_struct_def(&mut self, _line: usize, _col: usize) -> Result<Stmt, Parser
         Ok(Stmt { kind: StmtKind::EnumDef { name, variants }, span: Span { line: _line, col: _col } })
     }
 
-    fn parse_let_statement(&mut self, line: usize, col: usize) -> Result<Stmt, ParserError> {
-        let name = if let Token::Ident(n) = &self.advance().token {
-            n.clone()
+    fn parse_binding_pattern(&mut self) -> Result<BindingPattern, ParserError> {
+        if self.match_token(Token::LBracket) {
+            let mut elements = Vec::new();
+            let mut rest = None;
+            if self.peek().token != Token::RBracket {
+                loop {
+                    if self.match_token(Token::DotDot) {
+                        if let Token::Ident(r_name) = &self.advance().token {
+                            rest = Some(r_name.clone());
+                        } else {
+                            return Err(ParserError::UnexpectedToken {
+                                message: "Expected identifier after '..' in array destructuring.".into(),
+                                line: self.peek().line,
+                                col: self.peek().col,
+                            });
+                        }
+                        self.match_token(Token::Comma); // optional trailing comma
+                        break;
+                    }
+                    elements.push(self.parse_binding_pattern()?);
+                    if !self.match_token(Token::Comma) {
+                        break;
+                    }
+                    if self.peek().token == Token::RBracket {
+                        break;
+                    }
+                }
+            }
+            if !self.match_token(Token::RBracket) {
+                return Err(ParserError::UnexpectedToken {
+                    message: "Expected ']' at end of array destructuring pattern.".into(),
+                    line: self.peek().line,
+                    col: self.peek().col,
+                });
+            }
+            Ok(BindingPattern::Array { elements, rest })
+        } else if self.match_token(Token::LBrace) {
+            let mut fields = Vec::new();
+            let mut rest = None;
+            if self.peek().token != Token::RBrace {
+                loop {
+                    if self.match_token(Token::DotDot) {
+                        if let Token::Ident(r_name) = &self.advance().token {
+                            rest = Some(r_name.clone());
+                        } else {
+                            return Err(ParserError::UnexpectedToken {
+                                message: "Expected identifier after '..' in object destructuring.".into(),
+                                line: self.peek().line,
+                                col: self.peek().col,
+                            });
+                        }
+                        self.match_token(Token::Comma); // optional trailing comma
+                        break;
+                    }
+                    let field_name = if let Token::Ident(f) = &self.advance().token {
+                        f.clone()
+                    } else {
+                        return Err(ParserError::UnexpectedToken {
+                            message: "Expected property name in object destructuring.".into(),
+                            line: self.peek().line,
+                            col: self.peek().col,
+                        });
+                    };
+                    let opt_sub = if self.match_token(Token::Colon) {
+                        Some(self.parse_binding_pattern()?)
+                    } else {
+                        None
+                    };
+                    fields.push((field_name, opt_sub));
+                    if !self.match_token(Token::Comma) {
+                        break;
+                    }
+                    if self.peek().token == Token::RBrace {
+                        break;
+                    }
+                }
+            }
+            if !self.match_token(Token::RBrace) {
+                return Err(ParserError::UnexpectedToken {
+                    message: "Expected '}' at end of object destructuring pattern.".into(),
+                    line: self.peek().line,
+                    col: self.peek().col,
+                });
+            }
+            Ok(BindingPattern::Object { fields, rest })
+        } else if let Token::Ident(name) = &self.peek().token {
+            let n = name.clone();
+            self.advance();
+            Ok(BindingPattern::Ident(n))
         } else {
-            return Err(ParserError::UnexpectedToken {
-                message: "Expected variable name after 'let'.".into(),
+            Err(ParserError::UnexpectedToken {
+                message: "Expected variable name, '[...]', or '{...}' after 'let'.".into(),
                 line: self.peek().line,
                 col: self.peek().col,
-            });
-        };
+            })
+        }
+    }
+
+    fn parse_let_statement(&mut self, line: usize, col: usize) -> Result<Stmt, ParserError> {
+        let pattern = self.parse_binding_pattern()?;
 
         if !self.match_token(Token::Equals) {
             return Err(ParserError::UnexpectedToken {
-                message: format!("Expected '=' after variable '{}'.", name),
+                message: "Expected '=' in 'let' statement.".into(),
                 line: self.peek().line,
                 col: self.peek().col,
             });
@@ -307,7 +397,7 @@ fn parse_struct_def(&mut self, _line: usize, _col: usize) -> Result<Stmt, Parser
         self.end_statement()?;
 
         Ok(Stmt {
-            kind: StmtKind::Let { name, init },
+            kind: StmtKind::Let { pattern, init },
             span: Span { line, col },
         })
     }
@@ -1319,6 +1409,11 @@ Token::Match => {
                 let mut arms = Vec::new();
                 while self.peek().token != Token::RBrace && !self.is_at_end() {
                     let pattern = self.parse_pattern()?;
+                    let guard = if self.match_token(Token::If) {
+                        Some(Box::new(self.parse_expression()?))
+                    } else {
+                        None
+                    };
                     if !self.match_token(Token::FatArrow) {
                         return Err(ParserError::UnexpectedToken {
                             message: "Expected '=>' after match pattern.".into(),
@@ -1327,7 +1422,7 @@ Token::Match => {
                         });
                     }
                     let body = self.parse_expression()?;
-                    arms.push(crate::ast::MatchArm { pattern, body: Box::new(body) });
+                    arms.push(crate::ast::MatchArm { pattern, guard, body: Box::new(body) });
                     
                     self.match_token(Token::Comma); // Optional trailing comma
                 }
@@ -1374,21 +1469,83 @@ Token::Match => {
         }
     }
 
-fn parse_pattern(&mut self) -> Result<crate::ast::Pattern, ParserError> {
-        use crate::ast::{Pattern, Literal};
+    fn try_parse_literal_for_pattern(&mut self) -> Result<Option<crate::ast::Literal>, ParserError> {
+        use crate::ast::Literal;
+        let is_neg = if self.peek().token == Token::Minus {
+            match self.peek_next().map(|t| &t.token) {
+                Some(Token::IntLit(_)) | Some(Token::FloatLit(_)) | Some(Token::NumberLit(_)) => {
+                    self.advance();
+                    true
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+
+        let peek = self.peek().clone();
+        let lit = match peek.token {
+            Token::False if !is_neg => { self.advance(); Some(Literal::Bool(false)) }
+            Token::True if !is_neg => { self.advance(); Some(Literal::Bool(true)) }
+            Token::Null if !is_neg => { self.advance(); Some(Literal::Null) }
+            Token::IntLit(n) => {
+                self.advance();
+                Some(Literal::Int(if is_neg { -n } else { n }))
+            }
+            Token::FloatLit(n) | Token::NumberLit(n) => {
+                self.advance();
+                Some(Literal::Float(if is_neg { -n } else { n }))
+            }
+            Token::StringLit(s) if !is_neg => {
+                self.advance();
+                Some(Literal::String(s))
+            }
+            _ => None,
+        };
+        Ok(lit)
+    }
+
+    fn parse_pattern(&mut self) -> Result<crate::ast::Pattern, ParserError> {
+        use crate::ast::Pattern;
         if self.match_token(Token::Underscore) {
             return Ok(Pattern::Wildcard);
         }
-        
+
+        if let Some(lit) = self.try_parse_literal_for_pattern()? {
+            if self.match_token(Token::DotDotEq) {
+                if let Some(end_lit) = self.try_parse_literal_for_pattern()? {
+                    return Ok(Pattern::Range {
+                        start: lit,
+                        end: end_lit,
+                        inclusive: true,
+                    });
+                } else {
+                    return Err(ParserError::UnexpectedToken {
+                        message: "Expected end literal in inclusive range pattern.".into(),
+                        line: self.peek().line,
+                        col: self.peek().col,
+                    });
+                }
+            } else if self.match_token(Token::DotDot) {
+                if let Some(end_lit) = self.try_parse_literal_for_pattern()? {
+                    return Ok(Pattern::Range {
+                        start: lit,
+                        end: end_lit,
+                        inclusive: false,
+                    });
+                } else {
+                    return Err(ParserError::UnexpectedToken {
+                        message: "Expected end literal in range pattern.".into(),
+                        line: self.peek().line,
+                        col: self.peek().col,
+                    });
+                }
+            }
+            return Ok(Pattern::Literal(lit));
+        }
+
         let peek = self.peek().clone();
         match peek.token {
-            Token::False => { self.advance(); Ok(Pattern::Literal(Literal::Bool(false))) }
-            Token::True => { self.advance(); Ok(Pattern::Literal(Literal::Bool(true))) }
-            Token::Null => { self.advance(); Ok(Pattern::Literal(Literal::Null)) }
-            Token::IntLit(n) => { self.advance(); Ok(Pattern::Literal(Literal::Int(n))) }
-            Token::FloatLit(n) => { self.advance(); Ok(Pattern::Literal(Literal::Float(n))) }
-            Token::NumberLit(n) => { self.advance(); Ok(Pattern::Literal(Literal::Float(n))) }
-            Token::StringLit(s) => { self.advance(); Ok(Pattern::Literal(Literal::String(s))) }
             Token::Ident(name) => {
                 self.advance();
                 if self.match_token(Token::Dot) {
@@ -1401,32 +1558,48 @@ fn parse_pattern(&mut self) -> Result<crate::ast::Pattern, ParserError> {
                             col: self.peek().col,
                         });
                     };
-                    
+
                     let mut fields = Vec::new();
                     if self.match_token(Token::LParen) {
                         if self.peek().token != Token::RParen {
                             loop {
-                                if let Token::Ident(f) = &self.advance().token {
-                                    fields.push(f.clone());
-                                } else {
-                                    return Err(ParserError::UnexpectedToken {
-                                        message: "Expected identifier in pattern binding.".into(),
-                                        line: self.peek().line,
-                                        col: self.peek().col,
-                                    });
-                                }
+                                fields.push(self.parse_pattern()?);
                                 if !self.match_token(Token::Comma) { break; }
                             }
                         }
                         if !self.match_token(Token::RParen) {
                             return Err(ParserError::UnexpectedToken {
-                                message: "Expected ')' after pattern bindings.".into(),
+                                message: "Expected ')' after pattern fields.".into(),
                                 line: self.peek().line,
                                 col: self.peek().col,
                             });
                         }
                     }
-                    Ok(Pattern::Enum { enum_name: name, variant_name: variant, fields })
+                    Ok(Pattern::Enum {
+                        enum_name: Some(name),
+                        variant_name: variant,
+                        fields,
+                    })
+                } else if self.match_token(Token::LParen) {
+                    let mut fields = Vec::new();
+                    if self.peek().token != Token::RParen {
+                        loop {
+                            fields.push(self.parse_pattern()?);
+                            if !self.match_token(Token::Comma) { break; }
+                        }
+                    }
+                    if !self.match_token(Token::RParen) {
+                        return Err(ParserError::UnexpectedToken {
+                            message: "Expected ')' after pattern fields.".into(),
+                            line: self.peek().line,
+                            col: self.peek().col,
+                        });
+                    }
+                    Ok(Pattern::Enum {
+                        enum_name: None,
+                        variant_name: name,
+                        fields,
+                    })
                 } else {
                     Ok(Pattern::Variable(name))
                 }

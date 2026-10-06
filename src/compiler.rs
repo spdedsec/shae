@@ -70,6 +70,7 @@ impl Compiler {
                 match op {
                     UnaryOp::Neg => self.chunk.write_opcode(OpCode::Negate, span.line),
                     UnaryOp::Not => self.chunk.write_opcode(OpCode::Not, span.line),
+                    UnaryOp::BitNot => return Err("Bitwise NOT not yet supported in basic VM compiler".into()),
                 }
                 Ok(())
             }
