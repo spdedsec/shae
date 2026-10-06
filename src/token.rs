@@ -41,6 +41,8 @@ pub enum Token {
     // Identifiers & Literals
     Ident(String),
     StringLit(String),
+    IntLit(i64),
+    FloatLit(f64),
     NumberLit(f64),
     Interp(Vec<StrPart>),
 
@@ -78,6 +80,14 @@ pub enum Token {
     Or,          // ||
     Not,        // !
 
+    // Bitwise Operators
+    Amp,         // &
+    BitOr,       // |
+    Caret,       // ^
+    Tilde,       // ~
+    Shl,         // <<
+    Shr,         // >>
+
     Eof,
 }
 
@@ -108,6 +118,8 @@ impl fmt::Display for Token {
             Token::Catch => write!(f, "'catch'"),
             Token::Ident(s) => write!(f, "identifier '{}'", s),
             Token::StringLit(s) => write!(f, "string \"{}\"", s),
+            Token::IntLit(n) => write!(f, "integer {}", n),
+            Token::FloatLit(n) => write!(f, "number {}", n),
             Token::NumberLit(n) => write!(f, "number {}", n),
             Token::Interp(_) => write!(f, "interpolated string"),
             Token::LParen => write!(f, "'('"),
@@ -140,6 +152,12 @@ impl fmt::Display for Token {
             Token::And => write!(f, "'and'"),
             Token::Or => write!(f, "'or'"),
             Token::Not => write!(f, "'not'"),
+            Token::Amp => write!(f, "'&'"),
+            Token::BitOr => write!(f, "'|'"),
+            Token::Caret => write!(f, "'^'"),
+            Token::Tilde => write!(f, "'~'"),
+            Token::Shl => write!(f, "'<<'"),
+            Token::Shr => write!(f, "'>>'"),
             Token::Eof => write!(f, "end of file"),
         }
     }

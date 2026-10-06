@@ -181,6 +181,8 @@ impl Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
+    Int(i64),
+    Float(f64),
     Number(f64),
     String(String),
     Bool(bool),
@@ -204,10 +206,16 @@ pub enum BinaryOp {
     Or,
     Pipe,
     Coalesce,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
     Not,
     Neg,
+    BitNot,
 }

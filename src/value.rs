@@ -15,6 +15,8 @@ pub type BuiltinFn =
 pub enum Value {
     Null,
     Bool(bool),
+    Int(i64),
+    Float(f64),
     Number(f64),
     String(String),
     Array(Arc<RwLock<Vec<Value>>>),
@@ -63,6 +65,8 @@ impl Value {
         match self {
             Value::Null => "null",
             Value::Bool(_) => "bool",
+            Value::Int(_) => "int",
+            Value::Float(_) => "float",
             Value::Number(_) => "number",
             Value::String(_) => "string",
             Value::Array(_) => "array",
@@ -83,7 +87,8 @@ Value::Builtin { .. } => "builtin_function",
         match self {
             Value::Null => false,
             Value::Bool(b) => *b,
-            Value::Number(n) => *n != 0.0 && !n.is_nan(),
+            Value::Int(n) => *n != 0,
+            Value::Float(n) | Value::Number(n) => *n != 0.0 && !n.is_nan(),
             Value::String(s) => !s.is_empty(),
             Value::Array(a) => !a.read().unwrap().is_empty(),
             Value::Map(m) => !m.read().unwrap().is_empty(),
@@ -97,7 +102,8 @@ Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. } => tr
         match self {
             Value::Null => "null".to_string(),
             Value::Bool(b) => b.to_string(),
-            Value::Number(n) => {
+            Value::Int(n) => n.to_string(),
+            Value::Float(n) | Value::Number(n) => {
                 if n.fract() == 0.0 && n.abs() < 1e15 {
                     format!("{:.0}", n)
                 } else {
@@ -168,7 +174,8 @@ Value::Builtin { name, .. } => format!("<builtin {}>", name),
         match self {
             Value::Null => JsonValue::Null,
             Value::Bool(b) => JsonValue::Bool(*b),
-            Value::Number(n) => {
+            Value::Int(n) => JsonValue::Number((*n).into()),
+            Value::Float(n) | Value::Number(n) => {
                 if n.fract() == 0.0 && n.abs() <= 9007199254740991.0 {
                     JsonValue::Number((*n as i64).into())
                 } else {
@@ -221,7 +228,13 @@ Value::Builtin { name, .. } => JsonValue::String(format!("<builtin {}>", name)),
         match json {
             JsonValue::Null => Value::Null,
             JsonValue::Bool(b) => Value::Bool(*b),
-            JsonValue::Number(n) => Value::Number(n.as_f64().unwrap_or(0.0)),
+            JsonValue::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    Value::Int(i)
+                } else {
+                    Value::Float(n.as_f64().unwrap_or(0.0))
+                }
+            }
             JsonValue::String(s) => Value::String(s.clone()),
             JsonValue::Array(arr) => {
                 let list: Vec<Value> = arr.iter().map(Value::from_json).collect();
@@ -243,7 +256,12 @@ impl PartialEq for Value {
         match (self, other) {
             (Value::Null, Value::Null) => true,
             (Value::Bool(a), Value::Bool(b)) => a == b,
-            (Value::Number(a), Value::Number(b)) => a == b, // exact float equality
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::Number(a), Value::Number(b)) => a == b,
+            (Value::Float(a), Value::Number(b)) | (Value::Number(a), Value::Float(b)) => a == b,
+            (Value::Int(a), Value::Float(b)) | (Value::Int(a), Value::Number(b)) => (*a as f64) == *b,
+            (Value::Float(a), Value::Int(b)) | (Value::Number(a), Value::Int(b)) => *a == (*b as f64),
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => *a.read().unwrap() == *b.read().unwrap(),
 (Value::Map(a), Value::Map(b)) => *a.read().unwrap() == *b.read().unwrap(),
@@ -274,6 +292,17 @@ impl fmt::Display for Value {
 pub enum IndexError {
     NotWhole,
     OutOfRange(usize),
+}
+
+pub fn resolve_int_index(n: i64, len: usize) -> Result<usize, IndexError> {
+    let mut idx = n as isize;
+    if idx < 0 {
+        idx += len as isize;
+    }
+    if idx < 0 || idx >= len as isize {
+        return Err(IndexError::OutOfRange(len));
+    }
+    Ok(idx as usize)
 }
 
 pub fn resolve_index(n: f64, len: usize) -> Result<usize, IndexError> {

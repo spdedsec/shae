@@ -47,18 +47,30 @@ impl VM {
                     self.stack.push(constant);
                 }
                 OpCode::Negate => {
-                    if let Some(Value::Number(n)) = self.stack.pop() {
-                        self.stack.push(Value::Number(-n));
-                    } else {
-                        return InterpretResult::RuntimeError("Operand must be a number.".into());
+                    match self.stack.pop() {
+                        Some(Value::Int(n)) => self.stack.push(Value::Int(-n)),
+                        Some(Value::Float(n)) | Some(Value::Number(n)) => self.stack.push(Value::Float(-n)),
+                        _ => return InterpretResult::RuntimeError("Operand must be a number.".into()),
                     }
                 }
                 OpCode::Add => {
                     let b = self.stack.pop().unwrap();
                     let a = self.stack.pop().unwrap();
                     match (a, b) {
-                        (Value::Number(a_num), Value::Number(b_num)) => {
-                            self.stack.push(Value::Number(a_num + b_num));
+                        (Value::Int(a_num), Value::Int(b_num)) => {
+                            self.stack.push(Value::Int(a_num + b_num));
+                        }
+                        (Value::Int(a_num), Value::Float(b_num)) | (Value::Int(a_num), Value::Number(b_num)) => {
+                            self.stack.push(Value::Float(a_num as f64 + b_num));
+                        }
+                        (Value::Float(a_num), Value::Int(b_num)) | (Value::Number(a_num), Value::Int(b_num)) => {
+                            self.stack.push(Value::Float(a_num + b_num as f64));
+                        }
+                        (Value::Float(a_num), Value::Float(b_num))
+                        | (Value::Number(a_num), Value::Number(b_num))
+                        | (Value::Float(a_num), Value::Number(b_num))
+                        | (Value::Number(a_num), Value::Float(b_num)) => {
+                            self.stack.push(Value::Float(a_num + b_num));
                         }
                         (Value::String(a_str), Value::String(b_str)) => {
                             self.stack.push(Value::String(format!("{}{}", a_str, b_str)));
@@ -69,28 +81,58 @@ impl VM {
                 OpCode::Subtract => {
                     let b = self.stack.pop().unwrap();
                     let a = self.stack.pop().unwrap();
-                    if let (Value::Number(a_num), Value::Number(b_num)) = (a, b) {
-                        self.stack.push(Value::Number(a_num - b_num));
-                    } else {
-                        return InterpretResult::RuntimeError("Operands must be numbers.".into());
+                    match (a, b) {
+                        (Value::Int(a_num), Value::Int(b_num)) => self.stack.push(Value::Int(a_num - b_num)),
+                        (Value::Int(a_num), Value::Float(b_num)) | (Value::Int(a_num), Value::Number(b_num)) => self.stack.push(Value::Float(a_num as f64 - b_num)),
+                        (Value::Float(a_num), Value::Int(b_num)) | (Value::Number(a_num), Value::Int(b_num)) => self.stack.push(Value::Float(a_num - b_num as f64)),
+                        (Value::Float(a_num), Value::Float(b_num))
+                        | (Value::Number(a_num), Value::Number(b_num))
+                        | (Value::Float(a_num), Value::Number(b_num))
+                        | (Value::Number(a_num), Value::Float(b_num)) => self.stack.push(Value::Float(a_num - b_num)),
+                        _ => return InterpretResult::RuntimeError("Operands must be numbers.".into()),
                     }
                 }
                 OpCode::Multiply => {
                     let b = self.stack.pop().unwrap();
                     let a = self.stack.pop().unwrap();
-                    if let (Value::Number(a_num), Value::Number(b_num)) = (a, b) {
-                        self.stack.push(Value::Number(a_num * b_num));
-                    } else {
-                        return InterpretResult::RuntimeError("Operands must be numbers.".into());
+                    match (a, b) {
+                        (Value::Int(a_num), Value::Int(b_num)) => self.stack.push(Value::Int(a_num * b_num)),
+                        (Value::Int(a_num), Value::Float(b_num)) | (Value::Int(a_num), Value::Number(b_num)) => self.stack.push(Value::Float(a_num as f64 * b_num)),
+                        (Value::Float(a_num), Value::Int(b_num)) | (Value::Number(a_num), Value::Int(b_num)) => self.stack.push(Value::Float(a_num * b_num as f64)),
+                        (Value::Float(a_num), Value::Float(b_num))
+                        | (Value::Number(a_num), Value::Number(b_num))
+                        | (Value::Float(a_num), Value::Number(b_num))
+                        | (Value::Number(a_num), Value::Float(b_num)) => self.stack.push(Value::Float(a_num * b_num)),
+                        _ => return InterpretResult::RuntimeError("Operands must be numbers.".into()),
                     }
                 }
                 OpCode::Divide => {
                     let b = self.stack.pop().unwrap();
                     let a = self.stack.pop().unwrap();
-                    if let (Value::Number(a_num), Value::Number(b_num)) = (a, b) {
-                        self.stack.push(Value::Number(a_num / b_num));
-                    } else {
-                        return InterpretResult::RuntimeError("Operands must be numbers.".into());
+                    match (a, b) {
+                        (Value::Int(a_num), Value::Int(b_num)) => {
+                            if b_num == 0 {
+                                return InterpretResult::RuntimeError("Divide by zero.".into());
+                            }
+                            if a_num % b_num == 0 {
+                                self.stack.push(Value::Int(a_num / b_num));
+                            } else {
+                                self.stack.push(Value::Float(a_num as f64 / b_num as f64));
+                            }
+                        }
+                        (Value::Int(a_num), Value::Float(b_num)) | (Value::Int(a_num), Value::Number(b_num)) => {
+                            self.stack.push(Value::Float(a_num as f64 / b_num));
+                        }
+                        (Value::Float(a_num), Value::Int(b_num)) | (Value::Number(a_num), Value::Int(b_num)) => {
+                            self.stack.push(Value::Float(a_num / b_num as f64));
+                        }
+                        (Value::Float(a_num), Value::Float(b_num))
+                        | (Value::Number(a_num), Value::Number(b_num))
+                        | (Value::Float(a_num), Value::Number(b_num))
+                        | (Value::Number(a_num), Value::Float(b_num)) => {
+                            self.stack.push(Value::Float(a_num / b_num));
+                        }
+                        _ => return InterpretResult::RuntimeError("Operands must be numbers.".into()),
                     }
                 }
                 _ => unimplemented!("Opcode {:?} not yet implemented", instruction),

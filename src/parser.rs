@@ -822,13 +822,67 @@ fn parse_struct_def(&mut self, _line: usize, _col: usize) -> Result<Stmt, Parser
     }
 
     fn parse_logical_and(&mut self) -> Result<Expr, ParserError> {
-        let mut expr = self.parse_coalesce()?;
+        let mut expr = self.parse_bitwise_or()?;
         while self.match_token(Token::And) {
+            let op_tok = self.tokens[self.cursor - 1].clone();
+            let right = self.parse_bitwise_or()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op: BinaryOp::And,
+                right: Box::new(right),
+                span: Span {
+                    line: op_tok.line,
+                    col: op_tok.col,
+                },
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_bitwise_or(&mut self) -> Result<Expr, ParserError> {
+        let mut expr = self.parse_bitwise_xor()?;
+        while self.match_token(Token::BitOr) {
+            let op_tok = self.tokens[self.cursor - 1].clone();
+            let right = self.parse_bitwise_xor()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op: BinaryOp::BitOr,
+                right: Box::new(right),
+                span: Span {
+                    line: op_tok.line,
+                    col: op_tok.col,
+                },
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_bitwise_xor(&mut self) -> Result<Expr, ParserError> {
+        let mut expr = self.parse_bitwise_and()?;
+        while self.match_token(Token::Caret) {
+            let op_tok = self.tokens[self.cursor - 1].clone();
+            let right = self.parse_bitwise_and()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op: BinaryOp::BitXor,
+                right: Box::new(right),
+                span: Span {
+                    line: op_tok.line,
+                    col: op_tok.col,
+                },
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_bitwise_and(&mut self) -> Result<Expr, ParserError> {
+        let mut expr = self.parse_coalesce()?;
+        while self.match_token(Token::Amp) {
             let op_tok = self.tokens[self.cursor - 1].clone();
             let right = self.parse_coalesce()?;
             expr = Expr::Binary {
                 left: Box::new(expr),
-                op: BinaryOp::And,
+                op: BinaryOp::BitAnd,
                 right: Box::new(right),
                 span: Span {
                     line: op_tok.line,
@@ -881,7 +935,7 @@ fn parse_struct_def(&mut self, _line: usize, _col: usize) -> Result<Stmt, Parser
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, ParserError> {
-        let mut expr = self.parse_term()?;
+        let mut expr = self.parse_shift()?;
         while self.match_token(Token::Lt)
             || self.match_token(Token::LtEq)
             || self.match_token(Token::Gt)
@@ -893,6 +947,34 @@ fn parse_struct_def(&mut self, _line: usize, _col: usize) -> Result<Stmt, Parser
                 Token::LtEq => BinaryOp::LtEq,
                 Token::Gt => BinaryOp::Gt,
                 Token::GtEq => BinaryOp::GtEq,
+                _ => unreachable!(),
+            };
+            let right = self.parse_shift()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op,
+                right: Box::new(right),
+                span: Span {
+                    line: op_tok.line,
+                    col: op_tok.col,
+                },
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_shift(&mut self) -> Result<Expr, ParserError> {
+        let mut expr = self.parse_term()?;
+        while self.peek().token == Token::Shl || self.peek().token == Token::Shr {
+            let prev_line = self.tokens[self.cursor.saturating_sub(1)].line;
+            if self.peek().line > prev_line {
+                break;
+            }
+            self.advance();
+            let op_tok = self.tokens[self.cursor - 1].clone();
+            let op = match op_tok.token {
+                Token::Shl => BinaryOp::Shl,
+                Token::Shr => BinaryOp::Shr,
                 _ => unreachable!(),
             };
             let right = self.parse_term()?;
@@ -971,11 +1053,12 @@ fn parse_struct_def(&mut self, _line: usize, _col: usize) -> Result<Stmt, Parser
     }
 
     fn parse_unary(&mut self) -> Result<Expr, ParserError> {
-        if self.match_token(Token::Not) || self.match_token(Token::Minus) {
+        if self.match_token(Token::Not) || self.match_token(Token::Minus) || self.match_token(Token::Tilde) {
             let op_tok = self.tokens[self.cursor - 1].clone();
             let op = match op_tok.token {
                 Token::Not => UnaryOp::Not,
                 Token::Minus => UnaryOp::Neg,
+                Token::Tilde => UnaryOp::BitNot,
                 _ => unreachable!(),
             };
             let right = self.parse_unary()?;
@@ -1146,7 +1229,9 @@ Token::Use => {
                 })
             }
 
-            Token::NumberLit(n) => Ok(Expr::Literal(Literal::Number(n))),
+            Token::IntLit(n) => Ok(Expr::Literal(Literal::Int(n))),
+            Token::FloatLit(n) => Ok(Expr::Literal(Literal::Float(n))),
+            Token::NumberLit(n) => Ok(Expr::Literal(Literal::Float(n))),
             Token::StringLit(s) => Ok(Expr::Literal(Literal::String(s))),
             Token::Ident(name) => Ok(Expr::Variable { name, span }),
             Token::LParen => {
@@ -1300,7 +1385,9 @@ fn parse_pattern(&mut self) -> Result<crate::ast::Pattern, ParserError> {
             Token::False => { self.advance(); Ok(Pattern::Literal(Literal::Bool(false))) }
             Token::True => { self.advance(); Ok(Pattern::Literal(Literal::Bool(true))) }
             Token::Null => { self.advance(); Ok(Pattern::Literal(Literal::Null)) }
-            Token::NumberLit(n) => { self.advance(); Ok(Pattern::Literal(Literal::Number(n))) }
+            Token::IntLit(n) => { self.advance(); Ok(Pattern::Literal(Literal::Int(n))) }
+            Token::FloatLit(n) => { self.advance(); Ok(Pattern::Literal(Literal::Float(n))) }
+            Token::NumberLit(n) => { self.advance(); Ok(Pattern::Literal(Literal::Float(n))) }
             Token::StringLit(s) => { self.advance(); Ok(Pattern::Literal(Literal::String(s))) }
             Token::Ident(name) => {
                 self.advance();

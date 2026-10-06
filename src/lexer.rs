@@ -186,15 +186,41 @@ impl Lexer {
                             line: self.line,
                             col: start_col,
                         });
-                    } else {
-                        return Err(LexerError::UnexpectedChar {
-                            ch: '|',
+                    } else if self.current_char() == Some('|') {
+                        self.advance();
+                        tokens.push(SpannedToken {
+                            token: Token::Or,
                             line: self.line,
                             col: start_col,
-                            hint: "Did you mean `|>`?".into(),
+                        });
+                    } else {
+                        tokens.push(SpannedToken {
+                            token: Token::BitOr,
+                            line: self.line,
+                            col: start_col,
                         });
                     }
                 }
+                '&' => {
+                    let start_col = self.col;
+                    self.advance();
+                    if self.current_char() == Some('&') {
+                        self.advance();
+                        tokens.push(SpannedToken {
+                            token: Token::And,
+                            line: self.line,
+                            col: start_col,
+                        });
+                    } else {
+                        tokens.push(SpannedToken {
+                            token: Token::Amp,
+                            line: self.line,
+                            col: start_col,
+                        });
+                    }
+                }
+                '^' => tokens.push(self.single(Token::Caret)),
+                '~' => tokens.push(self.single(Token::Tilde)),
                 '=' => {
                     let start_col = self.col;
                     self.advance();
@@ -242,7 +268,14 @@ impl Lexer {
                 '<' => {
                     let start_col = self.col;
                     self.advance();
-                    if self.current_char() == Some('=') {
+                    if self.current_char() == Some('<') {
+                        self.advance();
+                        tokens.push(SpannedToken {
+                            token: Token::Shl,
+                            line: self.line,
+                            col: start_col,
+                        });
+                    } else if self.current_char() == Some('=') {
                         self.advance();
                         tokens.push(SpannedToken {
                             token: Token::LtEq,
@@ -260,7 +293,14 @@ impl Lexer {
                 '>' => {
                     let start_col = self.col;
                     self.advance();
-                    if self.current_char() == Some('=') {
+                    if self.current_char() == Some('>') {
+                        self.advance();
+                        tokens.push(SpannedToken {
+                            token: Token::Shr,
+                            line: self.line,
+                            col: start_col,
+                        });
+                    } else if self.current_char() == Some('=') {
                         self.advance();
                         tokens.push(SpannedToken {
                             token: Token::GtEq,
@@ -508,14 +548,129 @@ impl Lexer {
     fn scan_number(&mut self) -> Result<SpannedToken, LexerError> {
         let start_line = self.line;
         let start_col = self.col;
+
+        // Check for 0x (hex), 0b (bin), 0o (oct)
+        if self.current_char() == Some('0') {
+            if let Some(prefix) = self.peek(1) {
+                match prefix {
+                    'x' | 'X' => {
+                        self.advance(); // consume '0'
+                        self.advance(); // consume 'x'/'X'
+                        let mut hex_str = String::new();
+                        while let Some(&(_, ch)) = self.current() {
+                            if ch.is_ascii_hexdigit() {
+                                hex_str.push(ch);
+                                self.advance();
+                            } else if ch == '_' {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                        if hex_str.is_empty() {
+                            return Err(LexerError::InvalidNumber {
+                                raw: format!("0{}", prefix),
+                                msg: "Expected hex digits after '0x'".into(),
+                                line: start_line,
+                                col: start_col,
+                            });
+                        }
+                        let num = i64::from_str_radix(&hex_str, 16).map_err(|e| LexerError::InvalidNumber {
+                            raw: format!("0{}{}", prefix, hex_str),
+                            msg: e.to_string(),
+                            line: start_line,
+                            col: start_col,
+                        })?;
+                        return Ok(SpannedToken {
+                            token: Token::IntLit(num),
+                            line: start_line,
+                            col: start_col,
+                        });
+                    }
+                    'b' | 'B' => {
+                        self.advance(); // consume '0'
+                        self.advance(); // consume 'b'/'B'
+                        let mut bin_str = String::new();
+                        while let Some(&(_, ch)) = self.current() {
+                            if ch == '0' || ch == '1' {
+                                bin_str.push(ch);
+                                self.advance();
+                            } else if ch == '_' {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                        if bin_str.is_empty() {
+                            return Err(LexerError::InvalidNumber {
+                                raw: format!("0{}", prefix),
+                                msg: "Expected binary digits after '0b'".into(),
+                                line: start_line,
+                                col: start_col,
+                            });
+                        }
+                        let num = i64::from_str_radix(&bin_str, 2).map_err(|e| LexerError::InvalidNumber {
+                            raw: format!("0{}{}", prefix, bin_str),
+                            msg: e.to_string(),
+                            line: start_line,
+                            col: start_col,
+                        })?;
+                        return Ok(SpannedToken {
+                            token: Token::IntLit(num),
+                            line: start_line,
+                            col: start_col,
+                        });
+                    }
+                    'o' | 'O' => {
+                        self.advance(); // consume '0'
+                        self.advance(); // consume 'o'/'O'
+                        let mut oct_str = String::new();
+                        while let Some(&(_, ch)) = self.current() {
+                            if ('0'..='7').contains(&ch) {
+                                oct_str.push(ch);
+                                self.advance();
+                            } else if ch == '_' {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                        if oct_str.is_empty() {
+                            return Err(LexerError::InvalidNumber {
+                                raw: format!("0{}", prefix),
+                                msg: "Expected octal digits after '0o'".into(),
+                                line: start_line,
+                                col: start_col,
+                            });
+                        }
+                        let num = i64::from_str_radix(&oct_str, 8).map_err(|e| LexerError::InvalidNumber {
+                            raw: format!("0{}{}", prefix, oct_str),
+                            msg: e.to_string(),
+                            line: start_line,
+                            col: start_col,
+                        })?;
+                        return Ok(SpannedToken {
+                            token: Token::IntLit(num),
+                            line: start_line,
+                            col: start_col,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         let mut s = String::new();
         let mut seen_dot = false;
+        let mut seen_exp = false;
 
         while let Some(&(_, ch)) = self.current() {
             if ch.is_ascii_digit() {
                 s.push(ch);
                 self.advance();
-            } else if ch == '.' && !seen_dot {
+            } else if ch == '_' {
+                self.advance();
+            } else if ch == '.' && !seen_dot && !seen_exp {
                 if let Some(next_ch) = self.peek(1) {
                     if next_ch.is_ascii_digit() {
                         seen_dot = true;
@@ -527,23 +682,61 @@ impl Lexer {
                 } else {
                     break;
                 }
+            } else if (ch == 'e' || ch == 'E') && !seen_exp {
+                if let Some(next_ch) = self.peek(1) {
+                    if next_ch.is_ascii_digit() || ((next_ch == '+' || next_ch == '-') && self.peek(2).map(|c| c.is_ascii_digit()).unwrap_or(false)) {
+                        seen_exp = true;
+                        s.push(ch);
+                        self.advance();
+                        if self.current_char() == Some('+') || self.current_char() == Some('-') {
+                            s.push(self.current_char().unwrap());
+                            self.advance();
+                        }
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
             } else {
                 break;
             }
         }
 
-        let num = s.parse::<f64>().map_err(|e| LexerError::InvalidNumber {
-            raw: s.clone(),
-            msg: e.to_string(),
-            line: start_line,
-            col: start_col,
-        })?;
-
-        Ok(SpannedToken {
-            token: Token::NumberLit(num),
-            line: start_line,
-            col: start_col,
-        })
+        if seen_dot || seen_exp {
+            let num = s.parse::<f64>().map_err(|e| LexerError::InvalidNumber {
+                raw: s.clone(),
+                msg: e.to_string(),
+                line: start_line,
+                col: start_col,
+            })?;
+            Ok(SpannedToken {
+                token: Token::FloatLit(num),
+                line: start_line,
+                col: start_col,
+            })
+        } else {
+            if let Ok(num) = s.parse::<i64>() {
+                Ok(SpannedToken {
+                    token: Token::IntLit(num),
+                    line: start_line,
+                    col: start_col,
+                })
+            } else if let Ok(num) = s.parse::<f64>() {
+                Ok(SpannedToken {
+                    token: Token::FloatLit(num),
+                    line: start_line,
+                    col: start_col,
+                })
+            } else {
+                Err(LexerError::InvalidNumber {
+                    raw: s.clone(),
+                    msg: "Invalid integer literal".to_string(),
+                    line: start_line,
+                    col: start_col,
+                })
+            }
+        }
     }
 
     fn scan_identifier(&mut self) -> Result<SpannedToken, LexerError> {

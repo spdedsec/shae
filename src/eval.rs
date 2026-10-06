@@ -1,9 +1,25 @@
 use crate::ast::{BinaryOp, Expr, InterpPart, Literal, Program, Span, Stmt, StmtKind, UnaryOp};
 use crate::env::Environment;
-use crate::value::{IndexError, Value, resolve_index};
+use crate::value::{IndexError, Value, resolve_index, resolve_int_index};
 use std::sync::RwLock;
 use std::sync::Arc;
 use thiserror::Error;
+
+fn to_i64_val(v: &Value) -> Option<i64> {
+    match v {
+        Value::Int(i) => Some(*i),
+        Value::Float(f) | Value::Number(f) if f.fract() == 0.0 && *f >= i64::MIN as f64 && *f <= i64::MAX as f64 => Some(*f as i64),
+        _ => None,
+    }
+}
+
+fn to_f64_val(v: &Value) -> Option<f64> {
+    match v {
+        Value::Int(i) => Some(*i as f64),
+        Value::Float(f) | Value::Number(f) => Some(*f),
+        _ => None,
+    }
+}
 
 #[derive(Debug, Error)]
 pub struct RuntimeError {
@@ -334,26 +350,27 @@ StmtKind::StructDef { name, fields } => {
                 let idx_val = self.eval_expr(idx_expr, env)?;
                 match base_val {
                     Value::Array(a) => {
-                        if let Value::Number(n) = idx_val {
-                            let mut arr = a.write().unwrap();
-                            let len = arr.len();
-                            match resolve_index(n, len) {
-                                Ok(i) => {
-                                    arr[i] = value;
-                                    Ok(())
-                                }
-                                Err(IndexError::NotWhole) => Err(RuntimeError::new(
-                                    "Array index must be a whole number".into(),
-                                )
-                                .at(*span)),
-                                Err(IndexError::OutOfRange(_)) => Err(RuntimeError::new(format!(
-                                    "Index {} out of bounds for array of length {}",
-                                    n, len
-                                ))
-                                .at(*span)),
+                        let mut arr = a.write().unwrap();
+                        let len = arr.len();
+                        let res = match idx_val {
+                            Value::Int(i) => resolve_int_index(i, len),
+                            Value::Float(n) | Value::Number(n) => resolve_index(n, len),
+                            _ => return Err(RuntimeError::new("Array index must be a number".into()).at(*span)),
+                        };
+                        match res {
+                            Ok(i) => {
+                                arr[i] = value;
+                                Ok(())
                             }
-                        } else {
-                            Err(RuntimeError::new("Array index must be a number".into()).at(*span))
+                            Err(IndexError::NotWhole) => Err(RuntimeError::new(
+                                "Array index must be a whole number".into(),
+                            )
+                            .at(*span)),
+                            Err(IndexError::OutOfRange(_)) => Err(RuntimeError::new(format!(
+                                "Index {} out of bounds for array of length {}",
+                                idx_val.to_display(), len
+                            ))
+                            .at(*span)),
                         }
                     }
                     Value::Map(m) => {
@@ -386,7 +403,9 @@ StmtKind::StructDef { name, fields } => {
         match expr {
             Expr::Literal(Literal::Null) => Ok(Value::Null),
             Expr::Literal(Literal::Bool(b)) => Ok(Value::Bool(*b)),
-            Expr::Literal(Literal::Number(n)) => Ok(Value::Number(*n)),
+            Expr::Literal(Literal::Int(n)) => Ok(Value::Int(*n)),
+            Expr::Literal(Literal::Float(n)) => Ok(Value::Float(*n)),
+            Expr::Literal(Literal::Number(n)) => Ok(Value::Float(*n)),
             Expr::Literal(Literal::String(s)) => Ok(Value::String(s.clone())),
             Expr::Variable { name, span } => {
                 if let Some(v) = env.read().unwrap().get(name) {
@@ -558,7 +577,13 @@ Expr::Use { path, span } => {
                 match op {
                     BinaryOp::Add => {
                         match (&left_val, &right_val) {
-                            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
+                            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.wrapping_add(*b))),
+                            (Value::Int(a), Value::Float(b)) | (Value::Int(a), Value::Number(b)) => Ok(Value::Float(*a as f64 + b)),
+                            (Value::Float(a), Value::Int(b)) | (Value::Number(a), Value::Int(b)) => Ok(Value::Float(a + *b as f64)),
+                            (Value::Float(a), Value::Float(b))
+                            | (Value::Number(a), Value::Number(b))
+                            | (Value::Float(a), Value::Number(b))
+                            | (Value::Number(a), Value::Float(b)) => Ok(Value::Float(a + b)),
                             (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{}{}", a, b))),
                             (Value::Array(a), Value::Array(b)) => {
                                 let mut new_arr = a.read().unwrap().clone();
@@ -572,26 +597,52 @@ Expr::Use { path, span } => {
                             )).with_hint("For string concatenation, use string interpolation: `\"hi {name}\"` or convert explicitly: `str(x) + str(y)`").at(*span))
                         }
                     }
-                    BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
-                        if let (Value::Number(a), Value::Number(b)) = (&left_val, &right_val) {
-                            match op {
-                                BinaryOp::Sub => Ok(Value::Number(a - b)),
-                                BinaryOp::Mul => Ok(Value::Number(a * b)),
-                                BinaryOp::Div => {
-                                    if *b == 0.0 {
-                                        Err(RuntimeError::new("Dividing by zero creates black holes".into()).at(*span))
-                                    } else {
-                                        Ok(Value::Number(a / b))
-                                    }
-                                }
-                                BinaryOp::Mod => {
-                                    if *b == 0.0 {
-                                        Err(RuntimeError::new("Modulo by zero".into()).at(*span))
-                                    } else {
-                                        Ok(Value::Number(a % b))
-                                    }
-                                }
-                                _ => unreachable!(),
+                    BinaryOp::Sub => {
+                        match (&left_val, &right_val) {
+                            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.wrapping_sub(*b))),
+                            (Value::Int(a), Value::Float(b)) | (Value::Int(a), Value::Number(b)) => Ok(Value::Float(*a as f64 - b)),
+                            (Value::Float(a), Value::Int(b)) | (Value::Number(a), Value::Int(b)) => Ok(Value::Float(a - *b as f64)),
+                            (Value::Float(a), Value::Float(b))
+                            | (Value::Number(a), Value::Number(b))
+                            | (Value::Float(a), Value::Number(b))
+                            | (Value::Number(a), Value::Float(b)) => Ok(Value::Float(a - b)),
+                            _ => Err(RuntimeError::new(format!(
+                                "Arithmetic operation requires numbers, got {} and {}",
+                                left_val.type_name(),
+                                right_val.type_name()
+                            )).at(*span))
+                        }
+                    }
+                    BinaryOp::Mul => {
+                        match (&left_val, &right_val) {
+                            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.wrapping_mul(*b))),
+                            (Value::Int(a), Value::Float(b)) | (Value::Int(a), Value::Number(b)) => Ok(Value::Float(*a as f64 * b)),
+                            (Value::Float(a), Value::Int(b)) | (Value::Number(a), Value::Int(b)) => Ok(Value::Float(a * *b as f64)),
+                            (Value::Float(a), Value::Float(b))
+                            | (Value::Number(a), Value::Number(b))
+                            | (Value::Float(a), Value::Number(b))
+                            | (Value::Number(a), Value::Float(b)) => Ok(Value::Float(a * b)),
+                            _ => Err(RuntimeError::new(format!(
+                                "Arithmetic operation requires numbers, got {} and {}",
+                                left_val.type_name(),
+                                right_val.type_name()
+                            )).at(*span))
+                        }
+                    }
+                    BinaryOp::Div => {
+                        if let (Value::Int(a), Value::Int(b)) = (&left_val, &right_val) {
+                            if *b == 0 {
+                                Err(RuntimeError::new("Dividing by zero creates black holes".into()).at(*span))
+                            } else if a % b == 0 {
+                                Ok(Value::Int(a / b))
+                            } else {
+                                Ok(Value::Float(*a as f64 / *b as f64))
+                            }
+                        } else if let (Some(a), Some(b)) = (to_f64_val(&left_val), to_f64_val(&right_val)) {
+                            if b == 0.0 {
+                                Err(RuntimeError::new("Dividing by zero creates black holes".into()).at(*span))
+                            } else {
+                                Ok(Value::Float(a / b))
                             }
                         } else {
                             Err(RuntimeError::new(format!(
@@ -601,31 +652,130 @@ Expr::Use { path, span } => {
                             )).at(*span))
                         }
                     }
+                    BinaryOp::Mod => {
+                        if let (Value::Int(a), Value::Int(b)) = (&left_val, &right_val) {
+                            if *b == 0 {
+                                Err(RuntimeError::new("Modulo by zero".into()).at(*span))
+                            } else {
+                                Ok(Value::Int(a % b))
+                            }
+                        } else if let (Some(a), Some(b)) = (to_f64_val(&left_val), to_f64_val(&right_val)) {
+                            if b == 0.0 {
+                                Err(RuntimeError::new("Modulo by zero".into()).at(*span))
+                            } else {
+                                Ok(Value::Float(a % b))
+                            }
+                        } else {
+                            Err(RuntimeError::new(format!(
+                                "Arithmetic operation requires numbers, got {} and {}",
+                                left_val.type_name(),
+                                right_val.type_name()
+                            )).at(*span))
+                        }
+                    }
+                    BinaryOp::BitAnd => {
+                        if let (Some(a), Some(b)) = (to_i64_val(&left_val), to_i64_val(&right_val)) {
+                            Ok(Value::Int(a & b))
+                        } else {
+                            Err(RuntimeError::new(format!(
+                                "Bitwise AND requires integers, got {} and {}",
+                                left_val.type_name(),
+                                right_val.type_name()
+                            )).at(*span))
+                        }
+                    }
+                    BinaryOp::BitOr => {
+                        if let (Some(a), Some(b)) = (to_i64_val(&left_val), to_i64_val(&right_val)) {
+                            Ok(Value::Int(a | b))
+                        } else {
+                            Err(RuntimeError::new(format!(
+                                "Bitwise OR requires integers, got {} and {}",
+                                left_val.type_name(),
+                                right_val.type_name()
+                            )).at(*span))
+                        }
+                    }
+                    BinaryOp::BitXor => {
+                        if let (Some(a), Some(b)) = (to_i64_val(&left_val), to_i64_val(&right_val)) {
+                            Ok(Value::Int(a ^ b))
+                        } else {
+                            Err(RuntimeError::new(format!(
+                                "Bitwise XOR requires integers, got {} and {}",
+                                left_val.type_name(),
+                                right_val.type_name()
+                            )).at(*span))
+                        }
+                    }
+                    BinaryOp::Shl => {
+                        if let (Some(a), Some(b)) = (to_i64_val(&left_val), to_i64_val(&right_val)) {
+                            if b < 0 {
+                                Err(RuntimeError::new("Negative shift count".into()).at(*span))
+                            } else if b >= 64 {
+                                Ok(Value::Int(0))
+                            } else {
+                                Ok(Value::Int(a.wrapping_shl(b as u32)))
+                            }
+                        } else {
+                            Err(RuntimeError::new(format!(
+                                "Bitwise shift requires integers, got {} and {}",
+                                left_val.type_name(),
+                                right_val.type_name()
+                            )).at(*span))
+                        }
+                    }
+                    BinaryOp::Shr => {
+                        if let (Some(a), Some(b)) = (to_i64_val(&left_val), to_i64_val(&right_val)) {
+                            if b < 0 {
+                                Err(RuntimeError::new("Negative shift count".into()).at(*span))
+                            } else if b >= 64 {
+                                if a < 0 {
+                                    Ok(Value::Int(-1))
+                                } else {
+                                    Ok(Value::Int(0))
+                                }
+                            } else {
+                                Ok(Value::Int(a.wrapping_shr(b as u32)))
+                            }
+                        } else {
+                            Err(RuntimeError::new(format!(
+                                "Bitwise shift requires integers, got {} and {}",
+                                left_val.type_name(),
+                                right_val.type_name()
+                            )).at(*span))
+                        }
+                    }
                     BinaryOp::Eq => Ok(Value::Bool(left_val == right_val)),
                     BinaryOp::NotEq => Ok(Value::Bool(left_val != right_val)),
                     BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq => {
-                        match (&left_val, &right_val) {
-                            (Value::Number(a), Value::Number(b)) => {
-                                let res = match op {
-                                    BinaryOp::Lt => a < b,
-                                    BinaryOp::LtEq => a <= b,
-                                    BinaryOp::Gt => a > b,
-                                    BinaryOp::GtEq => a >= b,
-                                    _ => unreachable!(),
-                                };
-                                Ok(Value::Bool(res))
-                            }
-                            (Value::String(a), Value::String(b)) => {
-                                let res = match op {
-                                    BinaryOp::Lt => a < b,
-                                    BinaryOp::LtEq => a <= b,
-                                    BinaryOp::Gt => a > b,
-                                    BinaryOp::GtEq => a >= b,
-                                    _ => unreachable!(),
-                                };
-                                Ok(Value::Bool(res))
-                            }
-                            _ => Err(RuntimeError::new(format!(
+                        if let (Value::String(a), Value::String(b)) = (&left_val, &right_val) {
+                            let res = match op {
+                                BinaryOp::Lt => a < b,
+                                BinaryOp::LtEq => a <= b,
+                                BinaryOp::Gt => a > b,
+                                BinaryOp::GtEq => a >= b,
+                                _ => unreachable!(),
+                            };
+                            Ok(Value::Bool(res))
+                        } else if let (Value::Int(a), Value::Int(b)) = (&left_val, &right_val) {
+                            let res = match op {
+                                BinaryOp::Lt => a < b,
+                                BinaryOp::LtEq => a <= b,
+                                BinaryOp::Gt => a > b,
+                                BinaryOp::GtEq => a >= b,
+                                _ => unreachable!(),
+                            };
+                            Ok(Value::Bool(res))
+                        } else if let (Some(a), Some(b)) = (to_f64_val(&left_val), to_f64_val(&right_val)) {
+                            let res = match op {
+                                BinaryOp::Lt => a < b,
+                                BinaryOp::LtEq => a <= b,
+                                BinaryOp::Gt => a > b,
+                                BinaryOp::GtEq => a >= b,
+                                _ => unreachable!(),
+                            };
+                            Ok(Value::Bool(res))
+                        } else {
+                            Err(RuntimeError::new(format!(
                                 "Cannot compare {} and {}",
                                 left_val.type_name(),
                                 right_val.type_name()
@@ -644,13 +794,17 @@ Expr::Use { path, span } => {
                 match op {
                     UnaryOp::Not => Ok(Value::Bool(!inner.is_truthy())),
                     UnaryOp::Neg => {
-                        if let Value::Number(n) = inner {
-                            Ok(Value::Number(-n))
+                        match inner {
+                            Value::Int(n) => Ok(Value::Int(-n)),
+                            Value::Float(n) | Value::Number(n) => Ok(Value::Float(-n)),
+                            _ => Err(RuntimeError::new(format!("Cannot negate {}", inner.type_name())).at(*span)),
+                        }
+                    }
+                    UnaryOp::BitNot => {
+                        if let Some(n) = to_i64_val(&inner) {
+                            Ok(Value::Int(!n))
                         } else {
-                            Err(
-                                RuntimeError::new(format!("Cannot negate {}", inner.type_name()))
-                                    .at(*span),
-                            )
+                            Err(RuntimeError::new(format!("Cannot bitwise NOT {}", inner.type_name())).at(*span))
                         }
                     }
                 }
@@ -760,7 +914,7 @@ Expr::Use { path, span } => {
                     }
                     Value::Array(a) => {
                         if property == "len" {
-                            Ok(Some(Value::Number(a.read().unwrap().len() as f64)))
+                            Ok(Some(Value::Int(a.read().unwrap().len() as i64)))
                         } else if property == "first" {
                             let val = a.read().unwrap().first().cloned().unwrap_or(Value::Null);
                             if matches!(val, Value::Null) && !(*safe || lenient) {
@@ -790,7 +944,7 @@ Expr::Use { path, span } => {
                     }
                     Value::String(s) => {
                         if property == "len" {
-                            Ok(Some(Value::Number(s.chars().count() as f64)))
+                            Ok(Some(Value::Int(s.chars().count() as i64)))
                         } else if property == "trim" || property == "upper" || property == "lower" || property == "split" || property == "replace" {
                             Ok(Some(Value::BoundMethod {
                                 object: Box::new(Value::String(s.clone())),
@@ -857,28 +1011,29 @@ Expr::Use { path, span } => {
                 let idx_val = self.eval_expr(index, env)?;
                 match base {
                     Value::Array(a) => {
-                        if let Value::Number(n) = idx_val {
-                            let len = a.read().unwrap().len();
-                            match resolve_index(n, len) {
-                                Ok(i) => Ok(Some(a.read().unwrap()[i].clone())),
-                                Err(IndexError::NotWhole) => Err(RuntimeError::new(
-                                    "Array index must be a whole number".into(),
-                                )
-                                .at(*span)),
-                                Err(IndexError::OutOfRange(_)) => {
-                                    if lenient {
-                                        Ok(None)
-                                    } else {
-                                        Err(RuntimeError::new(format!(
-                                            "Index {} out of bounds for array of length {}",
-                                            n, len
-                                        ))
-                                        .at(*span))
-                                    }
+                        let len = a.read().unwrap().len();
+                        let res = match &idx_val {
+                            Value::Int(i) => resolve_int_index(*i, len),
+                            Value::Float(n) | Value::Number(n) => resolve_index(*n, len),
+                            _ => return Err(RuntimeError::new("Array index must be a number".into()).at(*span)),
+                        };
+                        match res {
+                            Ok(i) => Ok(Some(a.read().unwrap()[i].clone())),
+                            Err(IndexError::NotWhole) => Err(RuntimeError::new(
+                                "Array index must be a whole number".into(),
+                            )
+                            .at(*span)),
+                            Err(IndexError::OutOfRange(_)) => {
+                                if lenient {
+                                    Ok(None)
+                                } else {
+                                    Err(RuntimeError::new(format!(
+                                        "Index {} out of bounds for array of length {}",
+                                        idx_val.to_display(), len
+                                    ))
+                                    .at(*span))
                                 }
                             }
-                        } else {
-                            Err(RuntimeError::new("Array index must be a number".into()).at(*span))
                         }
                     }
                     Value::Map(m) => {
@@ -898,31 +1053,32 @@ Expr::Use { path, span } => {
                         }
                     }
                     Value::String(s) => {
-                        if let Value::Number(n) = idx_val {
-                            let len = s.len();
-                            match resolve_index(n, len) {
-                                Ok(i) => {
-                                    let ch = s.chars().nth(i).unwrap().to_string();
-                                    Ok(Some(Value::String(ch)))
-                                }
-                                Err(IndexError::NotWhole) => Err(RuntimeError::new(
-                                    "String index must be a whole number".into(),
-                                )
-                                .at(*span)),
-                                Err(IndexError::OutOfRange(_)) => {
-                                    if lenient {
-                                        Ok(None)
-                                    } else {
-                                        Err(RuntimeError::new(format!(
-                                            "Index {} out of bounds for string of length {}",
-                                            n, len
-                                        ))
-                                        .at(*span))
-                                    }
+                        let len = s.len();
+                        let res = match &idx_val {
+                            Value::Int(i) => resolve_int_index(*i, len),
+                            Value::Float(n) | Value::Number(n) => resolve_index(*n, len),
+                            _ => return Err(RuntimeError::new("String index must be a number".into()).at(*span)),
+                        };
+                        match res {
+                            Ok(i) => {
+                                let ch = s.chars().nth(i).unwrap().to_string();
+                                Ok(Some(Value::String(ch)))
+                            }
+                            Err(IndexError::NotWhole) => Err(RuntimeError::new(
+                                "String index must be a whole number".into(),
+                            )
+                            .at(*span)),
+                            Err(IndexError::OutOfRange(_)) => {
+                                if lenient {
+                                    Ok(None)
+                                } else {
+                                    Err(RuntimeError::new(format!(
+                                        "Index {} out of bounds for string of length {}",
+                                        idx_val.to_display(), len
+                                    ))
+                                    .at(*span))
                                 }
                             }
-                        } else {
-                            Err(RuntimeError::new("String index must be a number".into()).at(*span))
                         }
                     }
                     other => Err(RuntimeError::new(format!(
@@ -1103,16 +1259,30 @@ Expr::Use { path, span } => {
                             self.depth -= 1;
                             return Err(RuntimeError::new("sum() expects 0 arguments".into()).at(span));
                         }
-                        let mut sum = 0.0;
+                        let mut sum_int = 0i64;
+                        let mut is_all_int = true;
+                        let mut sum_float = 0.0f64;
                         for item in a.read().unwrap().iter() {
-                            if let Value::Number(n) = item {
-                                sum += n;
-                            } else {
-                                self.depth -= 1;
-                                return Err(RuntimeError::new(format!("Cannot sum non-number: {}", item.type_name())).at(span));
+                            match item {
+                                Value::Int(n) => {
+                                    sum_int += n;
+                                    sum_float += *n as f64;
+                                }
+                                Value::Float(n) | Value::Number(n) => {
+                                    is_all_int = false;
+                                    sum_float += n;
+                                }
+                                _ => {
+                                    self.depth -= 1;
+                                    return Err(RuntimeError::new(format!("Cannot sum non-number: {}", item.type_name())).at(span));
+                                }
                             }
                         }
-                        Ok(Value::Number(sum))
+                        if is_all_int {
+                            Ok(Value::Int(sum_int))
+                        } else {
+                            Ok(Value::Float(sum_float))
+                        }
                     }
                     (Value::Array(a), "sort") => {
                         if !args.is_empty() {
@@ -1122,7 +1292,17 @@ Expr::Use { path, span } => {
                         let mut arr = a.write().unwrap();
                         arr.sort_by(|x, y| {
                             match (x, y) {
-                                (Value::Number(nx), Value::Number(ny)) => nx.partial_cmp(ny).unwrap_or(std::cmp::Ordering::Equal),
+                                (Value::Int(ix), Value::Int(iy)) => ix.cmp(iy),
+                                (Value::Int(ix), Value::Float(fy)) | (Value::Int(ix), Value::Number(fy)) => {
+                                    (*ix as f64).partial_cmp(fy).unwrap_or(std::cmp::Ordering::Equal)
+                                }
+                                (Value::Float(fx), Value::Int(iy)) | (Value::Number(fx), Value::Int(iy)) => {
+                                    fx.partial_cmp(&(*iy as f64)).unwrap_or(std::cmp::Ordering::Equal)
+                                }
+                                (Value::Float(nx), Value::Float(ny)) | (Value::Number(nx), Value::Number(ny))
+                                | (Value::Float(nx), Value::Number(ny)) | (Value::Number(nx), Value::Float(ny)) => {
+                                    nx.partial_cmp(ny).unwrap_or(std::cmp::Ordering::Equal)
+                                }
                                 (Value::String(sx), Value::String(sy)) => sx.cmp(sy),
                                 _ => std::cmp::Ordering::Equal,
                             }
@@ -1221,6 +1401,8 @@ fn match_pattern(&self, pattern: &crate::ast::Pattern, val: &Value) -> Option<Ve
             Pattern::Variable(name) => Some(vec![(name.clone(), val.clone())]),
             Pattern::Literal(lit) => {
                 let lit_val = match lit {
+                    Literal::Int(n) => Value::Int(*n),
+                    Literal::Float(n) => Value::Float(*n),
                     Literal::Number(n) => Value::Number(*n),
                     Literal::String(s) => Value::String(s.clone()),
                     Literal::Bool(b) => Value::Bool(*b),

@@ -85,9 +85,9 @@ fn builtin_dbg(_ev: &mut Evaluator, args: Vec<Value>, _span: Span) -> Result<Val
 fn builtin_len(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     expect_args("len", 1, &args, span)?;
     match &args[0] {
-        Value::String(s) => Ok(Value::Number(s.len() as f64)),
-        Value::Array(a) => Ok(Value::Number(a.read().unwrap().len() as f64)),
-        Value::Map(m) => Ok(Value::Number(m.read().unwrap().len() as f64)),
+        Value::String(s) => Ok(Value::Int(s.len() as i64)),
+        Value::Array(a) => Ok(Value::Int(a.read().unwrap().len() as i64)),
+        Value::Map(m) => Ok(Value::Int(m.read().unwrap().len() as i64)),
         other => {
             Err(RuntimeError::new(format!("Cannot get length of {}", other.type_name())).at(span))
         }
@@ -107,11 +107,17 @@ fn builtin_str(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Valu
 fn builtin_num(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     expect_args("num", 1, &args, span)?;
     match &args[0] {
-        Value::Number(n) => Ok(Value::Number(*n)),
-        Value::String(s) => s
-            .parse::<f64>()
-            .map(Value::Number)
-            .map_err(|_| RuntimeError::new(format!("Cannot parse '{}' as number", s)).at(span)),
+        Value::Int(n) => Ok(Value::Int(*n)),
+        Value::Float(n) | Value::Number(n) => Ok(Value::Float(*n)),
+        Value::String(s) => {
+            if let Ok(i) = s.parse::<i64>() {
+                Ok(Value::Int(i))
+            } else if let Ok(f) = s.parse::<f64>() {
+                Ok(Value::Float(f))
+            } else {
+                Err(RuntimeError::new(format!("Cannot parse '{}' as number", s)).at(span))
+            }
+        }
         other => Err(
             RuntimeError::new(format!("Cannot convert {} to number", other.type_name())).at(span),
         ),
@@ -119,29 +125,89 @@ fn builtin_num(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Valu
 }
 
 fn builtin_range(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    let all_ints = args.iter().all(|a| matches!(a, Value::Int(_)));
+    if all_ints && !args.is_empty() && args.len() <= 3 {
+        let (start, end, step) = match args.len() {
+            1 => {
+                if let Value::Int(e) = args[0] {
+                    (0i64, e, 1i64)
+                } else {
+                    unreachable!()
+                }
+            }
+            2 => {
+                if let (Value::Int(s), Value::Int(e)) = (&args[0], &args[1]) {
+                    (*s, *e, 1i64)
+                } else {
+                    unreachable!()
+                }
+            }
+            3 => {
+                if let (Value::Int(s), Value::Int(e), Value::Int(st)) = (&args[0], &args[1], &args[2]) {
+                    if *st == 0 {
+                        return Err(RuntimeError::new("range() step cannot be zero".into()).at(span));
+                    }
+                    (*s, *e, *st)
+                } else {
+                    unreachable!()
+                }
+            }
+            _ => unreachable!(),
+        };
+
+        let mut current = start;
+        let mut res = Vec::new();
+        if step > 0 {
+            while current < end {
+                if res.len() > 100000 {
+                    return Err(
+                        RuntimeError::new("range() generated too many elements".into()).at(span),
+                    );
+                }
+                res.push(Value::Int(current));
+                current += step;
+            }
+        } else {
+            while current > end {
+                if res.len() > 100000 {
+                    return Err(
+                        RuntimeError::new("range() generated too many elements".into()).at(span),
+                    );
+                }
+                res.push(Value::Int(current));
+                current += step;
+            }
+        }
+        return Ok(Value::Array(Arc::new(RwLock::new(res))));
+    }
+
+    let to_f64 = |v: &Value| match v {
+        Value::Int(i) => Some(*i as f64),
+        Value::Float(f) | Value::Number(f) => Some(*f),
+        _ => None,
+    };
+
     let (start, end, step) = match args.len() {
         1 => {
-            if let Value::Number(e) = args[0] {
+            if let Some(e) = to_f64(&args[0]) {
                 (0.0, e, 1.0)
             } else {
                 return Err(RuntimeError::new("range() expects number arguments".into()).at(span));
             }
         }
         2 => {
-            if let (Value::Number(s), Value::Number(e)) = (&args[0], &args[1]) {
-                (*s, *e, 1.0)
+            if let (Some(s), Some(e)) = (to_f64(&args[0]), to_f64(&args[1])) {
+                (s, e, 1.0)
             } else {
                 return Err(RuntimeError::new("range() expects number arguments".into()).at(span));
             }
         }
         3 => {
-            if let (Value::Number(s), Value::Number(e), Value::Number(st)) =
-                (&args[0], &args[1], &args[2])
-            {
-                if *st == 0.0 {
+            if let (Some(s), Some(e), Some(st)) = (to_f64(&args[0]), to_f64(&args[1]), to_f64(&args[2])) {
+                if st == 0.0 {
                     return Err(RuntimeError::new("range() step cannot be zero".into()).at(span));
                 }
-                (*s, *e, *st)
+                (s, e, st)
             } else {
                 return Err(RuntimeError::new("range() expects number arguments".into()).at(span));
             }
@@ -164,7 +230,7 @@ fn builtin_range(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
                     RuntimeError::new("range() generated too many elements".into()).at(span),
                 );
             }
-            res.push(Value::Number(current));
+            res.push(Value::Float(current));
             current += step;
         }
     } else {
@@ -174,7 +240,7 @@ fn builtin_range(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
                     RuntimeError::new("range() generated too many elements".into()).at(span),
                 );
             }
-            res.push(Value::Number(current));
+            res.push(Value::Float(current));
             current += step;
         }
     }
@@ -295,18 +361,20 @@ fn builtin_json_stringify(
 fn builtin_serve(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     expect_args("serve", 2, &args, span)?;
 
-    let port = if let Value::Number(p) = args[0] {
-        if p.fract() != 0.0 || p < 1.0 || p > 65535.0 {
-            return Err(RuntimeError::new(
-                "Port must be a whole number between 1 and 65535".into(),
-            )
-            .at(span));
+    let port = match args[0] {
+        Value::Int(p) => {
+            if p < 1 || p > 65535 {
+                return Err(RuntimeError::new("Port must be a whole number between 1 and 65535".into()).at(span));
+            }
+            p as u16
         }
-        p as u16
-    } else {
-        return Err(
-            RuntimeError::new("First argument to serve must be a port number".into()).at(span),
-        );
+        Value::Float(p) | Value::Number(p) => {
+            if p.fract() != 0.0 || p < 1.0 || p > 65535.0 {
+                return Err(RuntimeError::new("Port must be a whole number between 1 and 65535".into()).at(span));
+            }
+            p as u16
+        }
+        _ => return Err(RuntimeError::new("First argument to serve must be a port number".into()).at(span)),
     };
 
     let handler = args[1].clone();
@@ -434,7 +502,8 @@ fn format_http_response(val: Value) -> (u16, &'static str, String, Vec<(String, 
                 .or_else(|| map.get("statusCode"))
                 .or_else(|| map.get("status_code"))
                 .and_then(|v| match v {
-                    Value::Number(n) => Some(*n as u16),
+                    Value::Int(n) => Some(*n as u16),
+                    Value::Float(n) | Value::Number(n) => Some(*n as u16),
                     _ => None,
                 });
 

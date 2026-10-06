@@ -22,8 +22,14 @@ impl Compiler {
 
     fn compile_expr(&mut self, expr: &Expr) -> Result<(), String> {
         match expr {
-            Expr::Literal(Literal::Number(n)) => {
-                let constant = self.chunk.add_constant(Value::Number(*n));
+            Expr::Literal(Literal::Int(n)) => {
+                let constant = self.chunk.add_constant(Value::Int(*n));
+                self.chunk.write_opcode(OpCode::Constant, 0);
+                self.chunk.write(constant as u8, 0);
+                Ok(())
+            }
+            Expr::Literal(Literal::Float(n)) | Expr::Literal(Literal::Number(n)) => {
+                let constant = self.chunk.add_constant(Value::Float(*n));
                 self.chunk.write_opcode(OpCode::Constant, 0);
                 self.chunk.write(constant as u8, 0);
                 Ok(())
