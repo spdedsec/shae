@@ -7,6 +7,10 @@ pub mod parser;
 pub mod suggest;
 pub mod token;
 pub mod value;
+pub mod opcode;
+pub mod chunk;
+pub mod compiler;
+pub mod vm;
 
 use thiserror::Error;
 
