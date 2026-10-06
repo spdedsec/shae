@@ -29,6 +29,6 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 - Pipe operator `|>` for ergonomic data transformations.
 - Stack traces for runtime errors.
 - Concurrent and robust HTTP `serve` (request headers, bodies, status codes, routing).
-- Bytecode VM to increase performance (currently tree-walker is 6-8x slower than Python).
+- [x] Bytecode VM scaffolding and AST compiler core.
 - Type annotations and optional static typing.
 - Package manager, LSP, and Test Runner.
