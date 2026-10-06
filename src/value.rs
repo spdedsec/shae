@@ -3,9 +3,9 @@ use crate::env::Environment;
 use crate::eval::{Evaluator, RuntimeError};
 use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
-use std::cell::RefCell;
+use std::sync::RwLock;
 use std::fmt;
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub type BuiltinFn =
     fn(&mut Evaluator, Vec<Value>, crate::ast::Span) -> Result<Value, RuntimeError>;
@@ -16,13 +16,13 @@ pub enum Value {
     Bool(bool),
     Number(f64),
     String(String),
-    Array(Rc<RefCell<Vec<Value>>>),
-    Map(Rc<RefCell<IndexMap<String, Value>>>),
+    Array(Arc<RwLock<Vec<Value>>>),
+    Map(Arc<RwLock<IndexMap<String, Value>>>),
     Function {
         name: Option<String>,
-        params: Rc<Vec<String>>,
-        body: Rc<Vec<Stmt>>,
-        closure: Rc<RefCell<Environment>>,
+        params: Arc<Vec<String>>,
+        body: Arc<Vec<Stmt>>,
+        closure: Arc<RwLock<Environment>>,
     },
 Builtin {
         name: String,
@@ -38,11 +38,11 @@ Builtin {
     },
     StructInstance {
         name: String,
-        fields: Rc<RefCell<IndexMap<String, Value>>>,
+        fields: Arc<RwLock<IndexMap<String, Value>>>,
     },
     EnumDef {
         name: String,
-        variants: Rc<IndexMap<String, Vec<String>>>,
+        variants: Arc<IndexMap<String, Vec<String>>>,
     },
     EnumConstructor {
         enum_name: String,
@@ -82,8 +82,8 @@ Value::Builtin { .. } => "builtin_function",
             Value::Bool(b) => *b,
             Value::Number(n) => *n != 0.0 && !n.is_nan(),
             Value::String(s) => !s.is_empty(),
-            Value::Array(a) => !a.borrow().is_empty(),
-            Value::Map(m) => !m.borrow().is_empty(),
+            Value::Array(a) => !a.read().unwrap().is_empty(),
+            Value::Map(m) => !m.read().unwrap().is_empty(),
 Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. } => true,
             Value::StructDef { .. } | Value::StructInstance { .. } => true,
             Value::EnumDef { .. } | Value::EnumConstructor { .. } | Value::EnumInstance { .. } => true,
@@ -103,12 +103,12 @@ Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. } => tr
             }
             Value::String(s) => s.clone(),
             Value::Array(a) => {
-                let items: Vec<String> = a.borrow().iter().map(|v| v.to_repr()).collect();
+                let items: Vec<String> = a.read().unwrap().iter().map(|v| v.to_repr()).collect();
                 format!("[{}]", items.join(", "))
             }
             Value::Map(m) => {
                 let entries: Vec<String> = m
-                    .borrow()
+                    .read().unwrap()
                     .iter()
                     .map(|(k, v)| format!("{}: {}", k, v.to_repr()))
                     .collect();
@@ -125,7 +125,7 @@ Value::Builtin { name, .. } => format!("<builtin {}>", name),
             Value::BoundMethod { method, .. } => format!("<bound method {}>", method),
             Value::StructDef { name, .. } => format!("<struct {}>", name),
             Value::StructInstance { name, fields } => {
-                let map = fields.borrow();
+                let map = fields.read().unwrap();
                 let mut out = String::new();
                 out.push_str(name);
                 out.push_str(" { ");
@@ -175,12 +175,12 @@ Value::Builtin { name, .. } => format!("<builtin {}>", name),
             }
             Value::String(s) => JsonValue::String(s.clone()),
             Value::Array(a) => {
-                let list: Vec<JsonValue> = a.borrow().iter().map(|v| v.to_json()).collect();
+                let list: Vec<JsonValue> = a.read().unwrap().iter().map(|v| v.to_json()).collect();
                 JsonValue::Array(list)
             }
             Value::Map(m) => {
                 let mut map = serde_json::Map::new();
-                for (k, v) in m.borrow().iter() {
+                for (k, v) in m.read().unwrap().iter() {
                     map.insert(k.clone(), v.to_json());
                 }
                 JsonValue::Object(map)
@@ -194,7 +194,7 @@ Value::Builtin { name, .. } => JsonValue::String(format!("<builtin {}>", name)),
             Value::StructInstance { name, fields } => {
                 let mut map = serde_json::Map::new();
                 map.insert("__type__".to_string(), JsonValue::String(name.clone()));
-                for (k, v) in fields.borrow().iter() {
+                for (k, v) in fields.read().unwrap().iter() {
                     map.insert(k.clone(), v.to_json());
                 }
                 JsonValue::Object(map)
@@ -220,14 +220,14 @@ Value::Builtin { name, .. } => JsonValue::String(format!("<builtin {}>", name)),
             JsonValue::String(s) => Value::String(s.clone()),
             JsonValue::Array(arr) => {
                 let list: Vec<Value> = arr.iter().map(Value::from_json).collect();
-                Value::Array(Rc::new(RefCell::new(list)))
+                Value::Array(Arc::new(RwLock::new(list)))
             }
             JsonValue::Object(obj) => {
                 let mut map = IndexMap::new();
                 for (k, v) in obj {
                     map.insert(k.clone(), Value::from_json(v));
                 }
-                Value::Map(Rc::new(RefCell::new(map)))
+                Value::Map(Arc::new(RwLock::new(map)))
             }
         }
     }
@@ -240,10 +240,10 @@ impl PartialEq for Value {
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Number(a), Value::Number(b)) => a == b, // exact float equality
             (Value::String(a), Value::String(b)) => a == b,
-            (Value::Array(a), Value::Array(b)) => *a.borrow() == *b.borrow(),
-(Value::Map(a), Value::Map(b)) => *a.borrow() == *b.borrow(),
+            (Value::Array(a), Value::Array(b)) => *a.read().unwrap() == *b.read().unwrap(),
+(Value::Map(a), Value::Map(b)) => *a.read().unwrap() == *b.read().unwrap(),
             (Value::StructInstance { name: n1, fields: f1 }, Value::StructInstance { name: n2, fields: f2 }) => {
-                n1 == n2 && *f1.borrow() == *f2.borrow()
+                n1 == n2 && *f1.read().unwrap() == *f2.read().unwrap()
             }
             (Value::EnumInstance { enum_name: e1, variant_name: v1, values: vals1 }, Value::EnumInstance { enum_name: e2, variant_name: v2, values: vals2 }) => {
                 e1 == e2 && v1 == v2 && vals1 == vals2

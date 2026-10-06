@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
@@ -35,8 +35,8 @@ pub enum StmtKind {
     },
     FnDef {
         name: String,
-        params: Rc<Vec<String>>,
-        body: Rc<Vec<Stmt>>,
+        params: Arc<Vec<String>>,
+        body: Arc<Vec<Stmt>>,
     },
     If {
         condition: Expr,
@@ -151,8 +151,8 @@ pub enum Expr {
     },
 
     Lambda {
-        params: Rc<Vec<String>>,
-        body: Rc<Vec<Stmt>>,
+        params: Arc<Vec<String>>,
+        body: Arc<Vec<Stmt>>,
         span: Span,
     },
 }

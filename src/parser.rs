@@ -1,7 +1,7 @@
 use crate::ast::{BinaryOp, Expr, InterpPart, Literal, Program, Span, Stmt, StmtKind, UnaryOp};
 use crate::lexer::LexerError;
 use crate::token::{SpannedToken, StrPart, Token};
-use std::rc::Rc;
+use std::sync::Arc;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -327,8 +327,8 @@ fn parse_struct_def(&mut self, _line: usize, _col: usize) -> Result<Stmt, Parser
         Ok(Stmt {
             kind: StmtKind::FnDef {
                 name,
-                params: Rc::new(params),
-                body: Rc::new(body),
+                params: Arc::new(params),
+                body: Arc::new(body),
             },
             span: Span { line, col },
         })
@@ -1260,8 +1260,8 @@ Token::Match => {
             Token::Fn => {
                 let (params, body) = self.parse_function_body()?;
                 Ok(Expr::Lambda {
-                    params: Rc::new(params),
-                    body: Rc::new(body),
+                    params: Arc::new(params),
+                    body: Arc::new(body),
                     span,
                 })
             }

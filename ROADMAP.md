@@ -31,4 +31,8 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 - Concurrent and robust HTTP `serve` (request headers, bodies, status codes, routing).
 - [x] Bytecode VM scaffolding and AST compiler core.
 - Type annotations and optional static typing.
+- [x] CLI Toolchain (check, fmt)
+- [x] OS Standard Library (env, exec, time)
+- [x] Try/Catch Error Handling
+- [x] Concurrency (spawn)
 - Package manager, LSP, and Test Runner.

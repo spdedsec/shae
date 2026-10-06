@@ -1,12 +1,12 @@
 use crate::value::Value;
-use std::cell::RefCell;
+use std::sync::RwLock;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct Environment {
     values: HashMap<String, Value>,
-    parent: Option<Rc<RefCell<Environment>>>,
+    parent: Option<Arc<RwLock<Environment>>>,
 }
 
 impl Environment {
@@ -17,7 +17,7 @@ impl Environment {
         }
     }
 
-    pub fn new_with_parent(parent: Rc<RefCell<Environment>>) -> Self {
+    pub fn new_with_parent(parent: Arc<RwLock<Environment>>) -> Self {
         Self {
             values: HashMap::new(),
             parent: Some(parent),
@@ -33,7 +33,7 @@ impl Environment {
             self.values.insert(name.to_string(), value);
             true
         } else if let Some(parent) = &self.parent {
-            parent.borrow_mut().set(name, value)
+            parent.write().unwrap().set(name, value)
         } else {
             false
         }
@@ -43,7 +43,7 @@ impl Environment {
         if let Some(val) = self.values.get(name) {
             Some(val.clone())
         } else if let Some(parent) = &self.parent {
-            parent.borrow().get(name)
+            parent.read().unwrap().get(name)
         } else {
             None
         }
@@ -52,7 +52,7 @@ impl Environment {
     pub fn all_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.values.keys().cloned().collect();
         if let Some(parent) = &self.parent {
-            names.extend(parent.borrow().all_names());
+            names.extend(parent.read().unwrap().all_names());
         }
         names
     }

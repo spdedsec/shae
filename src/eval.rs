@@ -1,8 +1,8 @@
 use crate::ast::{BinaryOp, Expr, InterpPart, Literal, Program, Span, Stmt, StmtKind, UnaryOp};
 use crate::env::Environment;
 use crate::value::{IndexError, Value, resolve_index};
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::RwLock;
+use std::sync::Arc;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -60,7 +60,7 @@ pub enum Signal {
 }
 
 pub struct Evaluator {
-    pub global_env: Rc<RefCell<Environment>>,
+    pub global_env: Arc<RwLock<Environment>>,
     max_depth: usize,
     depth: usize,
 }
@@ -70,7 +70,7 @@ impl Evaluator {
         let mut env = Environment::new();
         crate::builtins::register(&mut env);
         Self {
-            global_env: Rc::new(RefCell::new(env)),
+            global_env: Arc::new(RwLock::new(env)),
             max_depth: 2000,
             depth: 0,
         }
@@ -80,7 +80,7 @@ impl Evaluator {
         self.max_depth = limit;
     }
 
-    pub fn with_env(env: Rc<RefCell<Environment>>) -> Self {
+    pub fn with_env(env: Arc<RwLock<Environment>>) -> Self {
         Self {
             global_env: env,
             max_depth: 2000,
@@ -115,11 +115,11 @@ impl Evaluator {
     fn eval_stmt(
         &mut self,
         stmt: &Stmt,
-        env: &Rc<RefCell<Environment>>,
+        env: &Arc<RwLock<Environment>>,
     ) -> Result<Signal, RuntimeError> {
         match &stmt.kind {
 StmtKind::StructDef { name, fields } => {
-                env.borrow_mut().define(name.clone(), Value::StructDef {
+                env.write().unwrap().define(name.clone(), Value::StructDef {
                     name: name.clone(),
                     fields: fields.clone(),
                 });
@@ -130,9 +130,9 @@ StmtKind::StructDef { name, fields } => {
                 for v in variants {
                     var_map.insert(v.name.clone(), v.fields.clone());
                 }
-                env.borrow_mut().define(name.clone(), Value::EnumDef {
+                env.write().unwrap().define(name.clone(), Value::EnumDef {
                     name: name.clone(),
-                    variants: std::rc::Rc::new(var_map),
+                    variants: std::sync::Arc::new(var_map),
                 });
                 Ok(Signal::None)
             }
@@ -142,7 +142,7 @@ StmtKind::StructDef { name, fields } => {
             }
             StmtKind::Let { name, init } => {
                 let val = self.eval_expr(init, env).map_err(|e| e.or_at(stmt.span))?;
-                env.borrow_mut().define(name.clone(), val);
+                env.write().unwrap().define(name.clone(), val);
                 Ok(Signal::None)
             }
             StmtKind::Assign { target, value } => {
@@ -158,7 +158,7 @@ StmtKind::StructDef { name, fields } => {
                     body: body.clone(),
                     closure: env.clone(),
                 };
-                env.borrow_mut().define(name.clone(), func);
+                env.write().unwrap().define(name.clone(), func);
                 Ok(Signal::None)
             }
             StmtKind::If {
@@ -179,12 +179,12 @@ StmtKind::StructDef { name, fields } => {
             }
             
             StmtKind::TryCatch { try_body, catch_ident, catch_body } => {
-                let try_env = std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new_with_parent(env.clone())));
+                let try_env = std::sync::Arc::new(std::sync::RwLock::new(crate::env::Environment::new_with_parent(env.clone())));
                 match self.eval_block(try_body, &try_env) {
                     Ok(sig) => Ok(sig),
                     Err(e) => {
-                        let catch_env = std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new_with_parent(env.clone())));
-                        catch_env.borrow_mut().define(catch_ident.clone(), Value::String(e.message));
+                        let catch_env = std::sync::Arc::new(std::sync::RwLock::new(crate::env::Environment::new_with_parent(env.clone())));
+                        catch_env.write().unwrap().define(catch_ident.clone(), Value::String(e.message));
                         self.eval_block(catch_body, &catch_env)
                     }
                 }
@@ -217,7 +217,7 @@ StmtKind::StructDef { name, fields } => {
                     .eval_expr(iterable, env)
                     .map_err(|e| e.or_at(stmt.span))?;
                 let elements = match iter_val {
-                    Value::Array(a) => a.borrow().clone(),
+                    Value::Array(a) => a.read().unwrap().clone(),
                     other => {
                         return Err(RuntimeError::new(format!(
                             "Cannot iterate over {}",
@@ -228,8 +228,8 @@ StmtKind::StructDef { name, fields } => {
                 };
                 let mut last_val = Value::Null;
                 for elem in elements {
-                    let loop_env = Rc::new(RefCell::new(Environment::new_with_parent(env.clone())));
-                    loop_env.borrow_mut().define(item.clone(), elem);
+                    let loop_env = Arc::new(RwLock::new(Environment::new_with_parent(env.clone())));
+                    loop_env.write().unwrap().define(item.clone(), elem);
                     match self.eval_block(body, &loop_env)? {
                         Signal::Value(v) => last_val = v,
                         Signal::Return(v) => return Ok(Signal::Return(v)),
@@ -253,7 +253,7 @@ StmtKind::StructDef { name, fields } => {
     fn eval_block(
         &mut self,
         block: &[Stmt],
-        env: &Rc<RefCell<Environment>>,
+        env: &Arc<RwLock<Environment>>,
     ) -> Result<Signal, RuntimeError> {
         let mut last_val = Value::Null;
         let mut produced_value = false;
@@ -282,12 +282,12 @@ StmtKind::StructDef { name, fields } => {
         &mut self,
         target: &Expr,
         value: Value,
-        env: &Rc<RefCell<Environment>>,
+        env: &Arc<RwLock<Environment>>,
     ) -> Result<(), RuntimeError> {
         match target {
             Expr::Variable { name, span } => {
-                if !env.borrow_mut().set(name, value.clone()) {
-                    let candidates = env.borrow().all_names();
+                if !env.write().unwrap().set(name, value.clone()) {
+                    let candidates = env.read().unwrap().all_names();
                     let hint =
                         if name == "NULL" || name == "undefined" || name == "nil" || name == "None"
                         {
@@ -311,11 +311,11 @@ StmtKind::StructDef { name, fields } => {
             } => {
                 let base_val = self.eval_expr(base_expr, env)?;
                 if let Value::Map(m) = base_val {
-                    m.borrow_mut().insert(property.clone(), value);
+                    m.write().unwrap().insert(property.clone(), value);
                     Ok(())
                 } else if let Value::StructInstance { name, fields } = base_val {
-                    if fields.borrow().contains_key(property) {
-                        fields.borrow_mut().insert(property.clone(), value);
+                    if fields.read().unwrap().contains_key(property) {
+                        fields.write().unwrap().insert(property.clone(), value);
                         Ok(())
                     } else {
                         Err(RuntimeError::new(format!("Struct '{}' has no field '{}'", name, property)).at(*span))
@@ -339,7 +339,7 @@ StmtKind::StructDef { name, fields } => {
                 match base_val {
                     Value::Array(a) => {
                         if let Value::Number(n) = idx_val {
-                            let mut arr = a.borrow_mut();
+                            let mut arr = a.write().unwrap();
                             let len = arr.len();
                             match resolve_index(n, len) {
                                 Ok(i) => {
@@ -362,7 +362,7 @@ StmtKind::StructDef { name, fields } => {
                     }
                     Value::Map(m) => {
                         if let Value::String(s) = idx_val {
-                            m.borrow_mut().insert(s, value);
+                            m.write().unwrap().insert(s, value);
                             Ok(())
                         } else {
                             Err(RuntimeError::new("Map key must be a string".into()).at(*span))
@@ -384,7 +384,7 @@ StmtKind::StructDef { name, fields } => {
     fn eval_expr(
         &mut self,
         expr: &Expr,
-        env: &Rc<RefCell<Environment>>,
+        env: &Arc<RwLock<Environment>>,
     ) -> Result<Value, RuntimeError> {
         let _span = expr.span();
         match expr {
@@ -393,10 +393,10 @@ StmtKind::StructDef { name, fields } => {
             Expr::Literal(Literal::Number(n)) => Ok(Value::Number(*n)),
             Expr::Literal(Literal::String(s)) => Ok(Value::String(s.clone())),
             Expr::Variable { name, span } => {
-                if let Some(v) = env.borrow().get(name) {
+                if let Some(v) = env.read().unwrap().get(name) {
                     Ok(v)
                 } else {
-                    let candidates = env.borrow().all_names();
+                    let candidates = env.read().unwrap().all_names();
                     let hint =
                         if name == "NULL" || name == "undefined" || name == "nil" || name == "None"
                         {
@@ -416,7 +416,7 @@ StmtKind::StructDef { name, fields } => {
                 for e in elements {
                     vals.push(self.eval_expr(e, env)?);
                 }
-                Ok(Value::Array(Rc::new(RefCell::new(vals))))
+                Ok(Value::Array(Arc::new(RwLock::new(vals))))
             }
             Expr::Map(elements) => {
                 let mut m = indexmap::IndexMap::new();
@@ -424,10 +424,10 @@ StmtKind::StructDef { name, fields } => {
                     let val = self.eval_expr(v_expr, env)?;
                     m.insert(k.clone(), val);
                 }
-                Ok(Value::Map(Rc::new(RefCell::new(m))))
+                Ok(Value::Map(Arc::new(RwLock::new(m))))
             }
 Expr::StructInit { name, fields, span } => {
-                let def = env.borrow().get(name);
+                let def = env.read().unwrap().get(name);
                 if let Some(Value::StructDef { fields: def_fields, .. }) = def {
                     if fields.len() != def_fields.len() {
                         return Err(RuntimeError::new(format!("Struct '{}' expects {} fields, but got {}.", name, def_fields.len(), fields.len())).at(*span));
@@ -449,7 +449,7 @@ Expr::StructInit { name, fields, span } => {
                     
                     Ok(Value::StructInstance {
                         name: name.clone(),
-                        fields: std::rc::Rc::new(std::cell::RefCell::new(instance_fields)),
+                        fields: std::sync::Arc::new(std::sync::RwLock::new(instance_fields)),
                     })
                 } else {
                     Err(RuntimeError::new(format!("'{}' is not a struct.", name)).at(*span))
@@ -459,9 +459,9 @@ Expr::StructInit { name, fields, span } => {
                 let target_val = self.eval_expr(target, env)?;
                 for arm in arms {
                     if let Some(bindings) = self.match_pattern(&arm.pattern, &target_val) {
-                        let match_env = std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new_with_parent(env.clone())));
+                        let match_env = std::sync::Arc::new(std::sync::RwLock::new(crate::env::Environment::new_with_parent(env.clone())));
                         for (k, v) in bindings {
-                            match_env.borrow_mut().define(k, v);
+                            match_env.write().unwrap().define(k, v);
                         }
                         return self.eval_expr(&arm.body, &match_env);
                     }
@@ -481,8 +481,8 @@ Expr::Use { path, span } => {
                 
                 let mut builtin_env = crate::env::Environment::new();
                 crate::builtins::register(&mut builtin_env);
-                let builtin_env_rc = std::rc::Rc::new(std::cell::RefCell::new(builtin_env));
-                let module_env = std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new_with_parent(builtin_env_rc)));
+                let builtin_env_rc = std::sync::Arc::new(std::sync::RwLock::new(builtin_env));
+                let module_env = std::sync::Arc::new(std::sync::RwLock::new(crate::env::Environment::new_with_parent(builtin_env_rc)));
                 
                 let mut ev = crate::eval::Evaluator::with_env(module_env.clone());
                 
@@ -490,8 +490,8 @@ Expr::Use { path, span } => {
                 let program = crate::parser::parse(tokens).map_err(|e| RuntimeError::new(format!("Parser error in module '{}': {}", path_str, e)).at(*span))?;
                 ev.eval_program(&program).map_err(|e| RuntimeError::new(format!("Runtime error in module '{}': {}", path_str, e.message)).at(*span))?;
                 
-                let map = module_env.borrow().export_map();
-                Ok(Value::Map(std::rc::Rc::new(std::cell::RefCell::new(map))))
+                let map = module_env.read().unwrap().export_map();
+                Ok(Value::Map(std::sync::Arc::new(std::sync::RwLock::new(map))))
             }
             Expr::Interpolated(parts) => {
                 let mut res = String::new();
@@ -565,9 +565,9 @@ Expr::Use { path, span } => {
                             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
                             (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{}{}", a, b))),
                             (Value::Array(a), Value::Array(b)) => {
-                                let mut new_arr = a.borrow().clone();
-                                new_arr.extend(b.borrow().clone());
-                                Ok(Value::Array(Rc::new(RefCell::new(new_arr))))
+                                let mut new_arr = a.read().unwrap().clone();
+                                new_arr.extend(b.read().unwrap().clone());
+                                Ok(Value::Array(Arc::new(RwLock::new(new_arr))))
                             }
                             _ => Err(RuntimeError::new(format!(
                                 "Cannot add {} and {}",
@@ -683,7 +683,7 @@ Expr::Use { path, span } => {
     fn eval_chain(
         &mut self,
         expr: &Expr,
-        env: &Rc<RefCell<Environment>>,
+        env: &Arc<RwLock<Environment>>,
         lenient: bool,
     ) -> Result<Option<Value>, RuntimeError> {
         match expr {
@@ -714,7 +714,7 @@ Expr::Use { path, span } => {
                 match base {
 
                     Value::StructInstance { name, fields } => {
-                        if let Some(val) = fields.borrow().get(property) {
+                        if let Some(val) = fields.read().unwrap().get(property) {
                             Ok(Some(val.clone()))
                         } else if *safe || lenient {
                             Ok(None)
@@ -734,7 +734,7 @@ Expr::Use { path, span } => {
                         }
                     }
                     Value::Map(m) => {
-                        let map = m.borrow();
+                        let map = m.read().unwrap();
                         if let Some(v) = map.get(property) {
                             Ok(Some(v.clone()))
                         } else {
@@ -764,16 +764,16 @@ Expr::Use { path, span } => {
                     }
                     Value::Array(a) => {
                         if property == "len" {
-                            Ok(Some(Value::Number(a.borrow().len() as f64)))
+                            Ok(Some(Value::Number(a.read().unwrap().len() as f64)))
                         } else if property == "first" {
-                            let val = a.borrow().first().cloned().unwrap_or(Value::Null);
+                            let val = a.read().unwrap().first().cloned().unwrap_or(Value::Null);
                             if matches!(val, Value::Null) && !(*safe || lenient) {
                                 Err(RuntimeError::new("Cannot get 'first' of an empty array".into()).at(*span))
                             } else {
                                 Ok(Some(val))
                             }
                         } else if property == "last" {
-                            let val = a.borrow().last().cloned().unwrap_or(Value::Null);
+                            let val = a.read().unwrap().last().cloned().unwrap_or(Value::Null);
                             if matches!(val, Value::Null) && !(*safe || lenient) {
                                 Err(RuntimeError::new("Cannot get 'last' of an empty array".into()).at(*span))
                             } else {
@@ -848,9 +848,9 @@ Expr::Use { path, span } => {
                 match base {
                     Value::Array(a) => {
                         if let Value::Number(n) = idx_val {
-                            let len = a.borrow().len();
+                            let len = a.read().unwrap().len();
                             match resolve_index(n, len) {
-                                Ok(i) => Ok(Some(a.borrow()[i].clone())),
+                                Ok(i) => Ok(Some(a.read().unwrap()[i].clone())),
                                 Err(IndexError::NotWhole) => Err(RuntimeError::new(
                                     "Array index must be a whole number".into(),
                                 )
@@ -873,7 +873,7 @@ Expr::Use { path, span } => {
                     }
                     Value::Map(m) => {
                         if let Value::String(s) = idx_val {
-                            if let Some(v) = m.borrow().get(&s) {
+                            if let Some(v) = m.read().unwrap().get(&s) {
                                 Ok(Some(v.clone()))
                             } else {
                                 if lenient {
@@ -987,9 +987,9 @@ Expr::Use { path, span } => {
                     ))
                     .at(span));
                 }
-                let call_env = Rc::new(RefCell::new(Environment::new_with_parent(closure.clone())));
+                let call_env = Arc::new(RwLock::new(Environment::new_with_parent(closure.clone())));
                 for (param_name, arg_val) in params.iter().zip(args.into_iter()) {
-                    call_env.borrow_mut().define(param_name.clone(), arg_val);
+                    call_env.write().unwrap().define(param_name.clone(), arg_val);
                 }
                 match self.eval_block(body, &call_env) {
                     Ok(Signal::Return(v)) => Ok(v),
@@ -1022,7 +1022,7 @@ Expr::Use { path, span } => {
                             self.depth -= 1;
                             return Err(RuntimeError::new("push() expects 1 argument".into()).at(span));
                         }
-                        a.borrow_mut().push(args[0].clone());
+                        a.write().unwrap().push(args[0].clone());
                         Ok(Value::Null)
                     }
                     (Value::Array(a), "pop") => {
@@ -1030,7 +1030,7 @@ Expr::Use { path, span } => {
                             self.depth -= 1;
                             return Err(RuntimeError::new("pop() expects 0 arguments".into()).at(span));
                         }
-                        if let Some(val) = a.borrow_mut().pop() {
+                        if let Some(val) = a.write().unwrap().pop() {
                             Ok(val)
                         } else {
                             Ok(Value::Null)
@@ -1047,11 +1047,11 @@ Expr::Use { path, span } => {
                             return Err(RuntimeError::new("map() argument must be a function".into()).at(span));
                         }
                         let mut new_arr = Vec::new();
-                        for item in a.borrow().iter() {
+                        for item in a.read().unwrap().iter() {
                             let mapped = self.call_value(func, vec![item.clone()], span)?;
                             new_arr.push(mapped);
                         }
-                        Ok(Value::Array(std::rc::Rc::new(std::cell::RefCell::new(new_arr))))
+                        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(new_arr))))
                     }
                     (Value::Array(a), "filter") => {
                         if args.len() != 1 {
@@ -1064,13 +1064,13 @@ Expr::Use { path, span } => {
                             return Err(RuntimeError::new("filter() argument must be a function".into()).at(span));
                         }
                         let mut new_arr = Vec::new();
-                        for item in a.borrow().iter() {
+                        for item in a.read().unwrap().iter() {
                             let keep = self.call_value(func, vec![item.clone()], span)?;
                             if keep.is_truthy() {
                                 new_arr.push(item.clone());
                             }
                         }
-                        Ok(Value::Array(std::rc::Rc::new(std::cell::RefCell::new(new_arr))))
+                        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(new_arr))))
                     }
                     (Value::Array(a), "reduce") => {
                         if args.len() != 2 {
@@ -1083,7 +1083,7 @@ Expr::Use { path, span } => {
                             self.depth -= 1;
                             return Err(RuntimeError::new("reduce() first argument must be a function".into()).at(span));
                         }
-                        for item in a.borrow().iter() {
+                        for item in a.read().unwrap().iter() {
                             acc = self.call_value(func, vec![acc, item.clone()], span)?;
                         }
                         Ok(acc)
@@ -1094,7 +1094,7 @@ Expr::Use { path, span } => {
                             return Err(RuntimeError::new("sum() expects 0 arguments".into()).at(span));
                         }
                         let mut sum = 0.0;
-                        for item in a.borrow().iter() {
+                        for item in a.read().unwrap().iter() {
                             if let Value::Number(n) = item {
                                 sum += n;
                             } else {
@@ -1109,7 +1109,7 @@ Expr::Use { path, span } => {
                             self.depth -= 1;
                             return Err(RuntimeError::new("sort() expects 0 arguments".into()).at(span));
                         }
-                        let mut arr = a.borrow_mut();
+                        let mut arr = a.write().unwrap();
                         arr.sort_by(|x, y| {
                             match (x, y) {
                                 (Value::Number(nx), Value::Number(ny)) => nx.partial_cmp(ny).unwrap_or(std::cmp::Ordering::Equal),
@@ -1148,7 +1148,7 @@ Expr::Use { path, span } => {
                         }
                         if let Value::String(delim) = &args[0] {
                             let parts: Vec<Value> = s.split(delim).map(|p| Value::String(p.to_string())).collect();
-                            Ok(Value::Array(std::rc::Rc::new(std::cell::RefCell::new(parts))))
+                            Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(parts))))
                         } else {
                             self.depth -= 1;
                             Err(RuntimeError::new("split() delimiter must be a string".into()).at(span))
