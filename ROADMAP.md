@@ -24,18 +24,18 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 
 ---
 
-### **Chunk 2: Code Formatter (`shae fmt`) & AST Linter Polish** *(Next)*
-- [ ] **AST Pretty-Printer (`src/fmt.rs`)**
-  - [ ] Canonical indentation (4 spaces), brace placement, and operator formatting.
-  - [ ] CLI integration: `shae fmt <file.shae>` and `shae fmt --check <file.shae>`.
-- [ ] **Linter Expansion (`src/linter.rs`)**
-  - [ ] Unused variable and unused import warnings.
-  - [ ] Dead/unreachable code warnings after `return`, `break`, `continue`.
-  - [ ] Variable shadowing warnings across nested scopes.
+### **Chunk 2: Code Formatter (`shae fmt`) & AST Linter Polish** *(Completed)*
+- [x] **AST Pretty-Printer (`src/fmt.rs`)**
+  - [x] Canonical indentation (4 spaces), brace placement, and operator formatting.
+  - [x] CLI integration: `shae fmt <file.shae>` and `shae fmt --check <file.shae>`.
+- [x] **Linter Expansion (`src/linter.rs`)**
+  - [x] Unused variable and unused parameter tracking with `_` prefix suppression.
+  - [x] Dead/unreachable code warnings after `return`, `break`, `continue`.
+  - [x] Variable shadowing warnings (built-in shadowing and nested outer scope shadowing).
 
 ---
 
-### **Chunk 3: Bytecode VM — Control Flow & Local Variables**
+### **Chunk 3: Bytecode VM — Control Flow & Local Variables** *(Next)*
 - [ ] Local variable resolution at compile time (`OpGetLocal`, `OpSetLocal`).
 - [ ] Conditional and unconditional jumps (`OpJump`, `OpJumpIfFalse`).
 - [ ] Control flow compilation: `if/else`, `while`, `for in`.
