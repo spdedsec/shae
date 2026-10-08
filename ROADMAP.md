@@ -62,10 +62,10 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 
 ---
 
-### **Chunk 7: Concurrency Modernization & Asynchronous I/O**
+### **Chunk 7: Concurrency Modernization & Asynchronous I/O** *(Completed)*
 - [x] Message-passing channels (`channel(capacity)`, `send()`, `recv()`).
-- [ ] Non-blocking event-driven web server engine with keep-alive and routing parameters.
-- [ ] TLS / HTTPS built-in server support via `rustls`.
+- [x] Non-blocking event-driven web server engine with keep-alive and routing parameters.
+- [x] TLS / HTTPS built-in server support via `rustls`.
 
 ---
 

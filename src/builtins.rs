@@ -44,6 +44,8 @@ pub fn register(env: &mut Environment) {
         ("json_parse", builtin_json_parse),
         ("json_stringify", builtin_json_stringify),
         ("serve", builtin_serve),
+        ("serve_tls", builtin_serve_tls),
+        ("serve_https", builtin_serve_tls),
         ("read", builtin_read),
         ("write", builtin_write),
         ("fetch", builtin_fetch),
@@ -58,6 +60,7 @@ pub fn register(env: &mut Environment) {
         ("try_recv", builtin_try_recv),
         ("tryRecv", builtin_try_recv),
         ("close", builtin_close),
+        ("route_match", builtin_route_match),
         ("assert", builtin_assert),
         ("assert_eq", builtin_assert_eq),
     ];
@@ -365,6 +368,19 @@ fn builtin_json_stringify(
 }
 
 fn builtin_serve(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() == 3 || args.len() == 4 {
+        if args.len() == 3 {
+            if let Value::Map(m) = &args[2] {
+                let map = m.read().unwrap();
+                if let (Some(Value::String(cert)), Some(Value::String(key))) = (map.get("cert"), map.get("key")) {
+                    let tls_args = vec![args[0].clone(), args[1].clone(), Value::String(cert.clone()), Value::String(key.clone())];
+                    return builtin_serve_tls(ev, tls_args, span);
+                }
+            }
+        } else if args.len() == 4 {
+            return builtin_serve_tls(ev, args, span);
+        }
+    }
     expect_args("serve", 2, &args, span)?;
 
     let port = match args[0] {
@@ -384,9 +400,9 @@ fn builtin_serve(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
     };
 
     let handler = args[1].clone();
-    if !matches!(handler, Value::Function { .. } | Value::Builtin { .. }) {
+    if !matches!(handler, Value::Function { .. } | Value::Builtin { .. } | Value::Map(_)) {
         return Err(
-            RuntimeError::new("Second argument to serve must be a function".into()).at(span),
+            RuntimeError::new("Second argument to serve must be a function or route map".into()).at(span),
         );
     }
 
@@ -406,98 +422,393 @@ fn builtin_serve(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
             let env_clone = env_root.clone();
             let handler_clone = handler_root.clone();
             std::thread::spawn(move || {
-                let mut worker_eval = Evaluator::with_env(env_clone);
-                let _ = handle_http_client(&mut stream, &mut worker_eval, &handler_clone, span);
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+                let _ = handle_http_io(&mut stream, &env_clone, &handler_clone, span);
             });
         }
     }
     Ok(Value::Null)
 }
 
-fn handle_http_client(
-    stream: &mut std::net::TcpStream,
+fn load_tls_config(cert_path: &str, key_path: &str, span: Span) -> Result<Arc<rustls::ServerConfig>, RuntimeError> {
+    let cert_file = std::fs::File::open(cert_path).map_err(|e| {
+        RuntimeError::new(format!("Failed to open certificate file '{}': {}", cert_path, e)).at(span)
+    })?;
+    let mut cert_reader = std::io::BufReader::new(cert_file);
+    let certs: Vec<rustls::pki_types::CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| RuntimeError::new(format!("Failed to parse certificates: {}", e)).at(span))?;
+
+    if certs.is_empty() {
+        return Err(RuntimeError::new(format!("No certificates found in '{}'", cert_path)).at(span));
+    }
+
+    let key_file = std::fs::File::open(key_path).map_err(|e| {
+        RuntimeError::new(format!("Failed to open private key file '{}': {}", key_path, e)).at(span)
+    })?;
+    let mut key_reader = std::io::BufReader::new(key_file);
+    let key: rustls::pki_types::PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
+        .map_err(|e| RuntimeError::new(format!("Failed to parse private key: {}", e)).at(span))?
+        .ok_or_else(|| RuntimeError::new(format!("No private key found in '{}'", key_path)).at(span))?;
+
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| RuntimeError::new(format!("TLS configuration error: {}", e)).at(span))?;
+
+    Ok(Arc::new(config))
+}
+
+fn builtin_serve_tls(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("serve_tls", 4, &args, span)?;
+
+    let port = match args[0] {
+        Value::Int(p) => {
+            if p < 1 || p > 65535 {
+                return Err(RuntimeError::new("Port must be a whole number between 1 and 65535".into()).at(span));
+            }
+            p as u16
+        }
+        Value::Float(p) | Value::Number(p) => {
+            if p.fract() != 0.0 || p < 1.0 || p > 65535.0 {
+                return Err(RuntimeError::new("Port must be a whole number between 1 and 65535".into()).at(span));
+            }
+            p as u16
+        }
+        _ => return Err(RuntimeError::new("First argument to serve_tls must be a port number".into()).at(span)),
+    };
+
+    let handler = args[1].clone();
+    if !matches!(handler, Value::Function { .. } | Value::Builtin { .. } | Value::Map(_)) {
+        return Err(
+            RuntimeError::new("Second argument to serve_tls must be a function or route map".into()).at(span),
+        );
+    }
+
+    let cert_path = match &args[2] {
+        Value::String(s) => s.as_str(),
+        _ => return Err(RuntimeError::new("Third argument to serve_tls must be certificate path string".into()).at(span)),
+    };
+
+    let key_path = match &args[3] {
+        Value::String(s) => s.as_str(),
+        _ => return Err(RuntimeError::new("Fourth argument to serve_tls must be private key path string".into()).at(span)),
+    };
+
+    let tls_config = load_tls_config(cert_path, key_path, span)?;
+
+    use std::net::TcpListener;
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).map_err(|e| {
+        RuntimeError::new(format!("Failed to bind to port {}: {}", port, e)).at(span)
+    })?;
+
+    println!("HTTPS Server running on https://localhost:{}", port);
+
+    let env_root = ev.global_env.clone();
+    let handler_root = handler.clone();
+
+    for stream in listener.incoming() {
+        if let Ok(mut tcp_stream) = stream {
+            let env_clone = env_root.clone();
+            let handler_clone = handler_root.clone();
+            let config_clone = tls_config.clone();
+            std::thread::spawn(move || {
+                let _ = tcp_stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+                if let Ok(mut conn) = rustls::ServerConnection::new(config_clone) {
+                    let mut tls_stream = rustls::Stream::new(&mut conn, &mut tcp_stream);
+                    let _ = handle_http_io(&mut tls_stream, &env_clone, &handler_clone, span);
+                }
+            });
+        }
+    }
+    Ok(Value::Null)
+}
+
+pub fn match_route_pattern(pattern: &str, path: &str) -> Option<IndexMap<String, Value>> {
+    let pattern_norm = pattern.split('?').next().unwrap_or(pattern);
+    let path_norm = path.split('?').next().unwrap_or(path);
+
+    let pat_trimmed = pattern_norm.trim_matches('/');
+    let path_trimmed = path_norm.trim_matches('/');
+
+    if pat_trimmed.is_empty() && path_trimmed.is_empty() {
+        return Some(IndexMap::new());
+    }
+
+    let pat_parts: Vec<&str> = if pat_trimmed.is_empty() {
+        vec![]
+    } else {
+        pat_trimmed.split('/').collect()
+    };
+    let path_parts: Vec<&str> = if path_trimmed.is_empty() {
+        vec![]
+    } else {
+        path_trimmed.split('/').collect()
+    };
+
+    if pat_parts.len() != path_parts.len() {
+        return None;
+    }
+
+    let mut params = IndexMap::new();
+    for (pat_seg, path_seg) in pat_parts.iter().zip(path_parts.iter()) {
+        if let Some(param_name) = pat_seg.strip_prefix(':') {
+            params.insert(param_name.to_string(), Value::String(path_seg.to_string()));
+        } else if let Some(param_name) = pat_seg.strip_prefix('*') {
+            let name = if param_name.is_empty() { "wildcard" } else { param_name };
+            params.insert(name.to_string(), Value::String(path_seg.to_string()));
+        } else if pat_seg != path_seg {
+            return None;
+        }
+    }
+    Some(params)
+}
+
+fn url_decode(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '%' {
+            let h1 = chars.next();
+            let h2 = chars.next();
+            if let (Some(c1), Some(c2)) = (h1, h2) {
+                let hex_str = format!("{}{}", c1, c2);
+                if let Ok(byte) = u8::from_str_radix(&hex_str, 16) {
+                    result.push(byte as char);
+                    continue;
+                }
+            }
+            result.push('%');
+            if let Some(c1) = h1 { result.push(c1); }
+            if let Some(c2) = h2 { result.push(c2); }
+        } else if ch == '+' {
+            result.push(' ');
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+fn parse_query_params(query: &str) -> IndexMap<String, Value> {
+    let mut map = IndexMap::new();
+    for pair in query.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        if let Some((k, v)) = pair.split_once('=') {
+            map.insert(url_decode(k), Value::String(url_decode(v)));
+        } else {
+            map.insert(url_decode(pair), Value::String("".to_string()));
+        }
+    }
+    map
+}
+
+fn dispatch_request(
     ev: &mut Evaluator,
+    handler: &Value,
+    method: &str,
+    path: &str,
+    query: &str,
+    query_params: &IndexMap<String, Value>,
+    headers: &IndexMap<String, Value>,
+    body_str: &str,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    match handler {
+        Value::Map(route_map) => {
+            let routes = route_map.read().unwrap();
+            for (route_pattern, handler_fn) in routes.iter() {
+                let (expected_method, path_pattern) = if let Some((m, p)) = route_pattern.split_once(' ') {
+                    (Some(m.trim().to_uppercase()), p.trim())
+                } else {
+                    (None, route_pattern.as_str())
+                };
+
+                if let Some(exp_m) = expected_method {
+                    if exp_m != method {
+                        continue;
+                    }
+                }
+
+                if let Some(params) = match_route_pattern(path_pattern, path) {
+                    let mut req_map = IndexMap::new();
+                    req_map.insert("method".to_string(), Value::String(method.to_string()));
+                    req_map.insert("path".to_string(), Value::String(path.to_string()));
+                    req_map.insert("query".to_string(), Value::String(query.to_string()));
+                    req_map.insert("queryParams".to_string(), Value::Map(Arc::new(RwLock::new(query_params.clone()))));
+                    req_map.insert("query_params".to_string(), Value::Map(Arc::new(RwLock::new(query_params.clone()))));
+                    req_map.insert("params".to_string(), Value::Map(Arc::new(RwLock::new(params))));
+                    req_map.insert("headers".to_string(), Value::Map(Arc::new(RwLock::new(headers.clone()))));
+                    req_map.insert("body".to_string(), Value::String(body_str.to_string()));
+
+                    let req_val = Value::Map(Arc::new(RwLock::new(req_map)));
+                    return ev.call_value(handler_fn, vec![req_val], span);
+                }
+            }
+
+            // No route matched
+            let mut not_found_map = IndexMap::new();
+            not_found_map.insert("status".to_string(), Value::Int(404));
+            not_found_map.insert("body".to_string(), Value::String(format!("Route '{} {}' not found", method, path)));
+            Ok(Value::Map(Arc::new(RwLock::new(not_found_map))))
+        }
+        _ => {
+            let mut req_map = IndexMap::new();
+            req_map.insert("method".to_string(), Value::String(method.to_string()));
+            req_map.insert("path".to_string(), Value::String(path.to_string()));
+            req_map.insert("query".to_string(), Value::String(query.to_string()));
+            req_map.insert("queryParams".to_string(), Value::Map(Arc::new(RwLock::new(query_params.clone()))));
+            req_map.insert("query_params".to_string(), Value::Map(Arc::new(RwLock::new(query_params.clone()))));
+            req_map.insert("params".to_string(), Value::Map(Arc::new(RwLock::new(IndexMap::new()))));
+            req_map.insert("headers".to_string(), Value::Map(Arc::new(RwLock::new(headers.clone()))));
+            req_map.insert("body".to_string(), Value::String(body_str.to_string()));
+
+            let req_val = Value::Map(Arc::new(RwLock::new(req_map)));
+            ev.call_value(handler, vec![req_val], span)
+        }
+    }
+}
+
+fn handle_http_io<S: std::io::Read + std::io::Write>(
+    stream: &mut S,
+    env_root: &Arc<RwLock<Environment>>,
     handler: &Value,
     span: Span,
 ) -> Result<(), ()> {
-    use std::io::{Read, Write};
+    let mut request_count = 0;
+    const MAX_REQUESTS: usize = 100;
 
-    let mut buffer = [0u8; 8192];
-    let size = stream.read(&mut buffer).map_err(|_| ())?;
-    if size == 0 {
-        return Ok(());
-    }
+    while request_count < MAX_REQUESTS {
+        let mut buffer = [0u8; 16384];
+        let size = match stream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(s) => s,
+            Err(_) => break,
+        };
 
-    let req_str = String::from_utf8_lossy(&buffer[..size]);
-    let (head, body_str) = if let Some(idx) = req_str.find("\r\n\r\n") {
-        (&req_str[..idx], &req_str[idx + 4..])
-    } else if let Some(idx) = req_str.find("\n\n") {
-        (&req_str[..idx], &req_str[idx + 2..])
-    } else {
-        (req_str.as_ref(), "")
-    };
+        request_count += 1;
 
-    let mut lines = head.lines();
-    let request_line = match lines.next() {
-        Some(l) => l,
-        None => return Ok(()),
-    };
-    let parts: Vec<&str> = request_line.split_whitespace().collect();
-    if parts.len() < 2 {
-        return Ok(());
-    }
+        let req_str = String::from_utf8_lossy(&buffer[..size]);
+        let (head, body_str) = if let Some(idx) = req_str.find("\r\n\r\n") {
+            (&req_str[..idx], &req_str[idx + 4..])
+        } else if let Some(idx) = req_str.find("\n\n") {
+            (&req_str[..idx], &req_str[idx + 2..])
+        } else {
+            (req_str.as_ref(), "")
+        };
 
-    let method = parts[0].to_uppercase();
-    let full_path = parts[1].to_string();
+        let mut lines = head.lines();
+        let request_line = match lines.next() {
+            Some(l) => l,
+            None => break,
+        };
+        let parts: Vec<&str> = request_line.split_whitespace().collect();
+        if parts.len() < 2 {
+            break;
+        }
 
-    let mut path = full_path.clone();
-    let mut query = "".to_string();
-    if let Some(idx) = full_path.find('?') {
-        path = full_path[..idx].to_string();
-        query = full_path[idx + 1..].to_string();
-    }
+        let method = parts[0].to_uppercase();
+        let full_path = parts[1].to_string();
+        let http_version = if parts.len() >= 3 { parts[2] } else { "HTTP/1.1" };
 
-    let mut headers = IndexMap::new();
-    for line in lines {
-        if let Some(idx) = line.find(':') {
-            let key = line[..idx].trim().to_lowercase();
-            let val = line[idx + 1..].trim();
-            headers.insert(key, Value::String(val.to_string()));
+        let mut path = full_path.clone();
+        let mut query = "".to_string();
+        if let Some(idx) = full_path.find('?') {
+            path = full_path[..idx].to_string();
+            query = full_path[idx + 1..].to_string();
+        }
+
+        let mut headers = IndexMap::new();
+        let mut client_close = http_version == "HTTP/1.0";
+        for line in lines {
+            if let Some(idx) = line.find(':') {
+                let key = line[..idx].trim().to_lowercase();
+                let val = line[idx + 1..].trim();
+                if key == "connection" {
+                    if val.eq_ignore_ascii_case("close") {
+                        client_close = true;
+                    } else if val.eq_ignore_ascii_case("keep-alive") {
+                        client_close = false;
+                    }
+                }
+                headers.insert(key, Value::String(val.to_string()));
+            }
+        }
+
+        let query_params = parse_query_params(&query);
+
+        let mut worker_eval = Evaluator::with_env(env_root.clone());
+        let res = dispatch_request(
+            &mut worker_eval,
+            handler,
+            &method,
+            &path,
+            &query,
+            &query_params,
+            &headers,
+            body_str,
+            span,
+        );
+
+        let (status_code, status_text, content_type, custom_headers, resp_body) = match res {
+            Ok(val) => format_http_response(val),
+            Err(e) => {
+                let err_msg = e.to_string();
+                eprintln!("Handler error: {}", err_msg);
+                (500, "Internal Server Error", "text/plain".to_string(), vec![], err_msg)
+            }
+        };
+
+        let conn_header = if client_close || request_count >= MAX_REQUESTS {
+            "close"
+        } else {
+            "keep-alive"
+        };
+
+        let mut response_head = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: {}\r\n",
+            status_code, status_text, content_type, resp_body.len(), conn_header
+        );
+        if conn_header == "keep-alive" {
+            response_head.push_str("Keep-Alive: timeout=5, max=100\r\n");
+        }
+        for (k, v) in custom_headers {
+            response_head.push_str(&format!("{}: {}\r\n", k, v));
+        }
+        response_head.push_str("\r\n");
+
+        if stream.write_all(response_head.as_bytes()).is_err() {
+            break;
+        }
+        if stream.write_all(resp_body.as_bytes()).is_err() {
+            break;
+        }
+        if stream.flush().is_err() {
+            break;
+        }
+
+        if client_close {
+            break;
         }
     }
-
-    let mut req_map = IndexMap::new();
-    req_map.insert("method".to_string(), Value::String(method));
-    req_map.insert("path".to_string(), Value::String(path));
-    req_map.insert("query".to_string(), Value::String(query));
-    req_map.insert("headers".to_string(), Value::Map(Arc::new(RwLock::new(headers))));
-    req_map.insert("body".to_string(), Value::String(body_str.to_string()));
-
-    let req_val = Value::Map(Arc::new(RwLock::new(req_map)));
-    let res = ev.call_value(handler, vec![req_val], span);
-
-    let (status_code, status_text, content_type, custom_headers, resp_body) = match res {
-        Ok(val) => format_http_response(val),
-        Err(e) => {
-            let err_msg = e.to_string();
-            eprintln!("Handler error: {}", err_msg);
-            (500, "Internal Server Error", "text/plain".to_string(), vec![], err_msg)
-        }
-    };
-
-    let mut response_head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n",
-        status_code, status_text, content_type, resp_body.len()
-    );
-    for (k, v) in custom_headers {
-        response_head.push_str(&format!("{}: {}\r\n", k, v));
-    }
-    response_head.push_str("\r\n");
-
-    let _ = stream.write_all(response_head.as_bytes());
-    let _ = stream.write_all(resp_body.as_bytes());
-    let _ = stream.flush();
     Ok(())
+}
+
+fn builtin_route_match(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("route_match", 2, &args, span)?;
+    if let (Value::String(pattern), Value::String(path)) = (&args[0], &args[1]) {
+        if let Some(params) = match_route_pattern(pattern, path) {
+            Ok(Value::Map(Arc::new(RwLock::new(params))))
+        } else {
+            Ok(Value::Null)
+        }
+    } else {
+        Err(RuntimeError::new("route_match expects (string pattern, string path)".into()).at(span))
+    }
 }
 
 fn format_http_response(val: Value) -> (u16, &'static str, String, Vec<(String, String)>, String) {
