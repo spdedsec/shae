@@ -13,6 +13,7 @@ pub mod compiler;
 pub mod vm;
 pub mod linter;
 pub mod fmt;
+pub mod gc;
 
 use thiserror::Error;
 

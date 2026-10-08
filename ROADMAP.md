@@ -50,9 +50,9 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 
 ---
 
-### **Chunk 5: Memory Efficiency & Garbage Collection Foundation**
-- [ ] Transition from large `Arc<RwLock<...>>` wrappers to managed heap allocations.
-- [ ] Mark-and-sweep garbage collection engine with stack and global root tracing.
+### **Chunk 5: Memory Efficiency & Garbage Collection Foundation** *(Completed)*
+- [x] Transition from large `Arc<RwLock<...>>` wrappers to managed heap allocations.
+- [x] Mark-and-sweep garbage collection engine with stack and global root tracing.
 
 ---
 

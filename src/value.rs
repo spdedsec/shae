@@ -2,6 +2,7 @@ use crate::ast::Stmt;
 use crate::chunk::Chunk;
 use crate::env::Environment;
 use crate::eval::{Evaluator, RuntimeError};
+use crate::gc::GcRef;
 use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
 use std::sync::RwLock;
@@ -32,7 +33,7 @@ pub enum UpvalueLocation {
     Closed(Value),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Upvalue {
     pub location: UpvalueLocation,
 }
@@ -69,6 +70,11 @@ pub enum Value {
     Map(Arc<RwLock<IndexMap<String, Value>>>),
     CompiledFunction(Arc<CompiledFunction>),
     Closure(Arc<Closure>),
+    GcArray(GcRef),
+    GcMap(GcRef),
+    GcClosure(GcRef),
+    GcString(GcRef),
+    GcInstance(GcRef),
     Function {
         name: Option<String>,
         params: Arc<Vec<String>>,
@@ -117,10 +123,11 @@ impl Value {
             Value::Float(_) => "float",
             Value::Number(_) => "number",
             Value::String(_) => "string",
-            Value::Array(_) => "array",
-            Value::Map(_) => "map",
-            Value::CompiledFunction(_) => "function",
-            Value::Closure(_) => "function",
+            Value::Array(_) | Value::GcArray(_) => "array",
+            Value::Map(_) | Value::GcMap(_) => "map",
+            Value::CompiledFunction(_) | Value::Closure(_) | Value::GcClosure(_) => "function",
+            Value::GcString(_) => "string",
+            Value::GcInstance(_) => "instance",
             Value::Function { .. } => "function",
 Value::Builtin { .. } => "builtin_function",
             Value::BoundMethod { .. } => "bound_method",
@@ -144,6 +151,7 @@ Value::Builtin { .. } => "builtin_function",
             Value::Map(m) => !m.read().unwrap().is_empty(),
             Value::CompiledFunction(_) => true,
             Value::Closure(_) => true,
+            Value::GcArray(_) | Value::GcMap(_) | Value::GcClosure(_) | Value::GcString(_) | Value::GcInstance(_) => true,
 Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. } => true,
             Value::StructDef { .. } | Value::StructInstance { .. } => true,
             Value::EnumDef { .. } | Value::EnumConstructor { .. } | Value::EnumInstance { .. } | Value::Task(_) => true,
@@ -225,6 +233,11 @@ Value::Builtin { name, .. } => format!("<builtin {}>", name),
                     format!("{}.{}({})", enum_name, variant_name, vals.join(", "))
                 }
             }
+            Value::GcArray(r) => format!("<gc_array:{}>", r),
+            Value::GcMap(r) => format!("<gc_map:{}>", r),
+            Value::GcClosure(r) => format!("<gc_closure:{}>", r),
+            Value::GcString(r) => format!("<gc_string:{}>", r),
+            Value::GcInstance(r) => format!("<gc_instance:{}>", r),
             Value::Task(_) => "<task>".to_string(),
         }
     }
@@ -292,6 +305,11 @@ Value::Builtin { name, .. } => JsonValue::String(format!("<builtin {}>", name)),
                 map.insert("values".to_string(), JsonValue::Array(list));
                 JsonValue::Object(map)
             }
+            Value::GcArray(r) => JsonValue::String(format!("<gc_array:{}>", r)),
+            Value::GcMap(r) => JsonValue::String(format!("<gc_map:{}>", r)),
+            Value::GcClosure(r) => JsonValue::String(format!("<gc_closure:{}>", r)),
+            Value::GcString(r) => JsonValue::String(format!("<gc_string:{}>", r)),
+            Value::GcInstance(r) => JsonValue::String(format!("<gc_instance:{}>", r)),
             Value::Task(_) => JsonValue::String("<task>".to_string()),
         }
     }
@@ -346,6 +364,11 @@ impl PartialEq for Value {
             (Value::Task(a), Value::Task(b)) => Arc::ptr_eq(a, b),
             (Value::CompiledFunction(a), Value::CompiledFunction(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::Closure(a), Value::Closure(b)) => Arc::ptr_eq(a, b) || a == b,
+            (Value::GcArray(a), Value::GcArray(b)) => a == b,
+            (Value::GcMap(a), Value::GcMap(b)) => a == b,
+            (Value::GcClosure(a), Value::GcClosure(b)) => a == b,
+            (Value::GcString(a), Value::GcString(b)) => a == b,
+            (Value::GcInstance(a), Value::GcInstance(b)) => a == b,
             _ => false,
         }
     }

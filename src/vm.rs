@@ -1,4 +1,5 @@
 use crate::chunk::Chunk;
+use crate::gc::{GcHeap, GcStats};
 use crate::opcode::OpCode;
 use crate::value::{
     resolve_index, resolve_int_index, Closure, CompiledFunction, IndexError, Upvalue,
@@ -19,6 +20,7 @@ pub struct VM {
     pub stack: Vec<Value>,
     pub globals: HashMap<String, Value>,
     pub open_upvalues: Vec<Arc<RwLock<Upvalue>>>,
+    pub heap: GcHeap,
 }
 
 #[derive(Debug, PartialEq)]
@@ -36,12 +38,50 @@ impl VM {
         for (k, v) in dummy_env.export_map() {
             globals.insert(k, v);
         }
+        globals.insert(
+            "gc".to_string(),
+            Value::Builtin {
+                name: "gc".to_string(),
+                func: |_ev, _args, _span| Ok(Value::Null),
+            },
+        );
         VM {
             frames: Vec::with_capacity(64),
             stack: Vec::with_capacity(256),
             globals,
             open_upvalues: Vec::new(),
+            heap: GcHeap::new(),
         }
+    }
+
+    pub fn collect_garbage(&mut self) -> GcStats {
+        let stack = &self.stack;
+        let globals = &self.globals;
+        let open_upvalues = &self.open_upvalues;
+        let frames = &self.frames;
+
+        self.heap.collect_garbage(|heap, gray_stack| {
+            for val in stack {
+                heap.mark_value(val, gray_stack);
+            }
+            for (_k, val) in globals {
+                heap.mark_value(val, gray_stack);
+            }
+            for uv in open_upvalues {
+                let guard = uv.read().unwrap();
+                if let UpvalueLocation::Closed(ref val) = guard.location {
+                    heap.mark_value(val, gray_stack);
+                }
+            }
+            for frame in frames {
+                for uv in &frame.closure.upvalues {
+                    let guard = uv.read().unwrap();
+                    if let UpvalueLocation::Closed(ref val) = guard.location {
+                        heap.mark_value(val, gray_stack);
+                    }
+                }
+            }
+        })
     }
 
     pub fn interpret(&mut self, chunk: Chunk) -> InterpretResult {
@@ -516,6 +556,37 @@ impl VM {
                     let index = self.stack.pop().unwrap();
                     let target = self.stack.pop().unwrap();
                     match target {
+                        Value::GcArray(r) => {
+                            let len = self.heap.as_array(r).map(|a| a.len()).unwrap_or(0);
+                            let idx_res = match index {
+                                Value::Int(i) => resolve_int_index(i, len),
+                                Value::Float(f) | Value::Number(f) => {
+                                    resolve_index(f, len)
+                                }
+                                _ => {
+                                    return InterpretResult::RuntimeError(
+                                        "Array index must be a number.".into(),
+                                    )
+                                }
+                            };
+                            match idx_res {
+                                Ok(idx) => {
+                                    let val = self.heap.as_array(r).unwrap()[idx].clone();
+                                    self.stack.push(val);
+                                }
+                                Err(IndexError::NotWhole) => {
+                                    return InterpretResult::RuntimeError(
+                                        "Array index must be a whole number.".into(),
+                                    )
+                                }
+                                Err(IndexError::OutOfRange(len)) => {
+                                    return InterpretResult::RuntimeError(format!(
+                                        "Index out of bounds for array of length {}",
+                                        len
+                                    ))
+                                }
+                            }
+                        }
                         Value::Array(arr) => {
                             let borrow = arr.read().unwrap();
                             let idx_res = match index {
@@ -572,6 +643,15 @@ impl VM {
                                 }
                             }
                         }
+                        Value::GcMap(r) => {
+                            let key = match index {
+                                Value::String(s) => s,
+                                Value::GcString(sr) => self.heap.as_string(sr).unwrap_or("").to_string(),
+                                other => other.to_string(),
+                            };
+                            let val = self.heap.as_map(r).and_then(|m| m.get(&key)).cloned().unwrap_or(Value::Null);
+                            self.stack.push(val);
+                        }
                         Value::Map(m) => {
                             if let Value::String(key) = index {
                                 let borrow = m.read().unwrap();
@@ -596,6 +676,37 @@ impl VM {
                     let index = self.stack.pop().unwrap();
                     let target = self.stack.pop().unwrap();
                     match target {
+                        Value::GcArray(r) => {
+                            let len = self.heap.as_array(r).map(|a| a.len()).unwrap_or(0);
+                            let idx_res = match index {
+                                Value::Int(i) => resolve_int_index(i, len),
+                                Value::Float(f) | Value::Number(f) => {
+                                    resolve_index(f, len)
+                                }
+                                _ => {
+                                    return InterpretResult::RuntimeError(
+                                        "Array index must be a number.".into(),
+                                    )
+                                }
+                            };
+                            match idx_res {
+                                Ok(idx) => {
+                                    self.heap.as_array_mut(r).unwrap()[idx] = value.clone();
+                                    self.stack.push(value);
+                                }
+                                Err(IndexError::NotWhole) => {
+                                    return InterpretResult::RuntimeError(
+                                        "Array index must be a whole number.".into(),
+                                    )
+                                }
+                                Err(IndexError::OutOfRange(len)) => {
+                                    return InterpretResult::RuntimeError(format!(
+                                        "Index out of bounds for array of length {}",
+                                        len
+                                    ))
+                                }
+                            }
+                        }
                         Value::Array(arr) => {
                             let mut borrow = arr.write().unwrap();
                             let idx_res = match index {
@@ -626,6 +737,15 @@ impl VM {
                                     ))
                                 }
                             }
+                        }
+                        Value::GcMap(r) => {
+                            let key = match index {
+                                Value::String(s) => s,
+                                Value::GcString(sr) => self.heap.as_string(sr).unwrap_or("").to_string(),
+                                other => other.to_string(),
+                            };
+                            self.heap.as_map_mut(r).unwrap().insert(key, value.clone());
+                            self.stack.push(value);
                         }
                         Value::Map(m) => {
                             if let Value::String(key) = index {
@@ -670,6 +790,14 @@ impl VM {
                             }
                         };
                         match seq {
+                            Value::GcArray(r) => {
+                                let arr = self.heap.as_array(*r).unwrap();
+                                if iter_idx >= 0 && (iter_idx as usize) < arr.len() {
+                                    (Some(arr[iter_idx as usize].clone()), false)
+                                } else {
+                                    (None, true)
+                                }
+                            }
                             Value::Array(arr) => {
                                 let borrow = arr.read().unwrap();
                                 if iter_idx >= 0 && (iter_idx as usize) < borrow.len() {
@@ -743,9 +871,29 @@ impl VM {
                                 slots_offset: callee_slot,
                             });
                         }
-                        Value::Builtin { name: _, func } => {
+                        Value::Builtin { name, func } => {
                             let args: Vec<Value> = self.stack.drain(callee_slot + 1..).collect();
                             self.stack.pop(); // pop callee
+                            if name == "gc" {
+                                let stats = self.collect_garbage();
+                                self.stack.push(Value::Int(stats.freed_objects as i64));
+                                continue;
+                            }
+                            if name == "len" && args.len() == 1 {
+                                match &args[0] {
+                                    Value::GcArray(r) => {
+                                        let len = self.heap.as_array(*r).map(|a| a.len()).unwrap_or(0);
+                                        self.stack.push(Value::Int(len as i64));
+                                        continue;
+                                    }
+                                    Value::GcMap(r) => {
+                                        let len = self.heap.as_map(*r).map(|m| m.len()).unwrap_or(0);
+                                        self.stack.push(Value::Int(len as i64));
+                                        continue;
+                                    }
+                                    _ => {}
+                                }
+                            }
                             let mut evaluator = crate::eval::Evaluator::new();
                             match func(&mut evaluator, args, crate::ast::Span::new(1, 1)) {
                                 Ok(val) => self.stack.push(val),
