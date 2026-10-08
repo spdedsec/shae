@@ -82,6 +82,7 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 
 ---
 
-### **Chunk 10: Language Server Protocol (LSP) & Standalone Bundler**
-- [ ] Language Server Protocol daemon (`shae lsp`) with diagnostics and auto-completion.
-- [ ] Single-binary standalone application bundler (`shae bundle`).
+### **Chunk 10: Language Server Protocol (LSP) & Standalone Bundler** *(Completed)*
+- [x] Language Server Protocol daemon (`shae lsp`) with diagnostics and auto-completion.
+- [x] Single-binary standalone application bundler (`shae bundle`).
+

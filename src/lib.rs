@@ -17,6 +17,8 @@ pub mod gc;
 pub mod stdlib;
 pub mod channel;
 pub mod pkg;
+pub mod lsp;
+pub mod bundle;
 
 use thiserror::Error;
 

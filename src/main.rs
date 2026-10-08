@@ -24,6 +24,8 @@ fn show_help() {
     println!("  shae add <dep> <source>    Add dependency (git URL or local path)");
     println!("  shae install               Install dependencies into .shae/packages and update shae.lock");
     println!("  shae pkg <cmd>             Package manager subcommands (init, add, install)");
+    println!("  shae lsp                   Start the Language Server Protocol daemon (stdio)");
+    println!("  shae bundle <entry.shae>   Bundle application into a standalone executable");
     println!("  shae --joke                Print a programming joke");
     println!("  shae --tip                 Print a Shae tip");
     println!("  shae --help, -h            Show this help message");
@@ -286,7 +288,28 @@ fn find_test_files(dir: &Path, out: &mut Vec<String>) {
     }
 }
 
+fn run_bundled_archive(archive: shae::bundle::BundleArchive) {
+    if let Some(entry_source) = archive.files.get(&archive.entry_path) {
+        let mut ev = Evaluator::new();
+        ev.current_file = Some(std::path::PathBuf::from(&archive.entry_path));
+        if let Err(e) = shae::run_in_evaluator(entry_source, &mut ev) {
+            eprintln!("{}", shae::render_error(&e, entry_source));
+            process::exit(1);
+        }
+    } else {
+        eprintln!("Error: Bundled entry point '{}' not found in archive", archive.entry_path);
+        process::exit(1);
+    }
+}
+
 fn main() {
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Ok(Some(archive)) = shae::bundle::read_embedded_bundle(&exe_path) {
+            run_bundled_archive(archive);
+            return;
+        }
+    }
+
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
@@ -446,6 +469,40 @@ fn main() {
             }
             let path = target.unwrap_or(".");
             format_target(path, check_only);
+        }
+        "lsp" => {
+            if let Err(e) = shae::lsp::start_lsp_server() {
+                eprintln!("Shae LSP server error: {}", e);
+                process::exit(1);
+            }
+        }
+        "bundle" => {
+            if args.len() < 3 {
+                eprintln!("Usage: shae bundle <entry.shae> [-o <output_binary>]");
+                process::exit(1);
+            }
+            let entry = Path::new(&args[2]);
+            let mut output = None;
+            let mut i = 3;
+            while i < args.len() {
+                if (args[i] == "-o" || args[i] == "--output") && i + 1 < args.len() {
+                    output = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            let out_path = output.unwrap_or_else(|| {
+                let stem = entry.file_stem().and_then(|s| s.to_str()).unwrap_or("bundle");
+                format!("{}.bin", stem)
+            });
+            match shae::bundle::create_standalone_binary(entry, Path::new(&out_path)) {
+                Ok(_) => println!("✨ Successfully created standalone bundle: {}", out_path),
+                Err(e) => {
+                    eprintln!("Error bundling application: {}", e);
+                    process::exit(1);
+                }
+            }
         }
         filename => {
             if filename.starts_with('-') {
