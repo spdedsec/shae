@@ -338,3 +338,123 @@ greet()
     let result = vm.interpret(chunk);
     assert!(matches!(result, InterpretResult::RuntimeError(_)));
 }
+
+#[test]
+fn test_compiler_closure_capture_outer_local() {
+    let script = r#"
+fn make_adder(x) {
+    return fn(y) {
+        return x + y
+    }
+}
+let add5 = make_adder(5)
+let add10 = make_adder(10)
+add5(3) + add10(2)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Int(20)));
+}
+
+#[test]
+fn test_compiler_closure_mutable_upvalue() {
+    let script = r#"
+fn make_counter() {
+    let count = 0
+    return fn() {
+        count = count + 1
+        return count
+    }
+}
+let counter = make_counter()
+let c1 = counter()
+let c2 = counter()
+let c3 = counter()
+c1 * 100 + c2 * 10 + c3
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Int(123)));
+}
+
+#[test]
+fn test_compiler_nested_closure_upvalue_chain() {
+    let script = r#"
+fn f(a) {
+    return fn(b) {
+        return fn(c) {
+            return a + b + c
+        }
+    }
+}
+let f1 = f(10)
+let f2 = f1(20)
+f2(30)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Int(60)));
+}
+
+#[test]
+fn test_compiler_closure_shared_mutable_state() {
+    let script = r#"
+fn make_box() {
+    let value = 100
+    let inc = fn() {
+        value = value + 10
+        return value
+    }
+    let dec = fn() {
+        value = value - 5
+        return value
+    }
+    return [inc, dec]
+}
+let box = make_box()
+let inc_fn = box[0]
+let dec_fn = box[1]
+let r1 = inc_fn()
+let r2 = dec_fn()
+let r3 = inc_fn()
+r1 + r2 + r3
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    // r1: 100 + 10 = 110
+    // r2: 110 - 5 = 105
+    // r3: 105 + 10 = 115
+    // total: 110 + 105 + 115 = 330
+    assert_eq!(result, InterpretResult::Ok(Value::Int(330)));
+}
+
+#[test]
+fn test_compiler_closure_closed_over_block_scope() {
+    let script = r#"
+fn outer() {
+    let getter = null
+    if true {
+        let secret = 777
+        getter = fn() {
+            return secret
+        }
+    }
+    return getter()
+}
+outer()
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Int(777)));
+}
+

@@ -1,13 +1,14 @@
 use crate::ast::{BindingPattern, BinaryOp, Expr, Literal, Program, Stmt, StmtKind, UnaryOp};
 use crate::chunk::Chunk;
 use crate::opcode::OpCode;
-use crate::value::{CompiledFunction, Value};
+use crate::value::{CompiledFunction, UpvalueDesc, Value};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct Local {
     pub name: String,
     pub depth: usize,
+    pub is_captured: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -17,11 +18,19 @@ struct LoopContext {
     break_jumps: Vec<usize>,
 }
 
+#[derive(Debug, Clone)]
+pub struct UpvalueInfo {
+    pub index: u8,
+    pub is_local: bool,
+}
+
 pub struct Compiler {
     pub chunk: Chunk,
     locals: Vec<Local>,
+    upvalues: Vec<UpvalueInfo>,
     scope_depth: usize,
     loops: Vec<LoopContext>,
+    enclosing: Option<Box<Compiler>>,
 }
 
 impl Compiler {
@@ -29,8 +38,10 @@ impl Compiler {
         Compiler {
             chunk: Chunk::new(),
             locals: Vec::new(),
+            upvalues: Vec::new(),
             scope_depth: 0,
             loops: Vec::new(),
+            enclosing: None,
         }
     }
 
@@ -59,28 +70,76 @@ impl Compiler {
         params: &[String],
         body: &[Stmt],
     ) -> Result<CompiledFunction, String> {
-        let mut fn_compiler = Compiler::new();
+        let parent = std::mem::replace(self, Compiler::new());
+        let mut child = Compiler {
+            chunk: Chunk::new(),
+            locals: Vec::new(),
+            upvalues: Vec::new(),
+            scope_depth: 0,
+            loops: Vec::new(),
+            enclosing: Some(Box::new(parent)),
+        };
+
         let fn_slot_name = name.clone().unwrap_or_default();
-        fn_compiler.add_local(fn_slot_name);
+        child.add_local(fn_slot_name);
 
         for param in params {
-            fn_compiler.add_local(param.clone());
+            child.add_local(param.clone());
         }
 
         let body_len = body.len();
         for (i, stmt) in body.iter().enumerate() {
             let is_last = i + 1 == body_len;
-            fn_compiler.compile_stmt(stmt, is_last)?;
+            child.compile_stmt(stmt, is_last)?;
         }
 
-        fn_compiler.chunk.write_opcode(OpCode::Nil, 0);
-        fn_compiler.chunk.write_opcode(OpCode::Return, 0);
+        if body.is_empty() {
+            child.chunk.write_opcode(OpCode::Nil, 0);
+        }
+        child.chunk.write_opcode(OpCode::Return, 0);
 
-        Ok(CompiledFunction {
+        let upvalue_descs: Vec<UpvalueDesc> = child
+            .upvalues
+            .iter()
+            .map(|u| UpvalueDesc {
+                index: u.index,
+                is_local: u.is_local,
+            })
+            .collect();
+
+        let compiled = CompiledFunction {
             arity: params.len(),
-            chunk: fn_compiler.chunk,
+            chunk: child.chunk,
             name,
-        })
+            upvalues: upvalue_descs,
+        };
+
+        *self = *child.enclosing.unwrap();
+
+        Ok(compiled)
+    }
+
+    fn resolve_upvalue(&mut self, name: &str) -> Option<u8> {
+        if let Some(ref mut enclosing) = self.enclosing {
+            if let Some(local_slot) = enclosing.resolve_local(name) {
+                enclosing.locals[local_slot as usize].is_captured = true;
+                return Some(self.add_upvalue(local_slot, true));
+            }
+            if let Some(upvalue_idx) = enclosing.resolve_upvalue(name) {
+                return Some(self.add_upvalue(upvalue_idx, false));
+            }
+        }
+        None
+    }
+
+    fn add_upvalue(&mut self, index: u8, is_local: bool) -> u8 {
+        for (i, uv) in self.upvalues.iter().enumerate() {
+            if uv.index == index && uv.is_local == is_local {
+                return i as u8;
+            }
+        }
+        self.upvalues.push(UpvalueInfo { index, is_local });
+        (self.upvalues.len() - 1) as u8
     }
 
     pub fn begin_scope(&mut self) {
@@ -91,7 +150,11 @@ impl Compiler {
         self.scope_depth -= 1;
         while let Some(local) = self.locals.last() {
             if local.depth > self.scope_depth {
-                self.chunk.write_opcode(OpCode::Pop, 0);
+                if local.is_captured {
+                    self.chunk.write_opcode(OpCode::CloseUpvalue, 0);
+                } else {
+                    self.chunk.write_opcode(OpCode::Pop, 0);
+                }
                 self.locals.pop();
             } else {
                 break;
@@ -103,6 +166,7 @@ impl Compiler {
         self.locals.push(Local {
             name,
             depth: self.scope_depth,
+            is_captured: false,
         });
         self.locals.len() - 1
     }
@@ -145,16 +209,20 @@ impl Compiler {
     }
 
     fn pop_locals_above(&mut self, depth: usize, line: usize) {
-        let mut to_pop = 0;
+        let mut to_pop = Vec::new();
         for local in self.locals.iter().rev() {
             if local.depth > depth {
-                to_pop += 1;
+                to_pop.push(local.is_captured);
             } else {
                 break;
             }
         }
-        for _ in 0..to_pop {
-            self.chunk.write_opcode(OpCode::Pop, line);
+        for is_captured in to_pop {
+            if is_captured {
+                self.chunk.write_opcode(OpCode::CloseUpvalue, line);
+            } else {
+                self.chunk.write_opcode(OpCode::Pop, line);
+            }
         }
     }
 
@@ -175,6 +243,9 @@ impl Compiler {
                         if let Some(slot) = self.resolve_local(name) {
                             self.chunk.write_opcode(OpCode::SetLocal, span.line);
                             self.chunk.write(slot, span.line);
+                        } else if let Some(upvalue_slot) = self.resolve_upvalue(name) {
+                            self.chunk.write_opcode(OpCode::SetUpvalue, span.line);
+                            self.chunk.write(upvalue_slot, span.line);
                         } else {
                             let const_idx = self.chunk.add_constant(Value::String(name.clone()));
                             self.chunk.write_opcode(OpCode::SetGlobal, span.line);
@@ -360,7 +431,7 @@ impl Compiler {
                 let const_idx = self
                     .chunk
                     .add_constant(Value::CompiledFunction(Arc::new(compiled)));
-                self.chunk.write_opcode(OpCode::Constant, stmt.span.line);
+                self.chunk.write_opcode(OpCode::Closure, stmt.span.line);
                 self.chunk.write(const_idx as u8, stmt.span.line);
                 if self.scope_depth > 0 {
                     self.add_local(name.clone());
@@ -424,6 +495,9 @@ impl Compiler {
                 if let Some(slot) = self.resolve_local(name) {
                     self.chunk.write_opcode(OpCode::GetLocal, span.line);
                     self.chunk.write(slot, span.line);
+                } else if let Some(upvalue_slot) = self.resolve_upvalue(name) {
+                    self.chunk.write_opcode(OpCode::GetUpvalue, span.line);
+                    self.chunk.write(upvalue_slot, span.line);
                 } else {
                     let const_idx = self.chunk.add_constant(Value::String(name.clone()));
                     self.chunk.write_opcode(OpCode::GetGlobal, span.line);
@@ -547,7 +621,7 @@ impl Compiler {
                 let const_idx = self
                     .chunk
                     .add_constant(Value::CompiledFunction(Arc::new(compiled)));
-                self.chunk.write_opcode(OpCode::Constant, span.line);
+                self.chunk.write_opcode(OpCode::Closure, span.line);
                 self.chunk.write(const_idx as u8, span.line);
                 Ok(())
             }

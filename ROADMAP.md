@@ -35,7 +35,7 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 
 ---
 
-### **Chunk 3: Bytecode VM — Control Flow & Local Variables**
+### **Chunk 3: Bytecode VM — Control Flow & Local Variables** *(Completed)*
 - [x] Local variable resolution at compile time (`OpGetLocal`, `OpSetLocal`).
 - [x] Conditional and unconditional jumps (`OpJump`, `OpJumpIfFalse`, `OpLoop`).
 - [x] Control flow compilation: `if/else`, `while`, `for in` (with loop contexts and `break`/`continue` scope cleanup).
@@ -43,9 +43,9 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 
 ---
 
-### **Chunk 4: Bytecode VM — Call Frames, Functions & Closures** *(In Progress)*
+### **Chunk 4: Bytecode VM — Call Frames, Functions & Closures** *(Completed)*
 - [x] Explicit call frames (`CallFrame`) with virtual stack allocation and function calls.
-- [ ] Closures and upvalue capture (`OpGetUpvalue`, `OpSetUpvalue`, `OpCloseUpvalue`).
+- [x] Closures and upvalue capture (`OpGetUpvalue`, `OpSetUpvalue`, `OpCloseUpvalue`).
 - [x] Composite types and indexing in bytecode (`OpBuildArray`, `OpBuildMap`, `OpGetIndex`, `OpSetIndex`).
 
 ---

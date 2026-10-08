@@ -48,6 +48,8 @@ pub enum OpCode {
     Shl,
     Shr,
     ForIter,
+    GetUpvalue,
+    SetUpvalue,
 }
 
 impl From<u8> for OpCode {

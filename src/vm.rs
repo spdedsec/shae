@@ -1,12 +1,15 @@
 use crate::chunk::Chunk;
 use crate::opcode::OpCode;
-use crate::value::{resolve_index, resolve_int_index, CompiledFunction, IndexError, Value};
+use crate::value::{
+    resolve_index, resolve_int_index, Closure, CompiledFunction, IndexError, Upvalue,
+    UpvalueLocation, Value,
+};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone)]
 pub struct CallFrame {
-    pub function: Arc<CompiledFunction>,
+    pub closure: Arc<Closure>,
     pub ip: usize,
     pub slots_offset: usize,
 }
@@ -15,6 +18,7 @@ pub struct VM {
     pub frames: Vec<CallFrame>,
     pub stack: Vec<Value>,
     pub globals: HashMap<String, Value>,
+    pub open_upvalues: Vec<Arc<RwLock<Upvalue>>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -36,6 +40,7 @@ impl VM {
             frames: Vec::with_capacity(64),
             stack: Vec::with_capacity(256),
             globals,
+            open_upvalues: Vec::new(),
         }
     }
 
@@ -44,14 +49,47 @@ impl VM {
             arity: 0,
             chunk,
             name: None,
+            upvalues: Vec::new(),
+        });
+        let top_closure = Arc::new(Closure {
+            function: top_fn,
+            upvalues: Vec::new(),
         });
         self.frames.clear();
+        self.open_upvalues.clear();
         self.frames.push(CallFrame {
-            function: top_fn,
+            closure: top_closure,
             ip: 0,
             slots_offset: 0,
         });
         self.run()
+    }
+
+    fn capture_upvalue(&mut self, slot: usize) -> Arc<RwLock<Upvalue>> {
+        for uv in &self.open_upvalues {
+            if let UpvalueLocation::Open(s) = uv.read().unwrap().location {
+                if s == slot {
+                    return uv.clone();
+                }
+            }
+        }
+        let created = Arc::new(RwLock::new(Upvalue::new(slot)));
+        self.open_upvalues.push(created.clone());
+        created
+    }
+
+    fn close_upvalues(&mut self, last_slot: usize) {
+        for upvalue in &self.open_upvalues {
+            let mut uv = upvalue.write().unwrap();
+            if let UpvalueLocation::Open(slot) = uv.location {
+                if slot >= last_slot {
+                    uv.location = UpvalueLocation::Closed(self.stack[slot].clone());
+                }
+            }
+        }
+        self.open_upvalues.retain(|uv| {
+            matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
+        });
     }
 
     fn run(&mut self) -> InterpretResult {
@@ -59,8 +97,9 @@ impl VM {
             if self.frames.is_empty() {
                 return InterpretResult::Ok(Value::Null);
             }
-            if self.frames.last().unwrap().ip >= self.frames.last().unwrap().function.chunk.code.len() {
+            if self.frames.last().unwrap().ip >= self.frames.last().unwrap().closure.function.chunk.code.len() {
                 let frame = self.frames.pop().unwrap();
+                self.close_upvalues(frame.slots_offset);
                 if self.frames.is_empty() {
                     let val = self.stack.pop().unwrap_or(Value::Null);
                     return InterpretResult::Ok(val);
@@ -76,6 +115,7 @@ impl VM {
                 OpCode::Return => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
                     let frame = self.frames.pop().unwrap();
+                    self.close_upvalues(frame.slots_offset);
                     if self.frames.is_empty() {
                         return InterpretResult::Ok(val);
                     }
@@ -663,6 +703,24 @@ impl VM {
                     let callee_slot = self.stack.len() - 1 - arg_count;
                     let callee = self.stack[callee_slot].clone();
                     match callee {
+                        Value::Closure(closure) => {
+                            if arg_count != closure.function.arity {
+                                return InterpretResult::RuntimeError(format!(
+                                    "Expected {} arguments but got {}.",
+                                    closure.function.arity, arg_count
+                                ));
+                            }
+                            if self.frames.len() >= 1024 {
+                                return InterpretResult::RuntimeError(
+                                    "Stack overflow: call stack exceeded maximum depth.".into(),
+                                );
+                            }
+                            self.frames.push(CallFrame {
+                                closure,
+                                ip: 0,
+                                slots_offset: callee_slot,
+                            });
+                        }
                         Value::CompiledFunction(func) => {
                             if arg_count != func.arity {
                                 return InterpretResult::RuntimeError(format!(
@@ -675,8 +733,12 @@ impl VM {
                                     "Stack overflow: call stack exceeded maximum depth.".into(),
                                 );
                             }
-                            self.frames.push(CallFrame {
+                            let closure = Arc::new(Closure {
                                 function: func,
+                                upvalues: Vec::new(),
+                            });
+                            self.frames.push(CallFrame {
+                                closure,
                                 ip: 0,
                                 slots_offset: callee_slot,
                             });
@@ -698,6 +760,60 @@ impl VM {
                         }
                     }
                 }
+                OpCode::Closure => {
+                    let const_idx = self.read_byte() as usize;
+                    let func = match self.frames.last().unwrap().closure.function.chunk.constants[const_idx].clone() {
+                        Value::CompiledFunction(f) => f,
+                        _ => return InterpretResult::RuntimeError("Expected compiled function for closure".into()),
+                    };
+                    let mut upvalues = Vec::with_capacity(func.upvalues.len());
+                    let current_slots_offset = self.frames.last().unwrap().slots_offset;
+                    for desc in &func.upvalues {
+                        if desc.is_local {
+                            let slot = current_slots_offset + desc.index as usize;
+                            upvalues.push(self.capture_upvalue(slot));
+                        } else {
+                            let parent_upvalue = self.frames.last().unwrap().closure.upvalues[desc.index as usize].clone();
+                            upvalues.push(parent_upvalue);
+                        }
+                    }
+                    let closure = Arc::new(Closure {
+                        function: func,
+                        upvalues,
+                    });
+                    self.stack.push(Value::Closure(closure));
+                }
+                OpCode::GetUpvalue => {
+                    let slot = self.read_byte() as usize;
+                    let upvalue = self.frames.last().unwrap().closure.upvalues[slot].clone();
+                    let val = match &upvalue.read().unwrap().location {
+                        UpvalueLocation::Open(stack_idx) => self.stack[*stack_idx].clone(),
+                        UpvalueLocation::Closed(v) => v.clone(),
+                    };
+                    self.stack.push(val);
+                }
+                OpCode::SetUpvalue => {
+                    let slot = self.read_byte() as usize;
+                    let val = match self.stack.last().cloned() {
+                        Some(v) => v,
+                        None => return InterpretResult::RuntimeError("Stack empty on SetUpvalue".into()),
+                    };
+                    let upvalue = self.frames.last().unwrap().closure.upvalues[slot].clone();
+                    let mut uv = upvalue.write().unwrap();
+                    match &mut uv.location {
+                        UpvalueLocation::Open(stack_idx) => {
+                            self.stack[*stack_idx] = val;
+                        }
+                        UpvalueLocation::Closed(v) => {
+                            *v = val;
+                        }
+                    }
+                }
+                OpCode::CloseUpvalue => {
+                    let top_slot = self.stack.len() - 1;
+                    self.close_upvalues(top_slot);
+                    self.stack.pop();
+                }
                 _ => unimplemented!("Opcode {:?} not yet implemented", instruction),
             }
         }
@@ -705,7 +821,7 @@ impl VM {
 
     fn read_byte(&mut self) -> u8 {
         let frame = self.frames.last_mut().unwrap();
-        let byte = frame.function.chunk.code[frame.ip];
+        let byte = frame.closure.function.chunk.code[frame.ip];
         frame.ip += 1;
         byte
     }
@@ -713,14 +829,14 @@ impl VM {
     fn read_short(&mut self) -> u16 {
         let frame = self.frames.last_mut().unwrap();
         frame.ip += 2;
-        ((frame.function.chunk.code[frame.ip - 2] as u16) << 8)
-            | (frame.function.chunk.code[frame.ip - 1] as u16)
+        ((frame.closure.function.chunk.code[frame.ip - 2] as u16) << 8)
+            | (frame.closure.function.chunk.code[frame.ip - 1] as u16)
     }
 
     fn read_constant(&mut self) -> Value {
         let frame = self.frames.last_mut().unwrap();
-        let idx = frame.function.chunk.code[frame.ip] as usize;
+        let idx = frame.closure.function.chunk.code[frame.ip] as usize;
         frame.ip += 1;
-        frame.function.chunk.constants[idx].clone()
+        frame.closure.function.chunk.constants[idx].clone()
     }
 }

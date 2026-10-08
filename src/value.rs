@@ -12,11 +12,49 @@ use std::sync::Arc;
 pub type BuiltinFn =
     fn(&mut Evaluator, Vec<Value>, crate::ast::Span) -> Result<Value, RuntimeError>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpvalueDesc {
+    pub index: u8,
+    pub is_local: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompiledFunction {
     pub arity: usize,
     pub chunk: Chunk,
     pub name: Option<String>,
+    pub upvalues: Vec<UpvalueDesc>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum UpvalueLocation {
+    Open(usize),
+    Closed(Value),
+}
+
+#[derive(Debug, Clone)]
+pub struct Upvalue {
+    pub location: UpvalueLocation,
+}
+
+impl Upvalue {
+    pub fn new(slot: usize) -> Self {
+        Upvalue {
+            location: UpvalueLocation::Open(slot),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Closure {
+    pub function: Arc<CompiledFunction>,
+    pub upvalues: Vec<Arc<RwLock<Upvalue>>>,
+}
+
+impl PartialEq for Closure {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.function, &other.function)
+    }
 }
 
 #[derive(Clone)]
@@ -30,6 +68,7 @@ pub enum Value {
     Array(Arc<RwLock<Vec<Value>>>),
     Map(Arc<RwLock<IndexMap<String, Value>>>),
     CompiledFunction(Arc<CompiledFunction>),
+    Closure(Arc<Closure>),
     Function {
         name: Option<String>,
         params: Arc<Vec<String>>,
@@ -81,6 +120,7 @@ impl Value {
             Value::Array(_) => "array",
             Value::Map(_) => "map",
             Value::CompiledFunction(_) => "function",
+            Value::Closure(_) => "function",
             Value::Function { .. } => "function",
 Value::Builtin { .. } => "builtin_function",
             Value::BoundMethod { .. } => "bound_method",
@@ -103,6 +143,7 @@ Value::Builtin { .. } => "builtin_function",
             Value::Array(a) => !a.read().unwrap().is_empty(),
             Value::Map(m) => !m.read().unwrap().is_empty(),
             Value::CompiledFunction(_) => true,
+            Value::Closure(_) => true,
 Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. } => true,
             Value::StructDef { .. } | Value::StructInstance { .. } => true,
             Value::EnumDef { .. } | Value::EnumConstructor { .. } | Value::EnumInstance { .. } | Value::Task(_) => true,
@@ -136,6 +177,13 @@ Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. } => tr
             }
             Value::CompiledFunction(f) => {
                 if let Some(n) = &f.name {
+                    format!("<fn {}>", n)
+                } else {
+                    "<fn anonymous>".to_string()
+                }
+            }
+            Value::Closure(c) => {
+                if let Some(n) = &c.function.name {
                     format!("<fn {}>", n)
                 } else {
                     "<fn anonymous>".to_string()
@@ -217,6 +265,9 @@ Value::Builtin { name, .. } => format!("<builtin {}>", name),
             Value::CompiledFunction(f) => {
                 JsonValue::String(format!("<fn {}>", f.name.as_deref().unwrap_or("anon")))
             }
+            Value::Closure(c) => {
+                JsonValue::String(format!("<fn {}>", c.function.name.as_deref().unwrap_or("anon")))
+            }
             Value::Function { name, .. } => {
                 JsonValue::String(format!("<fn {}>", name.as_deref().unwrap_or("anon")))
             }
@@ -294,6 +345,7 @@ impl PartialEq for Value {
             }
             (Value::Task(a), Value::Task(b)) => Arc::ptr_eq(a, b),
             (Value::CompiledFunction(a), Value::CompiledFunction(b)) => Arc::ptr_eq(a, b) || a == b,
+            (Value::Closure(a), Value::Closure(b)) => Arc::ptr_eq(a, b) || a == b,
             _ => false,
         }
     }
