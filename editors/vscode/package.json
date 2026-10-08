@@ -4,6 +4,15 @@
   "description": "Official VS Code extension for the Shae programming language, featuring syntax highlighting and language server protocol (LSP) support.",
   "version": "0.1.0",
   "publisher": "spdedsec",
+  "author": {
+    "name": "Satya Prakash",
+    "url": "https://github.com/spdedsec"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/spdedsec/shae#readme",
+  "bugs": {
+    "url": "https://github.com/spdedsec/shae/issues"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/spdedsec/shae"
