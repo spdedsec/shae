@@ -391,6 +391,21 @@ impl VM {
                         }
                     }
                 }
+                OpCode::Jump => {
+                    let offset = self.read_short();
+                    self.ip += offset as usize;
+                }
+                OpCode::JumpIfFalse => {
+                    let offset = self.read_short();
+                    let condition = self.stack.last().map(|v| v.is_truthy()).unwrap_or(false);
+                    if !condition {
+                        self.ip += offset as usize;
+                    }
+                }
+                OpCode::Loop => {
+                    let offset = self.read_short();
+                    self.ip -= offset as usize;
+                }
                 _ => unimplemented!("Opcode {:?} not yet implemented", instruction),
             }
         }
@@ -400,6 +415,11 @@ impl VM {
         let byte = self.chunk.code[self.ip];
         self.ip += 1;
         byte
+    }
+
+    fn read_short(&mut self) -> u16 {
+        self.ip += 2;
+        ((self.chunk.code[self.ip - 2] as u16) << 8) | (self.chunk.code[self.ip - 1] as u16)
     }
 
     fn read_constant(&mut self) -> Value {
