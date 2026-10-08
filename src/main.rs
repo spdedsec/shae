@@ -3,7 +3,6 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process;
-use shae::run;
 use shae::run_in_evaluator;
 use shae::eval::Evaluator;
 use shae::lexer;
@@ -125,14 +124,8 @@ fn run_repl() {
 }
 
 fn run_file(filename: &str) {
-    let source = match fs::read_to_string(filename) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Error reading file {}: {}", filename, e);
-            process::exit(1);
-        }
-    };
-    if let Err(e) = run(&source) {
+    if let Err(e) = shae::run_file(filename) {
+        let source = fs::read_to_string(filename).unwrap_or_default();
         eprintln!("{}", shae::render_error(&e, &source));
         process::exit(1);
     }
@@ -249,7 +242,7 @@ fn run_tests(target: Option<&str>) {
             }
         };
 
-        match run(&source) {
+        match shae::run_file(file) {
             Ok(_) => {
                 println!("test {} ... ok", file);
                 passed += 1;

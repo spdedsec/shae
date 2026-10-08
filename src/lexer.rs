@@ -800,6 +800,8 @@ impl Lexer {
             "try" => Token::Try,
             "catch" => Token::Catch,
             "use" => Token::Use,
+            "from" => Token::From,
+            "as" => Token::As,
             "and" => Token::And,
             "or" => Token::Or,
             "not" => Token::Not,

@@ -56,9 +56,9 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 
 ---
 
-### **Chunk 6: Structured Module System & Standard Namespaces**
-- [ ] Relative file imports and selective exports (`use { a, b } from "./mod.shae"`).
-- [ ] Standard library namespaces: `std:fs`, `std:path`, `std:sys`, `std:time`.
+### **Chunk 6: Structured Module System & Standard Namespaces** *(Completed)*
+- [x] Relative file imports and selective exports (`use { a, b } from "./mod.shae"`).
+- [x] Standard library namespaces: `std:fs`, `std:path`, `std:sys`, `std:time`.
 
 ---
 

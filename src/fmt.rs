@@ -217,6 +217,24 @@ impl Formatter {
                 self.write_indent();
                 self.output.push('}');
             }
+            StmtKind::Use { imports, path } => {
+                self.write_indent();
+                if imports.len() == 1 && imports[0].name == "*" && imports[0].alias.is_none() {
+                    let _ = write!(self.output, "use * from \"{}\"", path);
+                } else {
+                    self.output.push_str("use { ");
+                    for (i, item) in imports.iter().enumerate() {
+                        if i > 0 {
+                            self.output.push_str(", ");
+                        }
+                        self.output.push_str(&item.name);
+                        if let Some(alias) = &item.alias {
+                            let _ = write!(self.output, " as {}", alias);
+                        }
+                    }
+                    let _ = write!(self.output, " }} from \"{}\"", path);
+                }
+            }
         }
     }
 

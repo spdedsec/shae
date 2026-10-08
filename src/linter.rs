@@ -334,6 +334,14 @@ impl Linter {
                     self.declare_var(name, stmt.span, false);
                 }
             }
+            StmtKind::Use { imports, .. } => {
+                for item in imports {
+                    if item.name != "*" {
+                        let name = item.alias.as_ref().unwrap_or(&item.name);
+                        self.declare_var(name, stmt.span, false);
+                    }
+                }
+            }
         }
     }
 

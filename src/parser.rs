@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, BindingPattern, Expr, InterpPart, Literal, Program, Span, Stmt, StmtKind, UnaryOp};
+use crate::ast::{BinaryOp, BindingPattern, Expr, InterpPart, Literal, Program, Span, Stmt, StmtKind, UnaryOp, UseItem};
 use crate::lexer::LexerError;
 use crate::token::{SpannedToken, StrPart, Token};
 use std::sync::Arc;
@@ -62,6 +62,22 @@ impl Parser {
             true
         } else {
             false
+        }
+    }
+
+    fn check(&self, token: &Token) -> bool {
+        &self.peek().token == token
+    }
+
+    fn consume(&mut self, token: Token, message: &str) -> Result<&SpannedToken, ParserError> {
+        if self.peek().token == token {
+            Ok(self.advance())
+        } else {
+            Err(ParserError::UnexpectedToken {
+                message: message.to_string(),
+                line: self.peek().line,
+                col: self.peek().col,
+            })
         }
     }
 
@@ -150,10 +166,111 @@ impl Parser {
             };
             self.end_statement()?;
             stmt
+        } else if self.match_token(Token::Use) {
+            self.parse_use_statement(cur.line, cur.col)?
         } else {
             self.parse_expression_statement()?
         };
         Ok(stmt)
+    }
+
+    fn parse_use_statement(&mut self, line: usize, col: usize) -> Result<Stmt, ParserError> {
+        let span = Span { line, col };
+        if self.match_token(Token::LBrace) {
+            let mut imports = Vec::new();
+            while !self.check(&Token::RBrace) && !self.is_at_end() {
+                let name = if let Token::Ident(n) = &self.peek().token {
+                    let n = n.clone();
+                    self.advance();
+                    n
+                } else if self.match_token(Token::Star) {
+                    "*".to_string()
+                } else {
+                    return Err(ParserError::UnexpectedToken {
+                        message: "Expected identifier or '*' in import list.".into(),
+                        line: self.peek().line,
+                        col: self.peek().col,
+                    });
+                };
+
+                let alias = if self.match_token(Token::As) || self.match_token(Token::Colon) {
+                    if let Token::Ident(a) = &self.peek().token {
+                        let a = a.clone();
+                        self.advance();
+                        Some(a)
+                    } else {
+                        return Err(ParserError::UnexpectedToken {
+                            message: "Expected identifier after 'as' or ':' in import list.".into(),
+                            line: self.peek().line,
+                            col: self.peek().col,
+                        });
+                    }
+                } else {
+                    None
+                };
+
+                imports.push(UseItem { name, alias });
+
+                if !self.match_token(Token::Comma) {
+                    break;
+                }
+            }
+
+            self.consume(Token::RBrace, "Expected '}' after import list.")?;
+            self.consume(Token::From, "Expected 'from' after import list.")?;
+
+            let path = if let Token::StringLit(s) = &self.peek().token {
+                let s = s.clone();
+                self.advance();
+                s
+            } else {
+                return Err(ParserError::UnexpectedToken {
+                    message: "Expected module path string after 'from'.".into(),
+                    line: self.peek().line,
+                    col: self.peek().col,
+                });
+            };
+
+            self.end_statement()?;
+            Ok(Stmt {
+                kind: StmtKind::Use { imports, path },
+                span,
+            })
+        } else if self.match_token(Token::Star) {
+            self.consume(Token::From, "Expected 'from' after '*'.")?;
+            let path = if let Token::StringLit(s) = &self.peek().token {
+                let s = s.clone();
+                self.advance();
+                s
+            } else {
+                return Err(ParserError::UnexpectedToken {
+                    message: "Expected module path string after 'from'.".into(),
+                    line: self.peek().line,
+                    col: self.peek().col,
+                });
+            };
+            self.end_statement()?;
+            Ok(Stmt {
+                kind: StmtKind::Use {
+                    imports: vec![UseItem {
+                        name: "*".to_string(),
+                        alias: None,
+                    }],
+                    path,
+                },
+                span,
+            })
+        } else {
+            let expr = self.parse_expression()?;
+            self.end_statement()?;
+            Ok(Stmt {
+                kind: StmtKind::Expr(Expr::Use {
+                    path: Box::new(expr),
+                    span,
+                }),
+                span,
+            })
+        }
     }
 
 fn parse_struct_def(&mut self, _line: usize, _col: usize) -> Result<Stmt, ParserError> {

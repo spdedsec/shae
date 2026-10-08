@@ -89,7 +89,16 @@ pub enum StmtKind {
         name: String,
         variants: Vec<EnumVariant>,
     },
+    Use {
+        imports: Vec<UseItem>,
+        path: String,
+    },
+}
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct UseItem {
+    pub name: String,
+    pub alias: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

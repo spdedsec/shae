@@ -14,6 +14,7 @@ pub mod vm;
 pub mod linter;
 pub mod fmt;
 pub mod gc;
+pub mod stdlib;
 
 use thiserror::Error;
 
@@ -83,6 +84,16 @@ pub fn render_error(err: &ShaeError, source: &str) -> String {
 pub fn run(source: &str) -> Result<value::Value, ShaeError> {
     let mut ev = eval::Evaluator::new();
     run_in_evaluator(source, &mut ev)
+}
+
+pub fn run_file<P: AsRef<std::path::Path>>(path: P) -> Result<value::Value, ShaeError> {
+    let path_ref = path.as_ref();
+    let source = std::fs::read_to_string(path_ref).map_err(|e| {
+        eval::RuntimeError::new(format!("Failed to read file '{}': {}", path_ref.display(), e))
+    })?;
+    let mut ev = eval::Evaluator::new();
+    ev.current_file = std::fs::canonicalize(path_ref).ok().or_else(|| Some(path_ref.to_path_buf()));
+    run_in_evaluator(&source, &mut ev)
 }
 
 pub fn run_in_evaluator(source: &str, ev: &mut eval::Evaluator) -> Result<value::Value, ShaeError> {

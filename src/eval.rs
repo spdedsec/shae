@@ -1,6 +1,8 @@
 use crate::ast::{BinaryOp, Expr, InterpPart, Literal, Program, Span, Stmt, StmtKind, UnaryOp};
 use crate::env::Environment;
 use crate::value::{IndexError, Value, resolve_index, resolve_int_index};
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::RwLock;
 use std::sync::Arc;
 use thiserror::Error;
@@ -79,6 +81,8 @@ pub struct Evaluator {
     pub global_env: Arc<RwLock<Environment>>,
     max_depth: usize,
     depth: usize,
+    pub current_file: Option<PathBuf>,
+    pub module_cache: Arc<RwLock<HashMap<String, Value>>>,
 }
 
 impl Evaluator {
@@ -89,6 +93,8 @@ impl Evaluator {
             global_env: Arc::new(RwLock::new(env)),
             max_depth: 2000,
             depth: 0,
+            current_file: None,
+            module_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -101,7 +107,117 @@ impl Evaluator {
             global_env: env,
             max_depth: 2000,
             depth: 0,
+            current_file: None,
+            module_cache: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    pub fn with_env_cache_file(
+        env: Arc<RwLock<Environment>>,
+        module_cache: Arc<RwLock<HashMap<String, Value>>>,
+        current_file: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            global_env: env,
+            max_depth: 2000,
+            depth: 0,
+            current_file,
+            module_cache,
+        }
+    }
+
+    pub fn load_module(&mut self, path_str: &str, span: Span) -> Result<Value, RuntimeError> {
+        // Standard library module namespaces (std:fs, std:path, std:sys, std:time)
+        if path_str.starts_with("std:") || path_str.starts_with("std::") {
+            if let Some(cached) = self.module_cache.read().unwrap().get(path_str) {
+                return Ok(cached.clone());
+            }
+            let mod_val = crate::stdlib::load_std_module(path_str, span)?;
+            self.module_cache
+                .write()
+                .unwrap()
+                .insert(path_str.to_string(), mod_val.clone());
+            return Ok(mod_val);
+        }
+
+        // File-based module: resolve relative to current_file
+        let resolved_path = if path_str.starts_with("./") || path_str.starts_with("../") {
+            if let Some(cur) = &self.current_file {
+                if let Some(parent) = cur.parent() {
+                    parent.join(path_str)
+                } else {
+                    PathBuf::from(path_str)
+                }
+            } else {
+                PathBuf::from(path_str)
+            }
+        } else if let Some(cur) = &self.current_file {
+            if let Some(parent) = cur.parent() {
+                let candidate = parent.join(path_str);
+                if candidate.exists() {
+                    candidate
+                } else {
+                    PathBuf::from(path_str)
+                }
+            } else {
+                PathBuf::from(path_str)
+            }
+        } else {
+            PathBuf::from(path_str)
+        };
+
+        let canonical_key = match std::fs::canonicalize(&resolved_path) {
+            Ok(p) => p.to_string_lossy().to_string(),
+            Err(_) => resolved_path.to_string_lossy().to_string(),
+        };
+
+        // Cache hit
+        if let Some(cached) = self.module_cache.read().unwrap().get(&canonical_key) {
+            return Ok(cached.clone());
+        }
+
+        // Guard against circular import loops by inserting an empty map into cache early
+        let export_map = Arc::new(RwLock::new(indexmap::IndexMap::new()));
+        let module_val = Value::Map(export_map.clone());
+        self.module_cache
+            .write()
+            .unwrap()
+            .insert(canonical_key.clone(), module_val.clone());
+
+        let source = std::fs::read_to_string(&resolved_path).map_err(|e| {
+            RuntimeError::new(format!("Failed to read module '{}': {}", path_str, e)).at(span)
+        })?;
+
+        let mut builtin_env = Environment::new();
+        crate::builtins::register(&mut builtin_env);
+        let builtin_env_rc = Arc::new(RwLock::new(builtin_env));
+        let module_env = Arc::new(RwLock::new(Environment::new_with_parent(builtin_env_rc)));
+
+        let child_file = match std::fs::canonicalize(&resolved_path) {
+            Ok(p) => Some(p),
+            Err(_) => Some(resolved_path),
+        };
+
+        let mut ev = Evaluator::with_env_cache_file(
+            module_env.clone(),
+            self.module_cache.clone(),
+            child_file,
+        );
+
+        let tokens = crate::lexer::tokenize(&source).map_err(|e| {
+            RuntimeError::new(format!("Lexer error in module '{}': {}", path_str, e)).at(span)
+        })?;
+        let program = crate::parser::parse(tokens).map_err(|e| {
+            RuntimeError::new(format!("Parser error in module '{}': {}", path_str, e)).at(span)
+        })?;
+        ev.eval_program(&program).map_err(|e| {
+            RuntimeError::new(format!("Runtime error in module '{}': {}", path_str, e.message)).at(span)
+        })?;
+
+        let evaluated_map = module_env.read().unwrap().export_map();
+        *export_map.write().unwrap() = evaluated_map;
+
+        Ok(module_val)
     }
 
     pub fn eval_program(&mut self, program: &Program) -> Result<Value, RuntimeError> {
@@ -259,6 +375,39 @@ StmtKind::StructDef { name, fields } => {
             StmtKind::Return(None) => Ok(Signal::Return(Value::Null)),
             StmtKind::Break => Ok(Signal::Break),
             StmtKind::Continue => Ok(Signal::Continue),
+            StmtKind::Use { imports, path } => {
+                let mod_val = self.load_module(path, stmt.span)?;
+                match mod_val {
+                    Value::Map(m) => {
+                        let map = m.read().unwrap();
+                        for item in imports {
+                            if item.name == "*" {
+                                for (k, v) in map.iter() {
+                                    env.write().unwrap().define(k.clone(), v.clone());
+                                }
+                            } else {
+                                let val = map.get(&item.name).cloned().ok_or_else(|| {
+                                    RuntimeError::new(format!(
+                                        "Module '{}' does not export '{}'",
+                                        path, item.name
+                                    ))
+                                    .at(stmt.span)
+                                })?;
+                                let bind_name = item.alias.as_ref().unwrap_or(&item.name);
+                                env.write().unwrap().define(bind_name.clone(), val);
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(format!(
+                            "Expected module exports from '{}', found non-map value",
+                            path
+                        ))
+                        .at(stmt.span));
+                    }
+                }
+                Ok(Signal::None)
+            }
         }
     }
 
@@ -489,30 +638,17 @@ Expr::StructInit { name, fields, span } => {
                 }
                 Err(RuntimeError::new("Non-exhaustive match. No pattern matched the value.".into()).at(*span))
             }
-Expr::Use { path, span } => {
+            Expr::Use { path, span } => {
                 let path_val = self.eval_expr(path, env)?;
                 let path_str = match path_val {
                     Value::String(s) => s,
-                    _ => return Err(RuntimeError::new("Module path must be a string".into()).at(*span)),
+                    _ => {
+                        return Err(
+                            RuntimeError::new("Module path must be a string".into()).at(*span)
+                        )
+                    }
                 };
-                
-                let source = std::fs::read_to_string(&path_str).map_err(|e| {
-                    RuntimeError::new(format!("Failed to read module '{}': {}", path_str, e)).at(*span)
-                })?;
-                
-                let mut builtin_env = crate::env::Environment::new();
-                crate::builtins::register(&mut builtin_env);
-                let builtin_env_rc = std::sync::Arc::new(std::sync::RwLock::new(builtin_env));
-                let module_env = std::sync::Arc::new(std::sync::RwLock::new(crate::env::Environment::new_with_parent(builtin_env_rc)));
-                
-                let mut ev = crate::eval::Evaluator::with_env(module_env.clone());
-                
-                let tokens = crate::lexer::tokenize(&source).map_err(|e| RuntimeError::new(format!("Lexer error in module '{}': {}", path_str, e)).at(*span))?;
-                let program = crate::parser::parse(tokens).map_err(|e| RuntimeError::new(format!("Parser error in module '{}': {}", path_str, e)).at(*span))?;
-                ev.eval_program(&program).map_err(|e| RuntimeError::new(format!("Runtime error in module '{}': {}", path_str, e.message)).at(*span))?;
-                
-                let map = module_env.read().unwrap().export_map();
-                Ok(Value::Map(std::sync::Arc::new(std::sync::RwLock::new(map))))
+                self.load_module(&path_str, *span)
             }
             Expr::Interpolated(parts) => {
                 let mut res = String::new();
