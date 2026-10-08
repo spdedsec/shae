@@ -168,3 +168,81 @@ fn test_compiler_short_circuit_logical_ops() {
     let r4 = VM::new().interpret(Compiler::new().compile_program(&p4).unwrap());
     assert_eq!(r4, InterpretResult::Ok(Value::Int(400)));
 }
+
+#[test]
+fn test_compiler_for_in_loop() {
+    let script = r#"
+let sum = 0
+for x in [1, 2, 3, 4, 5] {
+    sum = sum + x
+}
+sum
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Int(15)));
+}
+
+#[test]
+fn test_compiler_for_in_with_break_and_continue() {
+    let script = r#"
+let sum = 0
+for x in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] {
+    if x == 3 {
+        continue
+    }
+    if x == 7 {
+        break
+    }
+    sum = sum + x
+}
+sum
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    // x values added: 1 + 2 + (skip 3) + 4 + 5 + 6 = 18 (stops before adding 7)
+    assert_eq!(result, InterpretResult::Ok(Value::Int(18)));
+}
+
+#[test]
+fn test_compiler_array_indexing_and_mutation() {
+    let script = r#"
+let arr = [10, 20, 30]
+arr[1] = 99
+let last = arr[-1]
+let mid = arr[1]
+mid + last
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    // last = arr[-1] = 30, mid = arr[1] = 99, 99 + 30 = 129
+    assert_eq!(result, InterpretResult::Ok(Value::Int(129)));
+}
+
+#[test]
+fn test_compiler_nested_for_loops() {
+    let script = r#"
+let total = 0
+for i in [1, 2, 3] {
+    for j in [10, 20] {
+        total = total + i * j
+    }
+}
+total
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    // i=1: 10 + 20 = 30
+    // i=2: 20 + 40 = 60
+    // i=3: 30 + 60 = 90
+    // total = 180
+    assert_eq!(result, InterpretResult::Ok(Value::Int(180)));
+}

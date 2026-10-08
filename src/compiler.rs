@@ -12,6 +12,7 @@ pub struct Local {
 #[derive(Debug, Clone)]
 struct LoopContext {
     start_ip: usize,
+    scope_depth: usize,
     break_jumps: Vec<usize>,
 }
 
@@ -112,6 +113,20 @@ impl Compiler {
         Ok(())
     }
 
+    fn pop_locals_above(&mut self, depth: usize, line: usize) {
+        let mut to_pop = 0;
+        for local in self.locals.iter().rev() {
+            if local.depth > depth {
+                to_pop += 1;
+            } else {
+                break;
+            }
+        }
+        for _ in 0..to_pop {
+            self.chunk.write_opcode(OpCode::Pop, line);
+        }
+    }
+
     pub fn compile_stmt(&mut self, stmt: &Stmt, is_last: bool) -> Result<(), String> {
         match &stmt.kind {
             StmtKind::Let { pattern, init } => {
@@ -123,9 +138,9 @@ impl Compiler {
                 Ok(())
             }
             StmtKind::Assign { target, value } => {
-                self.compile_expr(value)?;
                 match target {
                     Expr::Variable { name, span } => {
+                        self.compile_expr(value)?;
                         if let Some(slot) = self.resolve_local(name) {
                             self.chunk.write_opcode(OpCode::SetLocal, span.line);
                             self.chunk.write(slot, span.line);
@@ -134,6 +149,20 @@ impl Compiler {
                             self.chunk.write_opcode(OpCode::SetGlobal, span.line);
                             self.chunk.write(const_idx as u8, span.line);
                         }
+                        if !is_last {
+                            self.chunk.write_opcode(OpCode::Pop, span.line);
+                        }
+                        Ok(())
+                    }
+                    Expr::Index {
+                        target: idx_target,
+                        index,
+                        span,
+                    } => {
+                        self.compile_expr(idx_target)?;
+                        self.compile_expr(index)?;
+                        self.compile_expr(value)?;
+                        self.chunk.write_opcode(OpCode::IndexSet, span.line);
                         if !is_last {
                             self.chunk.write_opcode(OpCode::Pop, span.line);
                         }
@@ -177,8 +206,10 @@ impl Compiler {
             }
             StmtKind::While { condition, body } => {
                 let loop_start = self.chunk.code.len();
+                let loop_depth = self.scope_depth;
                 self.loops.push(LoopContext {
                     start_ip: loop_start,
+                    scope_depth: loop_depth,
                     break_jumps: Vec::new(),
                 });
 
@@ -206,17 +237,72 @@ impl Compiler {
                 }
                 Ok(())
             }
+            StmtKind::For {
+                item,
+                iterable,
+                body,
+            } => {
+                self.begin_scope();
+                self.compile_expr(iterable)?;
+                let seq_slot = self.add_local("(seq)".to_string());
+
+                let const_zero = self.chunk.add_constant(Value::Int(0));
+                self.chunk.write_opcode(OpCode::Constant, stmt.span.line);
+                self.chunk.write(const_zero as u8, stmt.span.line);
+                self.add_local("(iter)".to_string());
+
+                let loop_start = self.chunk.code.len();
+                let loop_depth = self.scope_depth;
+                self.loops.push(LoopContext {
+                    start_ip: loop_start,
+                    scope_depth: loop_depth,
+                    break_jumps: Vec::new(),
+                });
+
+                self.chunk.write_opcode(OpCode::ForIter, stmt.span.line);
+                self.chunk.write(seq_slot as u8, stmt.span.line);
+                self.chunk.write(0xff, stmt.span.line);
+                self.chunk.write(0xff, stmt.span.line);
+                let exit_jump = self.chunk.code.len() - 2;
+
+                self.begin_scope();
+                self.add_local(item.clone());
+                for s in body {
+                    self.compile_stmt(s, false)?;
+                }
+                self.end_scope();
+
+                self.emit_loop(loop_start, stmt.span.line)?;
+                self.patch_jump(exit_jump)?;
+
+                let loop_ctx = self.loops.pop().unwrap();
+                for break_jump in loop_ctx.break_jumps {
+                    self.patch_jump(break_jump)?;
+                }
+
+                self.end_scope();
+
+                if is_last {
+                    self.chunk.write_opcode(OpCode::Nil, stmt.span.line);
+                }
+                Ok(())
+            }
             StmtKind::Break => {
                 if self.loops.is_empty() {
                     return Err("Cannot 'break' outside of a loop.".into());
                 }
+                let loop_depth = self.loops.last().unwrap().scope_depth;
+                self.pop_locals_above(loop_depth, stmt.span.line);
                 let jump = self.emit_jump(OpCode::Jump, stmt.span.line);
                 self.loops.last_mut().unwrap().break_jumps.push(jump);
                 Ok(())
             }
             StmtKind::Continue => {
                 if let Some(loop_ctx) = self.loops.last() {
-                    self.emit_loop(loop_ctx.start_ip, stmt.span.line)?;
+                    let loop_depth = loop_ctx.scope_depth;
+                    let start_ip = loop_ctx.start_ip;
+                    self.pop_locals_above(loop_depth, stmt.span.line);
+                    self.emit_loop(start_ip, stmt.span.line)?;
                     Ok(())
                 } else {
                     Err("Cannot 'continue' outside of a loop.".into())
@@ -357,6 +443,41 @@ impl Compiler {
                     UnaryOp::Not => self.chunk.write_opcode(OpCode::Not, span.line),
                     UnaryOp::BitNot => self.chunk.write_opcode(OpCode::BitNot, span.line),
                 }
+                Ok(())
+            }
+            Expr::Array(elements) => {
+                if elements.len() > 255 {
+                    return Err("Array literal exceeds maximum 255 elements in VM".into());
+                }
+                for elem in elements {
+                    self.compile_expr(elem)?;
+                }
+                self.chunk.write_opcode(OpCode::BuildList, 0);
+                self.chunk.write(elements.len() as u8, 0);
+                Ok(())
+            }
+            Expr::Index {
+                target,
+                index,
+                span,
+            } => {
+                self.compile_expr(target)?;
+                self.compile_expr(index)?;
+                self.chunk.write_opcode(OpCode::IndexGet, span.line);
+                Ok(())
+            }
+            Expr::Map(pairs) => {
+                if pairs.len() > 255 {
+                    return Err("Map literal exceeds maximum 255 pairs in VM".into());
+                }
+                for (key, val) in pairs {
+                    let const_idx = self.chunk.add_constant(Value::String(key.clone()));
+                    self.chunk.write_opcode(OpCode::Constant, 0);
+                    self.chunk.write(const_idx as u8, 0);
+                    self.compile_expr(val)?;
+                }
+                self.chunk.write_opcode(OpCode::BuildMap, 0);
+                self.chunk.write(pairs.len() as u8, 0);
                 Ok(())
             }
             _ => Err(format!("Unsupported expression in VM compiler: {:?}", expr)),

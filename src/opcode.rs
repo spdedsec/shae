@@ -47,6 +47,7 @@ pub enum OpCode {
     BitNot,
     Shl,
     Shr,
+    ForIter,
 }
 
 impl From<u8> for OpCode {

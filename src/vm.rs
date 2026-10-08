@@ -1,7 +1,8 @@
 use crate::chunk::Chunk;
 use crate::opcode::OpCode;
-use crate::value::Value;
+use crate::value::{resolve_index, resolve_int_index, IndexError, Value};
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 pub struct VM {
     pub chunk: Chunk,
@@ -405,6 +406,214 @@ impl VM {
                 OpCode::Loop => {
                     let offset = self.read_short();
                     self.ip -= offset as usize;
+                }
+                OpCode::BuildList => {
+                    let count = self.read_byte() as usize;
+                    let mut elements = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        elements.push(self.stack.pop().unwrap());
+                    }
+                    elements.reverse();
+                    self.stack.push(Value::Array(Arc::new(RwLock::new(elements))));
+                }
+                OpCode::BuildMap => {
+                    let count = self.read_byte() as usize;
+                    let mut map = indexmap::IndexMap::with_capacity(count);
+                    let mut pairs = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        let val = self.stack.pop().unwrap();
+                        let key = match self.stack.pop().unwrap() {
+                            Value::String(s) => s,
+                            other => other.to_string(),
+                        };
+                        pairs.push((key, val));
+                    }
+                    pairs.reverse();
+                    for (k, v) in pairs {
+                        map.insert(k, v);
+                    }
+                    self.stack.push(Value::Map(Arc::new(RwLock::new(map))));
+                }
+                OpCode::IndexGet => {
+                    let index = self.stack.pop().unwrap();
+                    let target = self.stack.pop().unwrap();
+                    match target {
+                        Value::Array(arr) => {
+                            let borrow = arr.read().unwrap();
+                            let idx_res = match index {
+                                Value::Int(i) => resolve_int_index(i, borrow.len()),
+                                Value::Float(f) | Value::Number(f) => {
+                                    resolve_index(f, borrow.len())
+                                }
+                                _ => {
+                                    return InterpretResult::RuntimeError(
+                                        "Array index must be a number.".into(),
+                                    )
+                                }
+                            };
+                            match idx_res {
+                                Ok(idx) => self.stack.push(borrow[idx].clone()),
+                                Err(IndexError::NotWhole) => {
+                                    return InterpretResult::RuntimeError(
+                                        "Array index must be a whole number.".into(),
+                                    )
+                                }
+                                Err(IndexError::OutOfRange(len)) => {
+                                    return InterpretResult::RuntimeError(format!(
+                                        "Index out of bounds for array of length {}",
+                                        len
+                                    ))
+                                }
+                            }
+                        }
+                        Value::String(s) => {
+                            let chars: Vec<char> = s.chars().collect();
+                            let idx_res = match index {
+                                Value::Int(i) => resolve_int_index(i, chars.len()),
+                                Value::Float(f) | Value::Number(f) => {
+                                    resolve_index(f, chars.len())
+                                }
+                                _ => {
+                                    return InterpretResult::RuntimeError(
+                                        "String index must be a number.".into(),
+                                    )
+                                }
+                            };
+                            match idx_res {
+                                Ok(idx) => self.stack.push(Value::String(chars[idx].to_string())),
+                                Err(IndexError::NotWhole) => {
+                                    return InterpretResult::RuntimeError(
+                                        "String index must be a whole number.".into(),
+                                    )
+                                }
+                                Err(IndexError::OutOfRange(len)) => {
+                                    return InterpretResult::RuntimeError(format!(
+                                        "Index out of bounds for string of length {}",
+                                        len
+                                    ))
+                                }
+                            }
+                        }
+                        Value::Map(m) => {
+                            if let Value::String(key) = index {
+                                let borrow = m.read().unwrap();
+                                let val = borrow.get(&key).cloned().unwrap_or(Value::Null);
+                                self.stack.push(val);
+                            } else {
+                                return InterpretResult::RuntimeError(
+                                    "Map key must be a string.".into(),
+                                );
+                            }
+                        }
+                        other => {
+                            return InterpretResult::RuntimeError(format!(
+                                "Cannot index into {}.",
+                                other.type_name()
+                            ));
+                        }
+                    }
+                }
+                OpCode::IndexSet => {
+                    let value = self.stack.pop().unwrap();
+                    let index = self.stack.pop().unwrap();
+                    let target = self.stack.pop().unwrap();
+                    match target {
+                        Value::Array(arr) => {
+                            let mut borrow = arr.write().unwrap();
+                            let idx_res = match index {
+                                Value::Int(i) => resolve_int_index(i, borrow.len()),
+                                Value::Float(f) | Value::Number(f) => {
+                                    resolve_index(f, borrow.len())
+                                }
+                                _ => {
+                                    return InterpretResult::RuntimeError(
+                                        "Array index must be a number.".into(),
+                                    )
+                                }
+                            };
+                            match idx_res {
+                                Ok(idx) => {
+                                    borrow[idx] = value.clone();
+                                    self.stack.push(value);
+                                }
+                                Err(IndexError::NotWhole) => {
+                                    return InterpretResult::RuntimeError(
+                                        "Array index must be a whole number.".into(),
+                                    )
+                                }
+                                Err(IndexError::OutOfRange(len)) => {
+                                    return InterpretResult::RuntimeError(format!(
+                                        "Index out of bounds for array of length {}",
+                                        len
+                                    ))
+                                }
+                            }
+                        }
+                        Value::Map(m) => {
+                            if let Value::String(key) = index {
+                                m.write().unwrap().insert(key, value.clone());
+                                self.stack.push(value);
+                            } else {
+                                return InterpretResult::RuntimeError(
+                                    "Map key must be a string.".into(),
+                                );
+                            }
+                        }
+                        other => {
+                            return InterpretResult::RuntimeError(format!(
+                                "Cannot index into {}.",
+                                other.type_name()
+                            ));
+                        }
+                    }
+                }
+                OpCode::ForIter => {
+                    let seq_slot = self.read_byte() as usize;
+                    let offset = self.read_short();
+                    let iter_slot = seq_slot + 1;
+                    let (next_val, is_done) = {
+                        let seq = match self.stack.get(seq_slot) {
+                            Some(s) => s,
+                            None => {
+                                return InterpretResult::RuntimeError(format!(
+                                    "Invalid stack slot {} for ForIter sequence",
+                                    seq_slot
+                                ));
+                            }
+                        };
+                        let iter_idx = match self.stack.get(iter_slot) {
+                            Some(Value::Int(i)) => *i,
+                            _ => {
+                                return InterpretResult::RuntimeError(
+                                    "Iterator index must be an integer.".into(),
+                                );
+                            }
+                        };
+                        match seq {
+                            Value::Array(arr) => {
+                                let borrow = arr.read().unwrap();
+                                if iter_idx >= 0 && (iter_idx as usize) < borrow.len() {
+                                    (Some(borrow[iter_idx as usize].clone()), false)
+                                } else {
+                                    (None, true)
+                                }
+                            }
+                            other => {
+                                return InterpretResult::RuntimeError(format!(
+                                    "Cannot iterate over {}",
+                                    other.type_name()
+                                ));
+                            }
+                        }
+                    };
+                    if is_done {
+                        self.ip += offset as usize;
+                    } else {
+                        if let Some(Value::Int(i)) = self.stack.get_mut(iter_slot) {
+                            *i += 1;
+                        }
+                        self.stack.push(next_val.unwrap());
+                    }
                 }
                 _ => unimplemented!("Opcode {:?} not yet implemented", instruction),
             }
