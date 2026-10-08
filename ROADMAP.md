@@ -69,10 +69,10 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 
 ---
 
-### **Chunk 8: Expanded Standard Library (Networking, Crypto, Regex)**
-- [ ] `std:crypto`: SHA-256, SHA-512, HMAC, secure random bytes.
-- [ ] `std:regex`: PCRE-compatible regex matching, search, and substitution.
-- [ ] `std:codec`: Base64 and URL encoding/decoding.
+### **Chunk 8: Expanded Standard Library (Networking, Crypto, Regex)** *(Completed)*
+- [x] `std:crypto`: SHA-256, SHA-512, HMAC, secure random bytes.
+- [x] `std:regex`: PCRE-compatible regex matching, search, and substitution.
+- [x] `std:codec`: Base64 and URL encoding/decoding.
 
 ---
 

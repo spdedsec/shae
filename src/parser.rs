@@ -812,7 +812,11 @@ fn parse_struct_def(&mut self, _line: usize, _col: usize) -> Result<Stmt, Parser
             });
         }
 
-        let iterable = self.parse_expression()?;
+        let prev = self.allow_struct;
+        self.allow_struct = false;
+        let iterable = self.parse_expression();
+        self.allow_struct = prev;
+        let iterable = iterable?;
 
         if !self.match_token(Token::LBrace) {
             return Err(ParserError::UnexpectedToken {

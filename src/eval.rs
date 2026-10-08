@@ -1089,7 +1089,7 @@ Expr::StructInit { name, fields, span } => {
                         if property == "len" {
                             Ok(Some(Value::Int(s.chars().count() as i64)))
                         } else if property == "trim" || property == "upper" || property == "lower" || property == "split" || property == "replace"
-                            || property == "starts_with" || property == "ends_with" || property == "contains" || property == "pad_start" || property == "lines" || property == "chars" {
+                            || property == "starts_with" || property == "ends_with" || property == "contains" || property == "pad_start" || property == "lines" || property == "chars" || property == "slice" {
                             Ok(Some(Value::BoundMethod {
                                 object: Box::new(Value::String(s.clone())),
                                 method: property.clone()
@@ -1750,6 +1750,46 @@ Expr::StructInit { name, fields, span } => {
                         }
                         let char_vals: Vec<Value> = s.chars().map(|ch| Value::String(ch.to_string())).collect();
                         Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(char_vals))))
+                    }
+                    (Value::String(s), "slice") => {
+                        let chars: Vec<char> = s.chars().collect();
+                        let len = chars.len() as isize;
+                        let start = if !args.is_empty() {
+                            match to_i64_val(&args[0]) {
+                                Some(n) => n as isize,
+                                None => {
+                                    self.depth -= 1;
+                                    return Err(RuntimeError::new("slice() start index must be an integer".into()).at(span));
+                                }
+                            }
+                        } else {
+                            0
+                        };
+                        let end = if args.len() >= 2 {
+                            match to_i64_val(&args[1]) {
+                                Some(n) => n as isize,
+                                None => {
+                                    self.depth -= 1;
+                                    return Err(RuntimeError::new("slice() end index must be an integer".into()).at(span));
+                                }
+                            }
+                        } else {
+                            len
+                        };
+                        if args.len() > 2 {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new("slice() expects 1 or 2 arguments".into()).at(span));
+                        }
+
+                        let norm_start = if start < 0 { (start + len).max(0) } else { start.min(len) } as usize;
+                        let norm_end = if end < 0 { (end + len).max(0) } else { end.min(len) } as usize;
+
+                        let sliced: String = if norm_start <= norm_end {
+                            chars[norm_start..norm_end].iter().collect()
+                        } else {
+                            String::new()
+                        };
+                        Ok(Value::String(sliced))
                     }
                     (Value::Task(t), "join") | (Value::Task(t), "wait") => {
                         let mut guard = t.lock().unwrap();

@@ -366,6 +366,12 @@ impl Lexer {
                     tokens.push(token);
                 }
 
+                // Raw Strings r"..."
+                'r' if self.peek(1) == Some('"') => {
+                    let token = self.scan_raw_string()?;
+                    tokens.push(token);
+                }
+
                 // Numbers
                 '0'..='9' => {
                     let token = self.scan_number()?;
@@ -435,6 +441,43 @@ impl Lexer {
         } else {
             None
         }
+    }
+
+    fn scan_raw_string(&mut self) -> Result<SpannedToken, LexerError> {
+        let start_line = self.line;
+        let start_col = self.col;
+        self.advance(); // consume 'r'
+        self.advance(); // consume opening quote
+
+        let mut text = String::new();
+        while let Some(&(_, ch)) = self.current() {
+            if ch == '"' {
+                self.advance(); // consume closing quote
+                return Ok(SpannedToken {
+                    token: Token::StringLit(text),
+                    line: start_line,
+                    col: start_col,
+                });
+            } else if ch == '\\' && self.peek(1) == Some('"') {
+                self.advance(); // consume '\\'
+                self.advance(); // consume '"'
+                text.push('\\');
+                text.push('"');
+            } else if ch == '\n' {
+                text.push('\n');
+                self.advance();
+                self.line += 1;
+                self.col = 1;
+            } else {
+                text.push(ch);
+                self.advance();
+            }
+        }
+
+        Err(LexerError::UnterminatedString {
+            line: start_line,
+            col: start_col,
+        })
     }
 
     fn scan_string(&mut self) -> Result<SpannedToken, LexerError> {

@@ -2,7 +2,11 @@ use crate::ast::Span;
 use crate::builtins::expect_args;
 use crate::eval::{Evaluator, RuntimeError};
 use crate::value::Value;
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use indexmap::IndexMap;
+use ring::rand::SecureRandom;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -18,8 +22,11 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "path" => Ok(build_path_module()),
         "sys" => Ok(build_sys_module()),
         "time" => Ok(build_time_module()),
+        "crypto" => Ok(build_crypto_module()),
+        "codec" => Ok(build_codec_module()),
+        "regex" => Ok(build_regex_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex",
             clean_name
         ))
         .at(span)),
@@ -368,3 +375,399 @@ fn time_sleep(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value
     std::thread::sleep(std::time::Duration::from_millis(ms));
     Ok(Value::Null)
 }
+
+// -------------------------------------------------------------
+// std:crypto
+// -------------------------------------------------------------
+fn build_crypto_module() -> Value {
+    make_map(vec![
+        ("sha256", crypto_sha256),
+        ("sha512", crypto_sha512),
+        ("hmac_sha256", crypto_hmac_sha256),
+        ("hmacSha256", crypto_hmac_sha256),
+        ("hmac_sha512", crypto_hmac_sha512),
+        ("hmacSha512", crypto_hmac_sha512),
+        ("random_bytes", crypto_random_bytes),
+        ("randomBytes", crypto_random_bytes),
+        ("random_hex", crypto_random_hex),
+        ("randomHex", crypto_random_hex),
+        ("uuid", crypto_uuid),
+        ("random_uuid", crypto_uuid),
+        ("randomUuid", crypto_uuid),
+    ])
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(out, "{:02x}", b);
+    }
+    out
+}
+
+fn crypto_sha256(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("crypto.sha256", 1, &args, span)?;
+    if let Value::String(s) = &args[0] {
+        let digest = ring::digest::digest(&ring::digest::SHA256, s.as_bytes());
+        Ok(Value::String(bytes_to_hex(digest.as_ref())))
+    } else {
+        Err(RuntimeError::new("crypto.sha256 expects a string argument".into()).at(span))
+    }
+}
+
+fn crypto_sha512(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("crypto.sha512", 1, &args, span)?;
+    if let Value::String(s) = &args[0] {
+        let digest = ring::digest::digest(&ring::digest::SHA512, s.as_bytes());
+        Ok(Value::String(bytes_to_hex(digest.as_ref())))
+    } else {
+        Err(RuntimeError::new("crypto.sha512 expects a string argument".into()).at(span))
+    }
+}
+
+fn crypto_hmac_sha256(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("crypto.hmac_sha256", 2, &args, span)?;
+    if let (Value::String(key), Value::String(data)) = (&args[0], &args[1]) {
+        let s_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key.as_bytes());
+        let tag = ring::hmac::sign(&s_key, data.as_bytes());
+        Ok(Value::String(bytes_to_hex(tag.as_ref())))
+    } else {
+        Err(RuntimeError::new("crypto.hmac_sha256 expects (string key, string data)".into()).at(span))
+    }
+}
+
+fn crypto_hmac_sha512(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("crypto.hmac_sha512", 2, &args, span)?;
+    if let (Value::String(key), Value::String(data)) = (&args[0], &args[1]) {
+        let s_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA512, key.as_bytes());
+        let tag = ring::hmac::sign(&s_key, data.as_bytes());
+        Ok(Value::String(bytes_to_hex(tag.as_ref())))
+    } else {
+        Err(RuntimeError::new("crypto.hmac_sha512 expects (string key, string data)".into()).at(span))
+    }
+}
+
+fn crypto_random_bytes(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("crypto.random_bytes", 1, &args, span)?;
+    let len = match &args[0] {
+        Value::Int(n) if *n >= 0 => *n as usize,
+        Value::Float(n) | Value::Number(n) if *n >= 0.0 => *n as usize,
+        _ => return Err(RuntimeError::new("crypto.random_bytes expects non-negative integer length".into()).at(span)),
+    };
+    let rng = ring::rand::SystemRandom::new();
+    let mut buf = vec![0u8; len];
+    rng.fill(&mut buf)
+        .map_err(|e| RuntimeError::new(format!("crypto.random_bytes error: {}", e)).at(span))?;
+    let list: Vec<Value> = buf.into_iter().map(|b| Value::Int(b as i64)).collect();
+    Ok(Value::Array(Arc::new(RwLock::new(list))))
+}
+
+fn crypto_random_hex(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("crypto.random_hex", 1, &args, span)?;
+    let len = match &args[0] {
+        Value::Int(n) if *n >= 0 => *n as usize,
+        Value::Float(n) | Value::Number(n) if *n >= 0.0 => *n as usize,
+        _ => return Err(RuntimeError::new("crypto.random_hex expects non-negative integer length".into()).at(span)),
+    };
+    let rng = ring::rand::SystemRandom::new();
+    let mut buf = vec![0u8; len];
+    rng.fill(&mut buf)
+        .map_err(|e| RuntimeError::new(format!("crypto.random_hex error: {}", e)).at(span))?;
+    Ok(Value::String(bytes_to_hex(&buf)))
+}
+
+fn crypto_uuid(_ev: &mut Evaluator, _args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    let rng = ring::rand::SystemRandom::new();
+    let mut buf = [0u8; 16];
+    rng.fill(&mut buf)
+        .map_err(|e| RuntimeError::new(format!("crypto.uuid error: {}", e)).at(span))?;
+    buf[6] = (buf[6] & 0x0f) | 0x40; // RFC 4122 v4
+    buf[8] = (buf[8] & 0x3f) | 0x80; // variant 1
+    let uuid = format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        buf[0], buf[1], buf[2], buf[3],
+        buf[4], buf[5],
+        buf[6], buf[7],
+        buf[8], buf[9],
+        buf[10], buf[11], buf[12], buf[13], buf[14], buf[15]
+    );
+    Ok(Value::String(uuid))
+}
+
+// -------------------------------------------------------------
+// std:codec
+// -------------------------------------------------------------
+fn build_codec_module() -> Value {
+    make_map(vec![
+        ("base64_encode", codec_base64_encode),
+        ("base64Encode", codec_base64_encode),
+        ("base64_decode", codec_base64_decode),
+        ("base64Decode", codec_base64_decode),
+        ("base64_url_encode", codec_base64_url_encode),
+        ("base64UrlEncode", codec_base64_url_encode),
+        ("base64_url_decode", codec_base64_url_decode),
+        ("base64UrlDecode", codec_base64_url_decode),
+        ("url_encode", codec_url_encode),
+        ("urlEncode", codec_url_encode),
+        ("url_decode", codec_url_decode),
+        ("urlDecode", codec_url_decode),
+        ("hex_encode", codec_hex_encode),
+        ("hexEncode", codec_hex_encode),
+        ("hex_decode", codec_hex_decode),
+        ("hexDecode", codec_hex_decode),
+    ])
+}
+
+fn codec_base64_encode(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("codec.base64_encode", 1, &args, span)?;
+    if let Value::String(s) = &args[0] {
+        Ok(Value::String(BASE64_STANDARD.encode(s.as_bytes())))
+    } else {
+        Err(RuntimeError::new("codec.base64_encode expects string argument".into()).at(span))
+    }
+}
+
+fn codec_base64_decode(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("codec.base64_decode", 1, &args, span)?;
+    if let Value::String(s) = &args[0] {
+        let bytes = BASE64_STANDARD
+            .decode(s.as_bytes())
+            .map_err(|e| RuntimeError::new(format!("codec.base64_decode failed: {}", e)).at(span))?;
+        let text = String::from_utf8(bytes)
+            .map_err(|e| RuntimeError::new(format!("codec.base64_decode invalid UTF-8: {}", e)).at(span))?;
+        Ok(Value::String(text))
+    } else {
+        Err(RuntimeError::new("codec.base64_decode expects string argument".into()).at(span))
+    }
+}
+
+fn codec_base64_url_encode(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("codec.base64_url_encode", 1, &args, span)?;
+    if let Value::String(s) = &args[0] {
+        Ok(Value::String(BASE64_URL_SAFE_NO_PAD.encode(s.as_bytes())))
+    } else {
+        Err(RuntimeError::new("codec.base64_url_encode expects string argument".into()).at(span))
+    }
+}
+
+fn codec_base64_url_decode(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("codec.base64_url_decode", 1, &args, span)?;
+    if let Value::String(s) = &args[0] {
+        let bytes = BASE64_URL_SAFE_NO_PAD
+            .decode(s.as_bytes())
+            .map_err(|e| RuntimeError::new(format!("codec.base64_url_decode failed: {}", e)).at(span))?;
+        let text = String::from_utf8(bytes)
+            .map_err(|e| RuntimeError::new(format!("codec.base64_url_decode invalid UTF-8: {}", e)).at(span))?;
+        Ok(Value::String(text))
+    } else {
+        Err(RuntimeError::new("codec.base64_url_decode expects string argument".into()).at(span))
+    }
+}
+
+fn codec_url_encode(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("codec.url_encode", 1, &args, span)?;
+    if let Value::String(s) = &args[0] {
+        use std::fmt::Write;
+        let mut out = String::new();
+        for b in s.bytes() {
+            match b {
+                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                    out.push(b as char);
+                }
+                b' ' => out.push('+'),
+                other => {
+                    let _ = write!(out, "%{:02X}", other);
+                }
+            }
+        }
+        Ok(Value::String(out))
+    } else {
+        Err(RuntimeError::new("codec.url_encode expects string argument".into()).at(span))
+    }
+}
+
+fn codec_url_decode(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("codec.url_decode", 1, &args, span)?;
+    if let Value::String(s) = &args[0] {
+        let mut result = String::new();
+        let mut chars = s.chars();
+        while let Some(ch) = chars.next() {
+            if ch == '%' {
+                let h1 = chars.next();
+                let h2 = chars.next();
+                if let (Some(c1), Some(c2)) = (h1, h2) {
+                    let hex_str = format!("{}{}", c1, c2);
+                    if let Ok(byte) = u8::from_str_radix(&hex_str, 16) {
+                        result.push(byte as char);
+                        continue;
+                    }
+                }
+                result.push('%');
+                if let Some(c1) = h1 { result.push(c1); }
+                if let Some(c2) = h2 { result.push(c2); }
+            } else if ch == '+' {
+                result.push(' ');
+            } else {
+                result.push(ch);
+            }
+        }
+        Ok(Value::String(result))
+    } else {
+        Err(RuntimeError::new("codec.url_decode expects string argument".into()).at(span))
+    }
+}
+
+fn codec_hex_encode(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("codec.hex_encode", 1, &args, span)?;
+    if let Value::String(s) = &args[0] {
+        Ok(Value::String(bytes_to_hex(s.as_bytes())))
+    } else {
+        Err(RuntimeError::new("codec.hex_encode expects string argument".into()).at(span))
+    }
+}
+
+fn codec_hex_decode(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("codec.hex_decode", 1, &args, span)?;
+    if let Value::String(s) = &args[0] {
+        if s.len() % 2 != 0 {
+            return Err(RuntimeError::new("codec.hex_decode: hex string must have even length".into()).at(span));
+        }
+        let mut bytes = Vec::with_capacity(s.len() / 2);
+        let chars: Vec<char> = s.chars().collect();
+        for chunk in chars.chunks(2) {
+            let pair: String = chunk.iter().collect();
+            let byte = u8::from_str_radix(&pair, 16)
+                .map_err(|e| RuntimeError::new(format!("codec.hex_decode invalid hex: {}", e)).at(span))?;
+            bytes.push(byte);
+        }
+        let text = String::from_utf8(bytes)
+            .map_err(|e| RuntimeError::new(format!("codec.hex_decode invalid UTF-8: {}", e)).at(span))?;
+        Ok(Value::String(text))
+    } else {
+        Err(RuntimeError::new("codec.hex_decode expects string argument".into()).at(span))
+    }
+}
+
+// -------------------------------------------------------------
+// std:regex
+// -------------------------------------------------------------
+fn build_regex_module() -> Value {
+    make_map(vec![
+        ("is_match", regex_is_match),
+        ("isMatch", regex_is_match),
+        ("test", regex_is_match),
+        ("find", regex_find),
+        ("find_all", regex_find_all),
+        ("findAll", regex_find_all),
+        ("replace", regex_replace),
+        ("replace_all", regex_replace_all),
+        ("replaceAll", regex_replace_all),
+        ("split", regex_split),
+        ("captures", regex_captures),
+    ])
+}
+
+fn compile_regex(pattern: &str, span: Span) -> Result<regex::Regex, RuntimeError> {
+    regex::Regex::new(pattern)
+        .map_err(|e| RuntimeError::new(format!("Invalid regex pattern '{}': {}", pattern, e)).at(span))
+}
+
+fn regex_is_match(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("regex.is_match", 2, &args, span)?;
+    if let (Value::String(pat), Value::String(text)) = (&args[0], &args[1]) {
+        let re = compile_regex(pat, span)?;
+        Ok(Value::Bool(re.is_match(text)))
+    } else {
+        Err(RuntimeError::new("regex.is_match expects (string pattern, string text)".into()).at(span))
+    }
+}
+
+fn regex_find(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("regex.find", 2, &args, span)?;
+    if let (Value::String(pat), Value::String(text)) = (&args[0], &args[1]) {
+        let re = compile_regex(pat, span)?;
+        if let Some(m) = re.find(text) {
+            let mut map = IndexMap::new();
+            map.insert("match".to_string(), Value::String(m.as_str().to_string()));
+            map.insert("start".to_string(), Value::Int(m.start() as i64));
+            map.insert("end".to_string(), Value::Int(m.end() as i64));
+            Ok(Value::Map(Arc::new(RwLock::new(map))))
+        } else {
+            Ok(Value::Null)
+        }
+    } else {
+        Err(RuntimeError::new("regex.find expects (string pattern, string text)".into()).at(span))
+    }
+}
+
+fn regex_find_all(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("regex.find_all", 2, &args, span)?;
+    if let (Value::String(pat), Value::String(text)) = (&args[0], &args[1]) {
+        let re = compile_regex(pat, span)?;
+        let mut list = Vec::new();
+        for m in re.find_iter(text) {
+            let mut map = IndexMap::new();
+            map.insert("match".to_string(), Value::String(m.as_str().to_string()));
+            map.insert("start".to_string(), Value::Int(m.start() as i64));
+            map.insert("end".to_string(), Value::Int(m.end() as i64));
+            list.push(Value::Map(Arc::new(RwLock::new(map))));
+        }
+        Ok(Value::Array(Arc::new(RwLock::new(list))))
+    } else {
+        Err(RuntimeError::new("regex.find_all expects (string pattern, string text)".into()).at(span))
+    }
+}
+
+fn regex_replace(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("regex.replace", 3, &args, span)?;
+    if let (Value::String(pat), Value::String(repl), Value::String(text)) = (&args[0], &args[1], &args[2]) {
+        let re = compile_regex(pat, span)?;
+        Ok(Value::String(re.replace(text, repl.as_str()).to_string()))
+    } else {
+        Err(RuntimeError::new("regex.replace expects (string pattern, string replacement, string text)".into()).at(span))
+    }
+}
+
+fn regex_replace_all(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("regex.replace_all", 3, &args, span)?;
+    if let (Value::String(pat), Value::String(repl), Value::String(text)) = (&args[0], &args[1], &args[2]) {
+        let re = compile_regex(pat, span)?;
+        Ok(Value::String(re.replace_all(text, repl.as_str()).to_string()))
+    } else {
+        Err(RuntimeError::new("regex.replace_all expects (string pattern, string replacement, string text)".into()).at(span))
+    }
+}
+
+fn regex_split(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("regex.split", 2, &args, span)?;
+    if let (Value::String(pat), Value::String(text)) = (&args[0], &args[1]) {
+        let re = compile_regex(pat, span)?;
+        let list: Vec<Value> = re.split(text).map(|s| Value::String(s.to_string())).collect();
+        Ok(Value::Array(Arc::new(RwLock::new(list))))
+    } else {
+        Err(RuntimeError::new("regex.split expects (string pattern, string text)".into()).at(span))
+    }
+}
+
+fn regex_captures(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("regex.captures", 2, &args, span)?;
+    if let (Value::String(pat), Value::String(text)) = (&args[0], &args[1]) {
+        let re = compile_regex(pat, span)?;
+        if let Some(caps) = re.captures(text) {
+            let mut list = Vec::new();
+            for g in caps.iter() {
+                match g {
+                    Some(m) => list.push(Value::String(m.as_str().to_string())),
+                    None => list.push(Value::Null),
+                }
+            }
+            Ok(Value::Array(Arc::new(RwLock::new(list))))
+        } else {
+            Ok(Value::Null)
+        }
+    } else {
+        Err(RuntimeError::new("regex.captures expects (string pattern, string text)".into()).at(span))
+    }
+}
+
