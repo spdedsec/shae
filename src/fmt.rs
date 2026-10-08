@@ -118,7 +118,7 @@ impl Formatter {
                 }
                 self.indent_level -= 1;
                 self.write_indent();
-                let _ = write!(self.output, "}} catch {} {{\n", catch_ident);
+                let _ = write!(self.output, "}} catch ({}) {{\n", catch_ident);
                 self.indent_level += 1;
                 for s in catch_body {
                     self.format_stmt(s);
@@ -347,7 +347,13 @@ impl Formatter {
                         if i > 0 {
                             self.output.push_str(", ");
                         }
-                        self.output.push_str(k);
+                        if is_valid_ident(k) {
+                            self.output.push_str(k);
+                        } else {
+                            self.output.push('"');
+                            self.output.push_str(&k.replace('\\', "\\\\").replace('"', "\\\""));
+                            self.output.push('"');
+                        }
                         self.output.push_str(": ");
                         self.format_expr(v, 0);
                     }
@@ -636,6 +642,16 @@ fn op_precedence(op: BinaryOp) -> u8 {
 fn is_left_associative(op: BinaryOp) -> bool {
     // Almost all binary ops in Shae are left-associative except coalesce if chained
     !matches!(op, BinaryOp::Coalesce)
+}
+
+fn is_valid_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_alphabetic() || first == '_' => {
+            chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+        _ => false,
+    }
 }
 
 pub fn format_program(program: &Program) -> String {

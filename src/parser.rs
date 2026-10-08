@@ -709,13 +709,7 @@ fn parse_struct_def(&mut self, _line: usize, _col: usize) -> Result<Stmt, Parser
             });
         }
         
-        if !self.match_token(Token::LParen) {
-            return Err(ParserError::UnexpectedToken {
-                message: "Expected '(' after catch.".into(),
-                line: self.peek().line,
-                col: self.peek().col,
-            });
-        }
+        let has_paren = self.match_token(Token::LParen);
         
         let catch_ident = if let Token::Ident(name) = &self.peek().token {
             let n = name.clone();
@@ -729,7 +723,7 @@ fn parse_struct_def(&mut self, _line: usize, _col: usize) -> Result<Stmt, Parser
             });
         };
         
-        if !self.match_token(Token::RParen) {
+        if has_paren && !self.match_token(Token::RParen) {
             return Err(ParserError::UnexpectedToken {
                 message: "Expected ')' after catch variable.".into(),
                 line: self.peek().line,

@@ -10,24 +10,24 @@ fn handle_request(req) {
     let method = req.method
     let path = req.path
     if method == "GET" and path == "/api/health" {
-        return { status: 200, headers: { Content-Type: "application/json" }, body: json_stringify({ status: "healthy", engine: "Shae Language Runtime", os: platform(), arch: arch(), timestamp: now_ms() }) }
+        return { status: 200, headers: { "Content-Type": "application/json" }, body: json_stringify({ status: "healthy", engine: "Shae Language Runtime", os: platform(), arch: arch(), timestamp: now_ms() }) }
     }
     if method == "POST" and path == "/api/register" {
         let body = null
         try {
             body = json_parse(req.body)
-        } catch _err {
+        } catch (_err) {
             body = null
         }
         if body == null {
-            return { status: 400, headers: { Content-Type: "application/json" }, body: json_stringify({ error: "Invalid JSON request body" }) }
+            return { status: 400, headers: { "Content-Type": "application/json" }, body: json_stringify({ error: "Invalid JSON request body" }) }
         }
         let username = body["username"] ?? ""
         let email = body["email"] ?? ""
         let password = body["password"] ?? ""
         let validation = validate_registration(username, email)
         if not validation.valid {
-            return { status: 400, headers: { Content-Type: "application/json" }, body: json_stringify({ error: validation.error }) }
+            return { status: 400, headers: { "Content-Type": "application/json" }, body: json_stringify({ error: validation.error }) }
         }
         let uid = str(next_id)
         next_id = next_id + 1
@@ -36,24 +36,24 @@ fn handle_request(req) {
         let user = User { id: uid, username: username, email: email, token_hash: hashed_pw }
         users_db[uid] = user
         log_audit("USER_REGISTER", { id: uid, username: username, email: email })
-        return { status: 201, headers: { Content-Type: "application/json" }, body: json_stringify({ message: "User registered successfully", user_id: uid, token: token }) }
+        return { status: 201, headers: { "Content-Type": "application/json" }, body: json_stringify({ message: "User registered successfully", user_id: uid, token: token }) }
     }
     let match_user = route_match("/api/users/:id", path)
     if method == "GET" and match_user != null {
         let auth_header = req.headers["authorization"] ?? req.headers["Authorization"]
         let auth_result = verify_auth_token(auth_header)
         if not auth_result.valid {
-            return { status: 401, headers: { Content-Type: "application/json" }, body: json_stringify({ error: auth_result.error }) }
+            return { status: 401, headers: { "Content-Type": "application/json" }, body: json_stringify({ error: auth_result.error }) }
         }
         let target_id = match_user.params["id"]
         let user = users_db[target_id]
         if user == null {
-            return { status: 404, headers: { Content-Type: "application/json" }, body: json_stringify({ error: "User not found" }) }
+            return { status: 404, headers: { "Content-Type": "application/json" }, body: json_stringify({ error: "User not found" }) }
         }
         log_audit("PROFILE_ACCESSED", { requested_id: target_id, caller: auth_result.payload["user"] })
-        return { status: 200, headers: { Content-Type: "application/json" }, body: json_stringify({ id: user.id, username: user.username, email: user.email }) }
+        return { status: 200, headers: { "Content-Type": "application/json" }, body: json_stringify({ id: user.id, username: user.username, email: user.email }) }
     }
-    return { status: 404, headers: { Content-Type: "application/json" }, body: json_stringify({ error: "Route not found", path: path }) }
+    return { status: 404, headers: { "Content-Type": "application/json" }, body: json_stringify({ error: "Route not found", path: path }) }
 }
 
 start_audit_worker()
