@@ -10,12 +10,13 @@
   |____/|_| |_|\__,_|\___| 
 ```
 
-**A programming language. It runs, it does stuff, it leaves you alone.**  
-*Zero ceremony, built-in servers, effortless concurrency. Write code, ship it, go touch grass.*
+**A modern, strict, and ergonomic programming language built in Rust.**  
+*Zero ceremony, built-in servers with TLS, channels, package manager, and standalone binary bundler.*
 
-[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-82%20passing-brightgreen.svg)]()
 [![Rust](https://img.shields.io/badge/built%20with-Rust%202024-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![VS Code](https://img.shields.io/badge/VS%20Code-Extension-blue.svg)](editors/vscode)
 
 </div>
 
@@ -23,172 +24,188 @@
 
 ## ✨ Why Shae?
 
-Most modern languages force you into an extreme:
-* **Python**: Simple and friendly, but slow, burdened by the GIL, and plagued by runtime environment fragmentation.
-* **JavaScript**: Ubiquitous, but littered with historical footguns, weird type coercions (`[] + {}`), and endless configuration hell.
-* **Rust**: Unmatched performance and safety, but an argumentative borrow checker that turns writing a simple prototype into an intellectual marathon.
-* **Go**: Clean and concurrent, but repetitive boilerplate (`if err != nil`) that drains the joy of building.
+Shae is designed to hit the sweet spot between safety, ergonomics, and raw utility:
 
-**Shae is built to be the sweet spot**:
-- 🚫 **No Boilerplate Cliches**: No semicolons. No parentheses around `if` or `while`.
-- 🌐 **Built-in Web Server**: Spin up a full HTTP server in 5 lines with zero external libraries.
-- ⚡ **True Concurrency**: Fire-and-forget OS background threads instantly using the `spawn()` builtin.
-- 🛡️ **Graceful Error Handling**: `try/catch` blocks and beautiful stack traces prevent complete server crashes.
-- 🧬 **Data Pipelines**: The Elixir-style pipe operator (`|>`) effortlessly chains functions.
-- 🧱 **Structs & Enums**: First-class support for strict data shapes and Rust-style `match` pattern matching.
-- 💬 **Friendly Human Compiler**: The `shae check` static linter provides clear, witty error messages that guide you rather than lecture you.
+- 🚫 **Zero Ceremony & No Semicolons**: Clean, expressive syntax without unnecessary punctuation or parentheses around conditions.
+- ⚡ **True Concurrency & Channels**: Asynchronous thread spawning (`spawn()`) and message-passing channels (`channel(capacity)`).
+- 🔒 **Built-in HTTP & TLS Engine**: Spin up production HTTP or HTTPS servers in seconds with `serve()` and `serve_tls()`, featuring keep-alive connection pooling and route matching.
+- 🛡️ **Predictable Primitives**: Distinct integers (`i64`) and floats (`f64`), radix literals (`0x`, `0b`, `0o`), and full bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`).
+- 🧩 **Pattern Matching & Destructuring**: Match arm guards, range patterns (`1..=10`), and array/struct destructuring with rest patterns.
+- 📦 **Native Package Manager (`shae pkg`)**: Manifest-driven dependencies (`shae.toml`), deterministic lockfiles (`shae.lock`), and Git dependency resolution.
+- 🚀 **Single-Binary App Bundler (`shae bundle`)**: Package your entire Shae codebase and all its dependencies into a self-extracting, standalone executable.
+- 🛠️ **First-Class Developer Tooling**:
+  - `shae fmt`: Automated AST code formatting.
+  - `shae check`: Static analysis and linter.
+  - `shae lsp`: Full Language Server Protocol daemon with live diagnostics, autocomplete, and hover documentation.
+  - **VS Code Extension**: Official syntax highlighting and LSP integration.
 
 ---
 
-## 🚀 Quick Start in 60 Seconds
+## 🚀 Installation & Quick Start
 
-### 1. Installation
-Build and install `shae` globally from source using Cargo:
+### 1. Build and Install from Source
+Ensure you have Rust and Cargo installed:
 ```bash
 git clone https://github.com/spdedsec/shae.git
 cd shae
 cargo install --path .
 ```
 
-### 2. A "Max Level" API Server
+Verify your installation:
+```bash
+shae --version
+```
+
+### 2. Hello World in 10 Seconds
+Create `hello.shae`:
 ```shae
-struct User { id, name }
-enum Response { Success(data), Error(msg) }
+let name = "Developer"
+println("Hello, ${name}! Welcome to Shae.")
+```
+Run it:
+```bash
+shae run hello.shae
+```
 
-let db = "users.json"
+---
 
-fn background_monitor() {
-    print("System OS User: " + env("USER"))
-    print("Disk Space: " + exec("df -h /").trim())
-}
-spawn(background_monitor) // Runs asynchronously on a background thread!
+## 🌟 Language Tour
 
-fn api_handler(request) {
-    let start = time()
-    
-    let res = match request.path {
-        "/users" => {
-            let data = try { read(db) } catch (e) { "[]" }
-            Response.Success(json_parse(data) |> map(fn(u) { return u.name }))
-        },
-        _ => Response.Error("Not Found")
+### 1. HTTP & HTTPS Servers with Route Matching
+```shae
+use { sha256 } from "std:crypto"
+
+fn handle(req) {
+    let matched = route_match("/api/users/:id", req.path)
+    if matched != null {
+        let user_id = matched.params["id"]
+        return {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+            body: json_stringify({ id: user_id, hash: sha256(user_id) })
+        }
     }
-    
-    return match res {
-        Response.Success(data) => { "status": "ok", "data": data },
-        Response.Error(msg) => { "status": "error", "message": msg }
-    }
+    return { status: 404, body: "Not Found" }
 }
 
 print("Listening on http://localhost:8080...")
-serve(8080, api_handler)
+serve(8080, handle)
 ```
 
-Run it:
-```bash
-shae run server.shae
-```
-
----
-
-## 🛠️ Language Features & Cheat Sheet
-
-### The Data Pipeline (`|>`)
-Pass data cleanly through transformations:
+For TLS / HTTPS with automatic certificate loading:
 ```shae
-let users = [
-    { name: "Alice", active: true },
-    { name: "Bob", active: false }
-]
-
-let active_names = users 
-    |> filter(fn(u) { return u.active }) 
-    |> map(fn(u) { return u.name })
-
-print(active_names) // ["Alice"]
+serve_tls({
+    port: 8443,
+    cert: "cert.pem",
+    key: "key.pem"
+}, handle)
 ```
 
-### Structs, Enums, and Pattern Matching
+### 2. Thread-Safe Concurrency Channels
 ```shae
-struct Point { x, y }
-let p = Point { x: 10, y: 20 }
+let ch = channel(5)
 
-enum Option { Some(value), None }
-let opt = Option.Some(42)
+spawn(fn() {
+    for i in 1..=5 {
+        ch.send("Message #" + str(i))
+    }
+    ch.close()
+})
 
-match opt {
-    Option.Some(val) => print("Got: " + str(val)),
-    Option.None => print("Got nothing!")
+let msg = ch.recv()
+while msg != null {
+    println("Received:", msg)
+    msg = ch.recv()
 }
 ```
 
-### Concurrency and Standard Library
+### 3. Expanded Standard Library
 ```shae
-// Execute shell commands directly
-let files = exec("ls -la")
+// Cryptography
+use { sha256, hmac_sha256, uuid_v4, random_bytes } from "std:crypto"
+let token_id = uuid_v4()
+let secret = random_bytes(32)
+let signature = hmac_sha256("my_secret_key", "payload_data")
 
-// Fetch from APIs seamlessly
-let github = fetch("https://api.github.com/users/spdedsec")
+// Encoding & Codecs
+use { b64_encode, b64_decode, url_encode } from "std:codec"
+let encoded = b64_encode("Hello World")
+let url = "https://example.com/search?q=" + url_encode("shae lang")
 
-// File I/O
-write("log.txt", "Server started at " + str(time()))
-
-// True Multithreading
-fn heavy_task() { /* ... */ }
-spawn(heavy_task) 
+// Regular Expressions
+use { is_match, captures, replace_all } from "std:regex"
+let valid_email = is_match(r"^[\w\.-]+@[\w\.-]+\.\w+$", "user@shae.dev")
+let cleaned = replace_all(r"\s+", "multiple   spaces", " ")
 ```
 
-### Try/Catch
+### 4. Pattern Matching & Destructuring
 ```shae
-try {
-    let raw = read("missing_file.txt")
-} catch (err) {
-    print("Oops! Failed to load file: " + err)
+// Destructuring
+let [first, second, ..rest] = [10, 20, 30, 40, 50]
+let { name, role, ..extra } = { name: "Alice", role: "Admin", active: true }
+
+// Guards and Ranges in Match
+let score = 88
+let grade = match score {
+    90..=100 => "A",
+    80..90 if score >= 85 => "B+",
+    80..90 => "B",
+    _ => "Keep practicing!"
 }
 ```
 
 ---
 
-## 💡 CLI Commands
+## 🛠️ Developer Tooling CLI
 
-```bash
-# Execute a script
-shae run main.shae
-shae main.shae
+Shae ships with an all-in-one developer toolchain:
 
-# Static Linter (Detect syntax errors, typos, & undefined variables before running)
-shae check main.shae
-
-# Run Shae Test Suites (*_test.shae)
-shae test
-shae test tests/shae
-
-# Start Interactive REPL
-shae
-shae repl
-
-# Create a new project
-shae new my_app
-
-# Programming jokes & tips
-shae --joke
-shae --tip
-```
+| Command | Description |
+|---|---|
+| `shae run <file.shae>` | Run a script with the Shae interpreter / VM |
+| `shae fmt <file.shae>` | Format source files canonically (4-space indentation) |
+| `shae fmt --check <file>` | Verify formatting without modifying files |
+| `shae check <file.shae>` | Static linter checking for unused variables, dead code, and shadowing |
+| `shae pkg init [name]` | Initialize a new package with `shae.toml` manifest |
+| `shae pkg add <dep>` | Add a dependency (path or Git repository) |
+| `shae pkg install` | Resolve and install dependencies into `.shae/packages` |
+| `shae bundle <file> -o <bin>` | Bundle an entire app and its dependencies into a standalone executable |
+| `shae lsp` | Run the Language Server Protocol daemon for editor integration |
+| `shae test` | Run internal Shae test suites |
+| `shae repl` | Start interactive REPL |
 
 ---
 
-## 🧪 Testing
+## 🎨 VS Code Extension
 
+Shae provides an official VS Code extension located at [`editors/vscode`](editors/vscode):
+- **TextMate Syntax Highlighting**: Full grammar for raw strings, radix numbers, and keywords.
+- **Language Server Protocol Integration**: Real-time compiler diagnostics, completions, and formatting powered by `shae lsp`.
+- **Install**:
+  ```bash
+  code --install-extension editors/vscode/shae-vscode-0.1.0.vsix
+  ```
+
+---
+
+## 📦 Single-Binary Bundler
+
+Compile any Shae project into a zero-dependency standalone binary for production:
+```bash
+shae bundle src/main.shae -o my_service
+./my_service
+```
+The output executable embeds all imported dependencies and executes directly without requiring the Shae runtime or source files on the target machine.
+
+---
+
+## 🧪 Running Tests
+
+Shae contains 82 comprehensive integration tests:
 ```bash
 cargo test
+cargo check --tests
 ```
-Runs comprehensive unit and integration test suites covering the VM, evaluator, lexer rules, Pratt parser precedence, closures, array mutations, pipelines, stack traces, and native web server handling.
-
----
-
-## 📜 Specification
-
-Read the full language specification and design constitution in [LANGUAGE.md](LANGUAGE.md).
 
 ---
 

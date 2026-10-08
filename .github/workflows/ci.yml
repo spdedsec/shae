@@ -9,18 +9,43 @@ on:
 
 jobs:
   test:
-    name: Test Suite
-    runs-on: ubuntu-latest
+    name: Rust Test Suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+      - name: Cargo Check Tests & Lints
+        run: cargo check --tests --verbose
       - name: Run Cargo Tests
         run: cargo test --verbose
 
+  vscode-extension:
+    name: VS Code Extension Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Extension Dependencies
+        working-directory: editors/vscode
+        run: npm ci
+      - name: Compile Extension
+        working-directory: editors/vscode
+        run: npm run compile
+      - name: Package VSIX
+        working-directory: editors/vscode
+        run: npx --yes @vscode/vsce package --no-dependencies
+
   release:
-    name: Build Release Binaries
-    needs: test
+    name: Build Release Assets (${{ matrix.target }})
+    needs: [test, vscode-extension]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
     strategy:
@@ -30,6 +55,14 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact_name: shae
             asset_name: shae-${{ github.ref_name }}-linux-x86_64.tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: shae
+            asset_name: shae-${{ github.ref_name }}-macos-arm64.tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: shae.exe
+            asset_name: shae-${{ github.ref_name }}-windows-x86_64.zip
     steps:
       - uses: actions/checkout@v4
       - name: Set up Rust
@@ -38,9 +71,14 @@ jobs:
           targets: ${{ matrix.target }}
       - name: Build Binary
         run: cargo build --release --target ${{ matrix.target }}
-      - name: Package Release
+      - name: Package Release (Unix)
+        if: matrix.os != 'windows-latest'
         run: |
-          tar -czvf ${{ matrix.asset_name }} -C target/${{ matrix.target }}/release shae
+          tar -czvf ${{ matrix.asset_name }} -C target/${{ matrix.target }}/release ${{ matrix.artifact_name }}
+      - name: Package Release (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          Compress-Archive -Path target/${{ matrix.target }}/release/${{ matrix.artifact_name }} -DestinationPath ${{ matrix.asset_name }}
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
