@@ -1,0 +1,13 @@
+use { is_match } from "std:regex"
+
+struct User { id, username, email, token_hash }
+
+fn validate_registration(username, email) {
+    if not is_match(r"^[a-zA-Z0-9_]{3,20}$", username) {
+        return { valid: false, error: "Username must be 3-20 alphanumeric characters or underscores" }
+    }
+    if not is_match(r"^[\w\.-]+@[\w\.-]+\.\w+$", email) {
+        return { valid: false, error: "Invalid email address format" }
+    }
+    return { valid: true, error: null }
+}

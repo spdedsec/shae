@@ -1,0 +1,30 @@
+use { User, validate_registration } from "./src/models.shae"
+use { create_auth_token, verify_auth_token, hash_password } from "./src/auth.shae"
+use { start_audit_worker, log_audit } from "./src/worker.shae"
+
+// 1. Test Regex Validation
+let bad_user = validate_registration("a", "invalid-email")
+assert_eq(bad_user.valid, false)
+
+let good_user = validate_registration("alice_dev", "alice@shae.dev")
+assert_eq(good_user.valid, true)
+
+// 2. Test Cryptographic Hashing and HMAC Token Verification
+let pw_hash = hash_password("SuperSecret123!")
+assert(len(pw_hash) == 64)
+
+let token = create_auth_token("42", "alice_dev")
+let verified = verify_auth_token(token)
+assert_eq(verified.valid, true)
+assert_eq(verified.payload["id"], "42")
+assert_eq(verified.payload["user"], "alice_dev")
+
+let forged_token = token + "tampered"
+let bad_verify = verify_auth_token(forged_token)
+assert_eq(bad_verify.valid, false)
+
+// 3. Test Channel-based Asynchronous Audit Logging
+start_audit_worker()
+log_audit("TEST_INIT", { test: "microservice_verification", status: "passed" })
+
+print("✅ All showcase microservice business logic, crypto, regex, and channel worker tests passed!")

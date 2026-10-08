@@ -405,7 +405,7 @@ impl Formatter {
             }
             Expr::Unary { op, expr, .. } => {
                 let symbol = match op {
-                    UnaryOp::Not => "!",
+                    UnaryOp::Not => "not ",
                     UnaryOp::Neg => "-",
                     UnaryOp::BitNot => "~",
                 };

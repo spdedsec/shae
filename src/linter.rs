@@ -36,8 +36,8 @@ impl Linter {
             "print", "dbg", "len", "type", "str", "num", "range",
             "push", "pop", "map", "filter", "reduce", "sum", "sort",
             "keys", "values", "get", "json_parse", "json_stringify",
-            "serve", "read", "write", "fetch", "time", "env", "exec",
-            "spawn", "join", "assert", "assert_eq",
+            "serve", "serve_tls", "route_match", "read", "write", "fetch", "time", "env", "exec",
+            "spawn", "join", "channel", "assert", "assert_eq",
         ];
         for b in list {
             builtins.insert(b.to_string());
@@ -423,7 +423,21 @@ impl Linter {
                 self.lint_expr(target);
                 self.lint_expr(index);
             }
-            Expr::StructInit { fields, .. } => {
+            Expr::StructInit { name, fields, span } => {
+                if !self.is_declared(name) {
+                    let candidates = self.all_accessible_names();
+                    let hint = crate::suggest::closest(name, &candidates)
+                        .map(|c| format!("Did you mean '{}'?", c));
+
+                    self.diagnostics.push(Diagnostic {
+                        severity: DiagnosticSeverity::Error,
+                        message: format!("Undefined struct '{}'", name),
+                        hint,
+                        span: *span,
+                    });
+                } else {
+                    self.mark_used(name);
+                }
                 for (_, f_expr) in fields {
                     self.lint_expr(f_expr);
                 }

@@ -1,0 +1,19 @@
+use { now_ms } from "std:time"
+let audit_queue = channel(50)
+
+fn start_audit_worker() {
+    spawn(fn() {
+        let event = audit_queue.recv()
+        while event != null {
+            let ts = str(event["timestamp"])
+            let typ = str(event["type"])
+            let det = json_stringify(event["details"])
+            print("[AUDIT " + ts + "][" + typ + "] " + det)
+            event = audit_queue.recv()
+        }
+    })
+}
+
+fn log_audit(event_type, details) {
+    audit_queue.send({ type: event_type, details: details, timestamp: now_ms() })
+}
