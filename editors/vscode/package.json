@@ -1,0 +1,95 @@
+{
+  "name": "shae-vscode",
+  "displayName": "Shae",
+  "description": "Official VS Code extension for the Shae programming language, featuring syntax highlighting and language server protocol (LSP) support.",
+  "version": "0.1.0",
+  "publisher": "spdedsec",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/spdedsec/shae"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "shae",
+    "lsp",
+    "compiler",
+    "language-server"
+  ],
+  "activationEvents": [
+    "onLanguage:shae"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "shae",
+        "aliases": [
+          "Shae",
+          "shae"
+        ],
+        "extensions": [
+          ".shae"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "shae",
+        "scopeName": "source.shae",
+        "path": "./syntaxes/shae.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "shae.restartServer",
+        "title": "Shae: Restart Language Server",
+        "category": "Shae"
+      },
+      {
+        "command": "shae.runFile",
+        "title": "Shae: Run Active File",
+        "category": "Shae"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Shae",
+      "properties": {
+        "shae.lsp.path": {
+          "type": "string",
+          "default": "shae",
+          "description": "Path to the Shae binary executable (default: 'shae'). If relative or not in PATH, common workspace target paths will be searched."
+        },
+        "shae.lsp.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the Shae language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.3.3"
+  }
+}

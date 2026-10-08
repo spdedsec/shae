@@ -1,0 +1,219 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Shae",
+  "scopeName": "source.shae",
+  "fileTypes": ["shae"],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#functions"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#identifiers"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.shae",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.shae",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.raw.shae",
+          "begin": "r\"",
+          "end": "\"",
+          "patterns": []
+        },
+        {
+          "name": "string.quoted.double.shae",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.shae",
+              "match": "\\\\(x[0-9a-fA-F]{2}|u\\{[0-9a-fA-F]+\\}|[nrt\\\\\"'0])"
+            },
+            {
+              "name": "meta.interpolation.shae",
+              "begin": "\\$\\{",
+              "end": "\\}",
+              "beginCaptures": {
+                "0": { "name": "punctuation.definition.template-expression.begin.shae" }
+              },
+              "endCaptures": {
+                "0": { "name": "punctuation.definition.template-expression.end.shae" }
+              },
+              "patterns": [
+                {
+                  "include": "$self"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.shae",
+          "match": "\\b0[xX][0-9a-fA-F_]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.shae",
+          "match": "\\b0[bB][01_]+\\b"
+        },
+        {
+          "name": "constant.numeric.octal.shae",
+          "match": "\\b0[oO][0-7_]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.shae",
+          "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*([eE][+-]?[0-9_]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.shae",
+          "match": "\\b[0-9][0-9_]*\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.shae",
+          "match": "\\b(if|else|match|while|for|in|break|continue|return|try|catch|throw)\\b"
+        },
+        {
+          "name": "keyword.declaration.shae",
+          "match": "\\b(let|mut|const|fn|struct|enum|pub)\\b"
+        },
+        {
+          "name": "keyword.other.import.shae",
+          "match": "\\b(use|from|as)\\b"
+        },
+        {
+          "name": "keyword.other.concurrency.shae",
+          "match": "\\b(spawn|channel|serve|serve_tls|async|await)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.shae",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.null.shae",
+          "match": "\\b(null|nil)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.pipe.shae",
+          "match": "\\|>"
+        },
+        {
+          "name": "keyword.operator.arrow.shae",
+          "match": "=>|->"
+        },
+        {
+          "name": "keyword.operator.range.shae",
+          "match": "\\.\\.=|\\.\\."
+        },
+        {
+          "name": "keyword.operator.logical.shae",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.comparison.shae",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.bitwise.shae",
+          "match": "<<|>>|&|\\||\\^|~"
+        },
+        {
+          "name": "keyword.operator.arithmetic.shae",
+          "match": "\\+|-|\\*|/|%"
+        },
+        {
+          "name": "keyword.operator.assignment.shae",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.navigation.shae",
+          "match": "\\?\\.|\\?\\?"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "match": "\\bfn\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+          "captures": {
+            "1": { "name": "entity.name.function.shae" }
+          }
+        },
+        {
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+          "captures": {
+            "1": { "name": "entity.name.function.call.shae" }
+          }
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.shae",
+          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+        },
+        {
+          "name": "support.type.primitive.shae",
+          "match": "\\b(int|float|string|bool|array|map)\\b"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.shae",
+          "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}

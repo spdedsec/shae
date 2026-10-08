@@ -1,2 +1,5 @@
 /target/
 *.tar.gz
+*.vsix
+node_modules/
+editors/vscode/out/
