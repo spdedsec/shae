@@ -16,6 +16,7 @@ pub mod fmt;
 pub mod gc;
 pub mod stdlib;
 pub mod channel;
+pub mod pkg;
 
 use thiserror::Error;
 

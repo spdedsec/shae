@@ -76,9 +76,9 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 
 ---
 
-### **Chunk 9: Package Manager & Project System (`shae pkg`)**
-- [ ] Project manifests (`shae.toml`) and lockfiles (`shae.lock`).
-- [ ] `shae add` and `shae install` with Git dependency resolution.
+### **Chunk 9: Package Manager & Project System (`shae pkg`)** *(Completed)*
+- [x] Project manifests (`shae.toml`) and lockfiles (`shae.lock`).
+- [x] `shae add` and `shae install` with Git dependency resolution.
 
 ---
 

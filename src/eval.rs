@@ -140,7 +140,7 @@ impl Evaluator {
             return Ok(mod_val);
         }
 
-        // File-based module: resolve relative to current_file
+        // File-based module: resolve relative to current_file or package dependencies
         let resolved_path = if path_str.starts_with("./") || path_str.starts_with("../") {
             if let Some(cur) = &self.current_file {
                 if let Some(parent) = cur.parent() {
@@ -156,12 +156,18 @@ impl Evaluator {
                 let candidate = parent.join(path_str);
                 if candidate.exists() {
                     candidate
+                } else if let Some(pkg_file) = crate::pkg::resolve_package_file(parent, path_str) {
+                    pkg_file
                 } else {
                     PathBuf::from(path_str)
                 }
+            } else if let Some(pkg_file) = crate::pkg::resolve_package_file(&std::path::PathBuf::from("."), path_str) {
+                pkg_file
             } else {
                 PathBuf::from(path_str)
             }
+        } else if let Some(pkg_file) = crate::pkg::resolve_package_file(&std::path::PathBuf::from("."), path_str) {
+            pkg_file
         } else {
             PathBuf::from(path_str)
         };

@@ -15,11 +15,15 @@ fn show_help() {
     println!("  shae                       Start the interactive REPL");
     println!("  shae repl                  Start the interactive REPL");
     println!("  shae <file.shae>           Run a Shae script");
-    println!("  shae run <file.shae>       Run a Shae script");
+    println!("  shae run [file.shae]       Run a Shae script (or package entrypoint from shae.toml)");
     println!("  shae check <file.shae>     Lint and check syntax/declarations of a Shae script");
     println!("  shae test [path]           Run Shae tests (*_test.shae)");
     println!("  shae fmt <file.shae>       Format a Shae script");
-    println!("  shae new <project_name>    Create a new Shae project");
+    println!("  shae new <project_name>    Create a new Shae project folder");
+    println!("  shae init [name]           Initialize package manifest (shae.toml)");
+    println!("  shae add <dep> <source>    Add dependency (git URL or local path)");
+    println!("  shae install               Install dependencies into .shae/packages and update shae.lock");
+    println!("  shae pkg <cmd>             Package manager subcommands (init, add, install)");
     println!("  shae --joke                Print a programming joke");
     println!("  shae --tip                 Print a Shae tip");
     println!("  shae --help, -h            Show this help message");
@@ -302,12 +306,119 @@ fn main() {
             }
             new_project(&args[2]);
         }
-        "run" => {
+        "init" => {
+            let name = args.get(2).map(|s| s.as_str());
+            match shae::pkg::init_project(Path::new("."), name) {
+                Ok(m) => println!("✨ Initialized package '{}' (v{}) with shae.toml", m.package.name, m.package.version),
+                Err(e) => {
+                    eprintln!("Error initializing package: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
+        "add" => {
+            if args.len() < 4 {
+                eprintln!("Usage: shae add <dep_name> <source> [--branch <b/t/r>]");
+                process::exit(1);
+            }
+            let dep_name = &args[2];
+            let source = &args[3];
+            let mut branch = None;
+            let mut tag = None;
+            let mut rev = None;
+            let mut i = 4;
+            while i < args.len() {
+                if args[i] == "--branch" && i + 1 < args.len() {
+                    branch = Some(args[i + 1].as_str());
+                    i += 2;
+                } else if args[i] == "--tag" && i + 1 < args.len() {
+                    tag = Some(args[i + 1].as_str());
+                    i += 2;
+                } else if args[i] == "--rev" && i + 1 < args.len() {
+                    rev = Some(args[i + 1].as_str());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            match shae::pkg::add_dependency(Path::new("."), dep_name, source, branch, tag, rev) {
+                Ok(_) => println!("✅ Added and resolved dependency '{}'", dep_name),
+                Err(e) => {
+                    eprintln!("Error adding dependency: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
+        "install" => {
+            match shae::pkg::install_dependencies(Path::new(".")) {
+                Ok(lock) => println!("✅ Installed {} package(s). shae.lock up to date.", lock.packages.len()),
+                Err(e) => {
+                    eprintln!("Error installing dependencies: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
+        "pkg" => {
             if args.len() < 3 {
+                println!("Usage: shae pkg <init|add|install>");
+                return;
+            }
+            match args[2].as_str() {
+                "init" => {
+                    let name = args.get(3).map(|s| s.as_str());
+                    match shae::pkg::init_project(Path::new("."), name) {
+                        Ok(m) => println!("✨ Initialized package '{}' (v{}) with shae.toml", m.package.name, m.package.version),
+                        Err(e) => {
+                            eprintln!("Error initializing package: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                "add" => {
+                    if args.len() < 5 {
+                        eprintln!("Usage: shae pkg add <dep_name> <source>");
+                        process::exit(1);
+                    }
+                    let dep_name = &args[3];
+                    let source = &args[4];
+                    match shae::pkg::add_dependency(Path::new("."), dep_name, source, None, None, None) {
+                        Ok(_) => println!("✅ Added and resolved dependency '{}'", dep_name),
+                        Err(e) => {
+                            eprintln!("Error adding dependency: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                "install" => {
+                    match shae::pkg::install_dependencies(Path::new(".")) {
+                        Ok(lock) => println!("✅ Installed {} package(s). shae.lock up to date.", lock.packages.len()),
+                        Err(e) => {
+                            eprintln!("Error installing dependencies: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                other => {
+                    eprintln!("Unknown pkg command: {}", other);
+                    process::exit(1);
+                }
+            }
+        }
+        "run" => {
+            if args.len() >= 3 {
+                run_file(&args[2]);
+            } else if let Ok(manifest) = shae::pkg::PackageManifest::load_from_dir(Path::new(".")) {
+                let entry = Path::new(".").join(&manifest.package.entry);
+                if entry.exists() {
+                    run_file(&entry.to_string_lossy());
+                } else {
+                    eprintln!("Error: Package entry '{}' not found.", entry.display());
+                    process::exit(1);
+                }
+            } else {
                 eprintln!("Usage: shae run <file.shae>");
                 process::exit(1);
             }
-            run_file(&args[2]);
         }
         "check" => {
             if args.len() < 3 {
