@@ -52,6 +52,12 @@ pub fn register(env: &mut Environment) {
         ("exec", builtin_exec),
         ("spawn", builtin_spawn),
         ("join", builtin_join),
+        ("channel", builtin_channel),
+        ("send", builtin_send),
+        ("recv", builtin_recv),
+        ("try_recv", builtin_try_recv),
+        ("tryRecv", builtin_try_recv),
+        ("close", builtin_close),
         ("assert", builtin_assert),
         ("assert_eq", builtin_assert_eq),
     ];
@@ -672,6 +678,80 @@ fn builtin_join(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<V
             }
         }
         other => Err(RuntimeError::new(format!("join() expects a task, got {}", other.type_name())).at(span)),
+    }
+}
+
+fn builtin_channel(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    let capacity = match args.len() {
+        0 => None,
+        1 => match args[0] {
+            Value::Int(n) => {
+                if n < 0 {
+                    return Err(RuntimeError::new("channel capacity must be non-negative".into()).at(span));
+                }
+                Some(n as usize)
+            }
+            Value::Float(n) | Value::Number(n) => {
+                if n < 0.0 {
+                    return Err(RuntimeError::new("channel capacity must be non-negative".into()).at(span));
+                }
+                Some(n as usize)
+            }
+            Value::Null => None,
+            _ => return Err(RuntimeError::new("channel expects integer capacity".into()).at(span)),
+        },
+        _ => return Err(RuntimeError::new("channel expects 0 or 1 argument".into()).at(span)),
+    };
+    Ok(Value::Channel(crate::channel::Channel::new(capacity)))
+}
+
+fn builtin_send(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("send", 2, &args, span)?;
+    if let Value::Channel(ch) = &args[0] {
+        ch.send(args[1].clone(), span)?;
+        Ok(Value::Null)
+    } else {
+        Err(RuntimeError::new("send() expects a channel as first argument".into()).at(span))
+    }
+}
+
+fn builtin_recv(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(RuntimeError::new("recv() expects 1 or 2 arguments: recv(channel, [timeout_ms])".into()).at(span));
+    }
+    if let Value::Channel(ch) = &args[0] {
+        let timeout = if args.len() == 2 {
+            match args[1] {
+                Value::Int(ms) if ms >= 0 => Some(ms as u64),
+                Value::Float(ms) | Value::Number(ms) if ms >= 0.0 => Some(ms as u64),
+                Value::Null => None,
+                _ => return Err(RuntimeError::new("recv() timeout must be non-negative integer".into()).at(span)),
+            }
+        } else {
+            None
+        };
+        ch.recv(timeout, span)
+    } else {
+        Err(RuntimeError::new("recv() expects a channel as first argument".into()).at(span))
+    }
+}
+
+fn builtin_try_recv(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("try_recv", 1, &args, span)?;
+    if let Value::Channel(ch) = &args[0] {
+        ch.try_recv(span)
+    } else {
+        Err(RuntimeError::new("try_recv() expects a channel as first argument".into()).at(span))
+    }
+}
+
+fn builtin_close(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("close", 1, &args, span)?;
+    if let Value::Channel(ch) = &args[0] {
+        ch.close();
+        Ok(Value::Null)
+    } else {
+        Err(RuntimeError::new("close() expects a channel as first argument".into()).at(span))
     }
 }
 

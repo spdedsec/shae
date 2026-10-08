@@ -15,6 +15,7 @@ pub mod linter;
 pub mod fmt;
 pub mod gc;
 pub mod stdlib;
+pub mod channel;
 
 use thiserror::Error;
 

@@ -112,6 +112,7 @@ Builtin {
         values: Vec<Value>,
     },
     Task(Arc<Mutex<Option<std::thread::JoinHandle<Result<Value, RuntimeError>>>>>),
+    Channel(Arc<crate::channel::Channel>),
 }
 
 impl Value {
@@ -137,6 +138,7 @@ Value::Builtin { .. } => "builtin_function",
             Value::EnumConstructor { .. } => "enum_constructor",
             Value::EnumInstance { .. } => "enum_instance",
             Value::Task(_) => "task",
+            Value::Channel(_) => "channel",
         }
     }
 
@@ -154,7 +156,7 @@ Value::Builtin { .. } => "builtin_function",
             Value::GcArray(_) | Value::GcMap(_) | Value::GcClosure(_) | Value::GcString(_) | Value::GcInstance(_) => true,
 Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. } => true,
             Value::StructDef { .. } | Value::StructInstance { .. } => true,
-            Value::EnumDef { .. } | Value::EnumConstructor { .. } | Value::EnumInstance { .. } | Value::Task(_) => true,
+            Value::EnumDef { .. } | Value::EnumConstructor { .. } | Value::EnumInstance { .. } | Value::Task(_) | Value::Channel(_) => true,
         }
     }
 
@@ -239,6 +241,13 @@ Value::Builtin { name, .. } => format!("<builtin {}>", name),
             Value::GcString(r) => format!("<gc_string:{}>", r),
             Value::GcInstance(r) => format!("<gc_instance:{}>", r),
             Value::Task(_) => "<task>".to_string(),
+            Value::Channel(ch) => {
+                if let Some(c) = ch.capacity() {
+                    format!("<channel:{}>", c)
+                } else {
+                    "<channel>".to_string()
+                }
+            }
         }
     }
 
@@ -311,6 +320,7 @@ Value::Builtin { name, .. } => JsonValue::String(format!("<builtin {}>", name)),
             Value::GcString(r) => JsonValue::String(format!("<gc_string:{}>", r)),
             Value::GcInstance(r) => JsonValue::String(format!("<gc_instance:{}>", r)),
             Value::Task(_) => JsonValue::String("<task>".to_string()),
+            Value::Channel(_) => JsonValue::String("<channel>".to_string()),
         }
     }
 
@@ -362,6 +372,7 @@ impl PartialEq for Value {
                 e1 == e2 && v1 == v2 && vals1 == vals2
             }
             (Value::Task(a), Value::Task(b)) => Arc::ptr_eq(a, b),
+            (Value::Channel(a), Value::Channel(b)) => Arc::ptr_eq(a, b),
             (Value::CompiledFunction(a), Value::CompiledFunction(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::Closure(a), Value::Closure(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::GcArray(a), Value::GcArray(b)) => a == b,

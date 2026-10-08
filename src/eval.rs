@@ -1116,6 +1116,27 @@ Expr::StructInit { name, fields, span } => {
                             }
                         }
                     }
+                    Value::Channel(ch) => {
+                        if property == "send"
+                            || property == "recv"
+                            || property == "try_recv"
+                            || property == "tryRecv"
+                            || property == "close"
+                            || property == "len"
+                            || property == "capacity"
+                        {
+                            Ok(Some(Value::BoundMethod {
+                                object: Box::new(Value::Channel(ch.clone())),
+                                method: property.clone(),
+                            }))
+                        } else {
+                            if *safe || lenient {
+                                Ok(None)
+                            } else {
+                                Err(RuntimeError::new(format!("Channel has no property '{}'", property)).at(*span))
+                            }
+                        }
+                    }
                     other => {
                         if *safe || lenient {
                             Ok(None)
@@ -1738,6 +1759,66 @@ Expr::StructInit { name, fields, span } => {
                                 Ok(Err(e)) => Err(e),
                                 Err(_) => Err(RuntimeError::new("Spawned task panicked".into()).at(span)),
                             }
+                        } else {
+                            Ok(Value::Null)
+                        }
+                    }
+                    (Value::Channel(ch), "send") => {
+                        if args.len() != 1 {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new(
+                                "ch.send(val) expects 1 argument".into(),
+                            )
+                            .at(span));
+                        }
+                        ch.send(args[0].clone(), span)?;
+                        Ok(Value::Null)
+                    }
+                    (Value::Channel(ch), "recv") => {
+                        let timeout = if args.is_empty() {
+                            None
+                        } else if args.len() == 1 {
+                            match args[0] {
+                                Value::Int(ms) if ms >= 0 => Some(ms as u64),
+                                Value::Float(ms) | Value::Number(ms) if ms >= 0.0 => Some(ms as u64),
+                                Value::Null => None,
+                                _ => {
+                                    self.depth -= 1;
+                                    return Err(RuntimeError::new(
+                                        "recv() timeout must be non-negative integer".into(),
+                                    )
+                                    .at(span));
+                                }
+                            }
+                        } else {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new(
+                                "ch.recv() expects 0 or 1 argument".into(),
+                            )
+                            .at(span));
+                        };
+                        ch.recv(timeout, span)
+                    }
+                    (Value::Channel(ch), "try_recv" | "tryRecv") => {
+                        if !args.is_empty() {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new(
+                                "ch.tryRecv() expects 0 arguments".into(),
+                            )
+                            .at(span));
+                        }
+                        ch.try_recv(span)
+                    }
+                    (Value::Channel(ch), "close") => {
+                        ch.close();
+                        Ok(Value::Null)
+                    }
+                    (Value::Channel(ch), "len") => {
+                        Ok(Value::Int(ch.len() as i64))
+                    }
+                    (Value::Channel(ch), "capacity") => {
+                        if let Some(c) = ch.capacity() {
+                            Ok(Value::Int(c as i64))
                         } else {
                             Ok(Value::Null)
                         }
