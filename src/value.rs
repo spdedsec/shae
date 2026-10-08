@@ -1,4 +1,5 @@
 use crate::ast::Stmt;
+use crate::chunk::Chunk;
 use crate::env::Environment;
 use crate::eval::{Evaluator, RuntimeError};
 use indexmap::IndexMap;
@@ -11,6 +12,13 @@ use std::sync::Arc;
 pub type BuiltinFn =
     fn(&mut Evaluator, Vec<Value>, crate::ast::Span) -> Result<Value, RuntimeError>;
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompiledFunction {
+    pub arity: usize,
+    pub chunk: Chunk,
+    pub name: Option<String>,
+}
+
 #[derive(Clone)]
 pub enum Value {
     Null,
@@ -21,6 +29,7 @@ pub enum Value {
     String(String),
     Array(Arc<RwLock<Vec<Value>>>),
     Map(Arc<RwLock<IndexMap<String, Value>>>),
+    CompiledFunction(Arc<CompiledFunction>),
     Function {
         name: Option<String>,
         params: Arc<Vec<String>>,
@@ -71,6 +80,7 @@ impl Value {
             Value::String(_) => "string",
             Value::Array(_) => "array",
             Value::Map(_) => "map",
+            Value::CompiledFunction(_) => "function",
             Value::Function { .. } => "function",
 Value::Builtin { .. } => "builtin_function",
             Value::BoundMethod { .. } => "bound_method",
@@ -92,6 +102,7 @@ Value::Builtin { .. } => "builtin_function",
             Value::String(s) => !s.is_empty(),
             Value::Array(a) => !a.read().unwrap().is_empty(),
             Value::Map(m) => !m.read().unwrap().is_empty(),
+            Value::CompiledFunction(_) => true,
 Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. } => true,
             Value::StructDef { .. } | Value::StructInstance { .. } => true,
             Value::EnumDef { .. } | Value::EnumConstructor { .. } | Value::EnumInstance { .. } | Value::Task(_) => true,
@@ -122,6 +133,13 @@ Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. } => tr
                     .map(|(k, v)| format!("{}: {}", k, v.to_repr()))
                     .collect();
                 format!("{{{}}}", entries.join(", "))
+            }
+            Value::CompiledFunction(f) => {
+                if let Some(n) = &f.name {
+                    format!("<fn {}>", n)
+                } else {
+                    "<fn anonymous>".to_string()
+                }
             }
             Value::Function { name, .. } => {
                 if let Some(n) = name {
@@ -195,6 +213,9 @@ Value::Builtin { name, .. } => format!("<builtin {}>", name),
                     map.insert(k.clone(), v.to_json());
                 }
                 JsonValue::Object(map)
+            }
+            Value::CompiledFunction(f) => {
+                JsonValue::String(format!("<fn {}>", f.name.as_deref().unwrap_or("anon")))
             }
             Value::Function { name, .. } => {
                 JsonValue::String(format!("<fn {}>", name.as_deref().unwrap_or("anon")))
@@ -272,6 +293,7 @@ impl PartialEq for Value {
                 e1 == e2 && v1 == v2 && vals1 == vals2
             }
             (Value::Task(a), Value::Task(b)) => Arc::ptr_eq(a, b),
+            (Value::CompiledFunction(a), Value::CompiledFunction(b)) => Arc::ptr_eq(a, b) || a == b,
             _ => false,
         }
     }

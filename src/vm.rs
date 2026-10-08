@@ -1,12 +1,18 @@
 use crate::chunk::Chunk;
 use crate::opcode::OpCode;
-use crate::value::{resolve_index, resolve_int_index, IndexError, Value};
+use crate::value::{resolve_index, resolve_int_index, CompiledFunction, IndexError, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-pub struct VM {
-    pub chunk: Chunk,
+#[derive(Debug, Clone)]
+pub struct CallFrame {
+    pub function: Arc<CompiledFunction>,
     pub ip: usize,
+    pub slots_offset: usize,
+}
+
+pub struct VM {
+    pub frames: Vec<CallFrame>,
     pub stack: Vec<Value>,
     pub globals: HashMap<String, Value>,
 }
@@ -20,31 +26,61 @@ pub enum InterpretResult {
 
 impl VM {
     pub fn new() -> Self {
+        let mut globals = HashMap::new();
+        let mut dummy_env = crate::env::Environment::new();
+        crate::builtins::register(&mut dummy_env);
+        for (k, v) in dummy_env.export_map() {
+            globals.insert(k, v);
+        }
         VM {
-            chunk: Chunk::new(),
-            ip: 0,
+            frames: Vec::with_capacity(64),
             stack: Vec::with_capacity(256),
-            globals: HashMap::new(),
+            globals,
         }
     }
 
     pub fn interpret(&mut self, chunk: Chunk) -> InterpretResult {
-        self.chunk = chunk;
-        self.ip = 0;
+        let top_fn = Arc::new(CompiledFunction {
+            arity: 0,
+            chunk,
+            name: None,
+        });
+        self.frames.clear();
+        self.frames.push(CallFrame {
+            function: top_fn,
+            ip: 0,
+            slots_offset: 0,
+        });
         self.run()
     }
 
     fn run(&mut self) -> InterpretResult {
         loop {
-            if self.ip >= self.chunk.code.len() {
+            if self.frames.is_empty() {
                 return InterpretResult::Ok(Value::Null);
+            }
+            if self.frames.last().unwrap().ip >= self.frames.last().unwrap().function.chunk.code.len() {
+                let frame = self.frames.pop().unwrap();
+                if self.frames.is_empty() {
+                    let val = self.stack.pop().unwrap_or(Value::Null);
+                    return InterpretResult::Ok(val);
+                }
+                let val = self.stack.pop().unwrap_or(Value::Null);
+                self.stack.truncate(frame.slots_offset);
+                self.stack.push(val);
+                continue;
             }
 
             let instruction: OpCode = self.read_byte().into();
             match instruction {
                 OpCode::Return => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
-                    return InterpretResult::Ok(val);
+                    let frame = self.frames.pop().unwrap();
+                    if self.frames.is_empty() {
+                        return InterpretResult::Ok(val);
+                    }
+                    self.stack.truncate(frame.slots_offset);
+                    self.stack.push(val);
                 }
                 OpCode::Constant => {
                     let constant = self.read_constant();
@@ -63,25 +99,27 @@ impl VM {
                     self.stack.pop();
                 }
                 OpCode::GetLocal => {
-                    let slot = self.read_byte() as usize;
+                    let slot_idx = self.read_byte() as usize;
+                    let slot = self.frames.last().unwrap().slots_offset + slot_idx;
                     if slot < self.stack.len() {
                         self.stack.push(self.stack[slot].clone());
                     } else {
                         return InterpretResult::RuntimeError(format!(
                             "Stack underflow on local slot {}",
-                            slot
+                            slot_idx
                         ));
                     }
                 }
                 OpCode::SetLocal => {
-                    let slot = self.read_byte() as usize;
+                    let slot_idx = self.read_byte() as usize;
+                    let slot = self.frames.last().unwrap().slots_offset + slot_idx;
                     if let Some(val) = self.stack.last().cloned() {
                         if slot < self.stack.len() {
                             self.stack[slot] = val;
                         } else {
                             return InterpretResult::RuntimeError(format!(
                                 "Invalid local slot {} for assignment",
-                                slot
+                                slot_idx
                             ));
                         }
                     } else {
@@ -394,18 +432,18 @@ impl VM {
                 }
                 OpCode::Jump => {
                     let offset = self.read_short();
-                    self.ip += offset as usize;
+                    self.frames.last_mut().unwrap().ip += offset as usize;
                 }
                 OpCode::JumpIfFalse => {
                     let offset = self.read_short();
                     let condition = self.stack.last().map(|v| v.is_truthy()).unwrap_or(false);
                     if !condition {
-                        self.ip += offset as usize;
+                        self.frames.last_mut().unwrap().ip += offset as usize;
                     }
                 }
                 OpCode::Loop => {
                     let offset = self.read_short();
-                    self.ip -= offset as usize;
+                    self.frames.last_mut().unwrap().ip -= offset as usize;
                 }
                 OpCode::BuildList => {
                     let count = self.read_byte() as usize;
@@ -568,8 +606,10 @@ impl VM {
                     }
                 }
                 OpCode::ForIter => {
-                    let seq_slot = self.read_byte() as usize;
+                    let seq_local = self.read_byte() as usize;
                     let offset = self.read_short();
+                    let slots_offset = self.frames.last().unwrap().slots_offset;
+                    let seq_slot = slots_offset + seq_local;
                     let iter_slot = seq_slot + 1;
                     let (next_val, is_done) = {
                         let seq = match self.stack.get(seq_slot) {
@@ -577,7 +617,7 @@ impl VM {
                             None => {
                                 return InterpretResult::RuntimeError(format!(
                                     "Invalid stack slot {} for ForIter sequence",
-                                    seq_slot
+                                    seq_local
                                 ));
                             }
                         };
@@ -607,12 +647,55 @@ impl VM {
                         }
                     };
                     if is_done {
-                        self.ip += offset as usize;
+                        self.frames.last_mut().unwrap().ip += offset as usize;
                     } else {
                         if let Some(Value::Int(i)) = self.stack.get_mut(iter_slot) {
                             *i += 1;
                         }
                         self.stack.push(next_val.unwrap());
+                    }
+                }
+                OpCode::Call => {
+                    let arg_count = self.read_byte() as usize;
+                    if self.stack.len() < 1 + arg_count {
+                        return InterpretResult::RuntimeError("Stack underflow on Call".into());
+                    }
+                    let callee_slot = self.stack.len() - 1 - arg_count;
+                    let callee = self.stack[callee_slot].clone();
+                    match callee {
+                        Value::CompiledFunction(func) => {
+                            if arg_count != func.arity {
+                                return InterpretResult::RuntimeError(format!(
+                                    "Expected {} arguments but got {}.",
+                                    func.arity, arg_count
+                                ));
+                            }
+                            if self.frames.len() >= 1024 {
+                                return InterpretResult::RuntimeError(
+                                    "Stack overflow: call stack exceeded maximum depth.".into(),
+                                );
+                            }
+                            self.frames.push(CallFrame {
+                                function: func,
+                                ip: 0,
+                                slots_offset: callee_slot,
+                            });
+                        }
+                        Value::Builtin { name: _, func } => {
+                            let args: Vec<Value> = self.stack.drain(callee_slot + 1..).collect();
+                            self.stack.pop(); // pop callee
+                            let mut evaluator = crate::eval::Evaluator::new();
+                            match func(&mut evaluator, args, crate::ast::Span::new(1, 1)) {
+                                Ok(val) => self.stack.push(val),
+                                Err(e) => return InterpretResult::RuntimeError(e.message),
+                            }
+                        }
+                        other => {
+                            return InterpretResult::RuntimeError(format!(
+                                "Can only call functions, got {}.",
+                                other.type_name()
+                            ));
+                        }
                     }
                 }
                 _ => unimplemented!("Opcode {:?} not yet implemented", instruction),
@@ -621,18 +704,23 @@ impl VM {
     }
 
     fn read_byte(&mut self) -> u8 {
-        let byte = self.chunk.code[self.ip];
-        self.ip += 1;
+        let frame = self.frames.last_mut().unwrap();
+        let byte = frame.function.chunk.code[frame.ip];
+        frame.ip += 1;
         byte
     }
 
     fn read_short(&mut self) -> u16 {
-        self.ip += 2;
-        ((self.chunk.code[self.ip - 2] as u16) << 8) | (self.chunk.code[self.ip - 1] as u16)
+        let frame = self.frames.last_mut().unwrap();
+        frame.ip += 2;
+        ((frame.function.chunk.code[frame.ip - 2] as u16) << 8)
+            | (frame.function.chunk.code[frame.ip - 1] as u16)
     }
 
     fn read_constant(&mut self) -> Value {
-        let idx = self.read_byte() as usize;
-        self.chunk.constants[idx].clone()
+        let frame = self.frames.last_mut().unwrap();
+        let idx = frame.function.chunk.code[frame.ip] as usize;
+        frame.ip += 1;
+        frame.function.chunk.constants[idx].clone()
     }
 }

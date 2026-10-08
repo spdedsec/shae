@@ -6,6 +6,12 @@ pub struct Span {
     pub col: usize,
 }
 
+impl Span {
+    pub fn new(line: usize, col: usize) -> Self {
+        Self { line, col }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub statements: Vec<Stmt>,

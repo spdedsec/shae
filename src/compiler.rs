@@ -1,7 +1,8 @@
 use crate::ast::{BindingPattern, BinaryOp, Expr, Literal, Program, Stmt, StmtKind, UnaryOp};
 use crate::chunk::Chunk;
 use crate::opcode::OpCode;
-use crate::value::Value;
+use crate::value::{CompiledFunction, Value};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct Local {
@@ -50,6 +51,36 @@ impl Compiler {
         self.compile_expr(expr)?;
         self.chunk.write_opcode(OpCode::Return, 0);
         Ok(self.chunk)
+    }
+
+    pub fn compile_function(
+        &mut self,
+        name: Option<String>,
+        params: &[String],
+        body: &[Stmt],
+    ) -> Result<CompiledFunction, String> {
+        let mut fn_compiler = Compiler::new();
+        let fn_slot_name = name.clone().unwrap_or_default();
+        fn_compiler.add_local(fn_slot_name);
+
+        for param in params {
+            fn_compiler.add_local(param.clone());
+        }
+
+        let body_len = body.len();
+        for (i, stmt) in body.iter().enumerate() {
+            let is_last = i + 1 == body_len;
+            fn_compiler.compile_stmt(stmt, is_last)?;
+        }
+
+        fn_compiler.chunk.write_opcode(OpCode::Nil, 0);
+        fn_compiler.chunk.write_opcode(OpCode::Return, 0);
+
+        Ok(CompiledFunction {
+            arity: params.len(),
+            chunk: fn_compiler.chunk,
+            name,
+        })
     }
 
     pub fn begin_scope(&mut self) {
@@ -324,6 +355,25 @@ impl Compiler {
                 self.chunk.write_opcode(OpCode::Return, stmt.span.line);
                 Ok(())
             }
+            StmtKind::FnDef { name, params, body } => {
+                let compiled = self.compile_function(Some(name.clone()), params, body)?;
+                let const_idx = self
+                    .chunk
+                    .add_constant(Value::CompiledFunction(Arc::new(compiled)));
+                self.chunk.write_opcode(OpCode::Constant, stmt.span.line);
+                self.chunk.write(const_idx as u8, stmt.span.line);
+                if self.scope_depth > 0 {
+                    self.add_local(name.clone());
+                } else {
+                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                    self.chunk.write_opcode(OpCode::DefineGlobal, stmt.span.line);
+                    self.chunk.write(name_idx as u8, stmt.span.line);
+                }
+                if is_last {
+                    self.chunk.write_opcode(OpCode::Nil, stmt.span.line);
+                }
+                Ok(())
+            }
             _ => Err(format!("Statement kind not yet supported in VM compiler: {:?}", stmt.kind)),
         }
     }
@@ -478,6 +528,27 @@ impl Compiler {
                 }
                 self.chunk.write_opcode(OpCode::BuildMap, 0);
                 self.chunk.write(pairs.len() as u8, 0);
+                Ok(())
+            }
+            Expr::Call { callee, args, span } => {
+                if args.len() > 255 {
+                    return Err("Function call cannot exceed 255 arguments".into());
+                }
+                self.compile_expr(callee)?;
+                for arg in args {
+                    self.compile_expr(arg)?;
+                }
+                self.chunk.write_opcode(OpCode::Call, span.line);
+                self.chunk.write(args.len() as u8, span.line);
+                Ok(())
+            }
+            Expr::Lambda { params, body, span } => {
+                let compiled = self.compile_function(None, params, body)?;
+                let const_idx = self
+                    .chunk
+                    .add_constant(Value::CompiledFunction(Arc::new(compiled)));
+                self.chunk.write_opcode(OpCode::Constant, span.line);
+                self.chunk.write(const_idx as u8, span.line);
                 Ok(())
             }
             _ => Err(format!("Unsupported expression in VM compiler: {:?}", expr)),

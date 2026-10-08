@@ -43,8 +43,8 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 
 ---
 
-### **Chunk 4: Bytecode VM — Call Frames, Functions & Closures** *(Next)*
-- [ ] Explicit call frames (`CallFrame`) with virtual stack allocation.
+### **Chunk 4: Bytecode VM — Call Frames, Functions & Closures** *(In Progress)*
+- [x] Explicit call frames (`CallFrame`) with virtual stack allocation and function calls.
 - [ ] Closures and upvalue capture (`OpGetUpvalue`, `OpSetUpvalue`, `OpCloseUpvalue`).
 - [x] Composite types and indexing in bytecode (`OpBuildArray`, `OpBuildMap`, `OpGetIndex`, `OpSetIndex`).
 

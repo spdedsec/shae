@@ -246,3 +246,95 @@ total
     // total = 180
     assert_eq!(result, InterpretResult::Ok(Value::Int(180)));
 }
+
+#[test]
+fn test_compiler_user_function_call() {
+    let script = r#"
+fn add(a, b) {
+    return a + b
+}
+add(10, 25)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Int(35)));
+}
+
+#[test]
+fn test_compiler_nested_function_calls() {
+    let script = r#"
+fn square(x) {
+    return x * x
+}
+fn sum_of_squares(a, b) {
+    return square(a) + square(b)
+}
+sum_of_squares(3, 4)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Int(25)));
+}
+
+#[test]
+fn test_compiler_recursive_function() {
+    let script = r#"
+fn factorial(n) {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+factorial(5)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Int(120)));
+}
+
+#[test]
+fn test_compiler_lambda_expression() {
+    let script = r#"
+let double = fn(x) { return x * 2 }
+double(21)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Int(42)));
+}
+
+#[test]
+fn test_compiler_builtin_function_call() {
+    let script = r#"
+let arr = [10, 20, 30, 40]
+len(arr)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Int(4)));
+}
+
+#[test]
+fn test_compiler_arity_mismatch_error() {
+    let script = r#"
+fn greet(name) {
+    return name
+}
+greet()
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert!(matches!(result, InterpretResult::RuntimeError(_)));
+}
