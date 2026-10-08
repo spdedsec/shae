@@ -12,6 +12,7 @@ pub mod chunk;
 pub mod compiler;
 pub mod vm;
 pub mod linter;
+pub mod fmt;
 
 use thiserror::Error;
 
@@ -89,3 +90,12 @@ pub fn run_in_evaluator(source: &str, ev: &mut eval::Evaluator) -> Result<value:
     let val = ev.eval_program(&program)?;
     Ok(val)
 }
+
+pub fn parse_source(source: &str) -> Result<ast::Program, ShaeError> {
+    let tokens = lexer::tokenize(source)?;
+    let program = parser::parse(tokens)?;
+    Ok(program)
+}
+
+pub use fmt::{format_program, format_source};
+

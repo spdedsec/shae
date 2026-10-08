@@ -328,7 +328,20 @@ fn main() {
             run_tests(target);
         }
         "fmt" => {
-            println!("Formatting is coming soon!");
+            let mut check_only = false;
+            let mut target = None;
+            for arg in &args[2..] {
+                if arg == "--help" || arg == "-h" {
+                    println!("Usage: shae fmt [path] [--check]\n\nFormat Shae source files in place, or check formatting with --check.");
+                    return;
+                } else if arg == "--check" {
+                    check_only = true;
+                } else if target.is_none() {
+                    target = Some(arg.as_str());
+                }
+            }
+            let path = target.unwrap_or(".");
+            format_target(path, check_only);
         }
         filename => {
             if filename.starts_with('-') {
@@ -338,5 +351,93 @@ fn main() {
             }
             run_file(filename);
         }
+    }
+}
+
+fn find_shae_files(dir: &Path, out: &mut Vec<String>) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name != "target" && name != ".git" && name != "node_modules" {
+                    find_shae_files(&path, out);
+                }
+            } else if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                if file_name.ends_with(".shae") {
+                    out.push(path.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+}
+
+fn format_target(target: &str, check_only: bool) {
+    let mut files = Vec::new();
+    let path = Path::new(target);
+    if path.is_file() {
+        files.push(target.to_string());
+    } else if path.is_dir() {
+        find_shae_files(path, &mut files);
+    } else {
+        eprintln!("Error: Path '{}' not found", target);
+        process::exit(1);
+    }
+
+    if files.is_empty() {
+        println!("No .shae files found in '{}'.", target);
+        return;
+    }
+
+    let mut unformatted = 0;
+    let mut formatted_count = 0;
+
+    for file in &files {
+        let source = match fs::read_to_string(file) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error reading file '{}': {}", file, e);
+                unformatted += 1;
+                continue;
+            }
+        };
+
+        let formatted = match shae::format_source(&source) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Syntax error in '{}':", file);
+                eprintln!("{}\n", shae::render_error(&e, &source));
+                unformatted += 1;
+                continue;
+            }
+        };
+
+        if source != formatted {
+            if check_only {
+                println!("❌ Needs formatting: {}", file);
+                unformatted += 1;
+            } else {
+                if let Err(e) = fs::write(file, &formatted) {
+                    eprintln!("Error writing '{}': {}", file, e);
+                    unformatted += 1;
+                } else {
+                    println!("Formatted {}", file);
+                    formatted_count += 1;
+                }
+            }
+        }
+    }
+
+    if check_only {
+        if unformatted > 0 {
+            eprintln!("\n{} file(s) need formatting. Run `shae fmt` to fix.", unformatted);
+            process::exit(1);
+        } else {
+            println!("All {} file(s) properly formatted.", files.len());
+        }
+    } else if formatted_count == 0 {
+        println!("All {} file(s) already formatted.", files.len());
+    } else {
+        println!("Successfully formatted {} file(s).", formatted_count);
     }
 }
