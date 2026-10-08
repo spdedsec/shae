@@ -40,6 +40,13 @@ pub enum OpCode {
     BuildMap,
     IndexGet,
     IndexSet,
+    Mod,
+    BitAnd,
+    BitOr,
+    BitXor,
+    BitNot,
+    Shl,
+    Shr,
 }
 
 impl From<u8> for OpCode {
