@@ -269,6 +269,22 @@ impl Compiler {
                     }
                     Ok(())
                 }
+                Expr::Get {
+                    target: get_target,
+                    property,
+                    span,
+                    ..
+                } => {
+                    self.compile_expr(get_target)?;
+                    self.compile_expr(value)?;
+                    let name_idx = self.chunk.add_constant(Value::String(property.clone()));
+                    self.chunk.write_opcode(OpCode::SetProperty, span.line);
+                    self.chunk.write(name_idx as u8, span.line);
+                    if !is_last {
+                        self.chunk.write_opcode(OpCode::Pop, span.line);
+                    }
+                    Ok(())
+                }
                 _ => Err(format!(
                     "Unsupported assign target in VM compiler: {:?}",
                     target
@@ -460,10 +476,57 @@ impl Compiler {
                 self.add_local(name.clone());
                 Ok(())
             }
-            _ => Err(format!(
-                "Destructuring patterns not yet supported in VM compiler: {:?}",
-                pattern
-            )),
+            BindingPattern::Array { elements, rest } => {
+                let arr_slot = self.add_local("(destruct_arr)".to_string());
+                for (i, elem) in elements.iter().enumerate() {
+                    self.chunk.write_opcode(OpCode::GetLocal, 0);
+                    self.chunk.write(arr_slot as u8, 0);
+                    let const_idx = self.chunk.add_constant(Value::Int(i as i64));
+                    self.chunk.write_opcode(OpCode::Constant, 0);
+                    self.chunk.write(const_idx as u8, 0);
+                    self.chunk.write_opcode(OpCode::IndexGetSafe, 0);
+                    self.compile_binding_pattern(elem)?;
+                }
+                if let Some(rest_name) = rest {
+                    self.chunk.write_opcode(OpCode::GetLocal, 0);
+                    self.chunk.write(arr_slot as u8, 0);
+                    let const_idx = self.chunk.add_constant(Value::Int(elements.len() as i64));
+                    self.chunk.write_opcode(OpCode::Constant, 0);
+                    self.chunk.write(const_idx as u8, 0);
+                    self.chunk.write_opcode(OpCode::ArraySlice, 0);
+                    self.add_local(rest_name.clone());
+                }
+                Ok(())
+            }
+            BindingPattern::Object { fields, rest } => {
+                let obj_slot = self.add_local("(destruct_obj)".to_string());
+                for (field_name, opt_sub) in fields {
+                    self.chunk.write_opcode(OpCode::GetLocal, 0);
+                    self.chunk.write(obj_slot as u8, 0);
+                    let const_idx = self.chunk.add_constant(Value::String(field_name.clone()));
+                    self.chunk.write_opcode(OpCode::GetProperty, 0);
+                    self.chunk.write(const_idx as u8, 0);
+                    self.chunk.write(1, 0); // is_safe = 1
+                    if let Some(sub) = opt_sub {
+                        self.compile_binding_pattern(sub)?;
+                    } else {
+                        self.add_local(field_name.clone());
+                    }
+                }
+                if let Some(rest_name) = rest {
+                    self.chunk.write_opcode(OpCode::GetLocal, 0);
+                    self.chunk.write(obj_slot as u8, 0);
+                    for (field_name, _) in fields {
+                        let const_idx = self.chunk.add_constant(Value::String(field_name.clone()));
+                        self.chunk.write_opcode(OpCode::Constant, 0);
+                        self.chunk.write(const_idx as u8, 0);
+                    }
+                    self.chunk.write_opcode(OpCode::MapRest, 0);
+                    self.chunk.write(fields.len() as u8, 0);
+                    self.add_local(rest_name.clone());
+                }
+                Ok(())
+            }
         }
     }
 
@@ -643,6 +706,39 @@ impl Compiler {
                     .add_constant(Value::CompiledFunction(Arc::new(compiled)));
                 self.chunk.write_opcode(OpCode::Closure, span.line);
                 self.chunk.write(const_idx as u8, span.line);
+                Ok(())
+            }
+            Expr::Get {
+                target,
+                property,
+                safe,
+                span,
+            } => {
+                self.compile_expr(target)?;
+                let name_idx = self.chunk.add_constant(Value::String(property.clone()));
+                self.chunk.write_opcode(OpCode::GetProperty, span.line);
+                self.chunk.write(name_idx as u8, span.line);
+                self.chunk.write(if *safe { 1 } else { 0 }, span.line);
+                Ok(())
+            }
+            Expr::Interpolated(parts) => {
+                if parts.len() > 255 {
+                    return Err("Interpolated string exceeds maximum 255 segments in VM".into());
+                }
+                for part in parts {
+                    match part {
+                        crate::ast::InterpPart::Text(s) => {
+                            let const_idx = self.chunk.add_constant(Value::String(s.clone()));
+                            self.chunk.write_opcode(OpCode::Constant, 0);
+                            self.chunk.write(const_idx as u8, 0);
+                        }
+                        crate::ast::InterpPart::Expr(e) => {
+                            self.compile_expr(e)?;
+                        }
+                    }
+                }
+                self.chunk.write_opcode(OpCode::FormatString, 0);
+                self.chunk.write(parts.len() as u8, 0);
                 Ok(())
             }
             _ => Err(format!("Unsupported expression in VM compiler: {:?}", expr)),

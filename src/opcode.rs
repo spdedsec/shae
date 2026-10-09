@@ -50,6 +50,10 @@ pub enum OpCode {
     ForIter,
     GetUpvalue,
     SetUpvalue,
+    FormatString,
+    IndexGetSafe,
+    ArraySlice,
+    MapRest,
 }
 
 impl From<u8> for OpCode {

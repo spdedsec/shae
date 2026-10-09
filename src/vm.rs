@@ -785,6 +785,342 @@ impl VM {
                         }
                     }
                 }
+                OpCode::GetProperty => {
+                    let name_val = self.read_constant();
+                    let is_safe = self.read_byte() != 0;
+                    let property = match name_val {
+                        Value::String(s) => s,
+                        other => other.to_string(),
+                    };
+                    let target = self.stack.pop().unwrap();
+                    match target {
+                        Value::Null => {
+                            if is_safe {
+                                self.stack.push(Value::Null);
+                            } else {
+                                return InterpretResult::RuntimeError(
+                                    "Cannot read property of null".into(),
+                                );
+                            }
+                        }
+                        Value::Map(ref m) => {
+                            let map = m.read().unwrap();
+                            if let Some(v) = map.get(&property) {
+                                self.stack.push(v.clone());
+                            } else if is_safe {
+                                self.stack.push(Value::Null);
+                            } else {
+                                return InterpretResult::RuntimeError(format!(
+                                    "Property '{}' not found in map",
+                                    property
+                                ));
+                            }
+                        }
+                        Value::GcMap(r) => {
+                            let val = self.heap.as_map(r).and_then(|m| m.get(&property).cloned());
+                            if let Some(v) = val {
+                                self.stack.push(v);
+                            } else if is_safe {
+                                self.stack.push(Value::Null);
+                            } else {
+                                return InterpretResult::RuntimeError(format!(
+                                    "Property '{}' not found in map",
+                                    property
+                                ));
+                            }
+                        }
+                        Value::StructInstance {
+                            ref name,
+                            ref fields,
+                        } => {
+                            if let Some(v) = fields.read().unwrap().get(&property) {
+                                self.stack.push(v.clone());
+                            } else if is_safe {
+                                self.stack.push(Value::Null);
+                            } else {
+                                return InterpretResult::RuntimeError(format!(
+                                    "Struct '{}' has no field '{}'",
+                                    name, property
+                                ));
+                            }
+                        }
+                        Value::Array(ref a) => {
+                            if property == "len" {
+                                self.stack.push(Value::Int(a.read().unwrap().len() as i64));
+                            } else if property == "first" {
+                                let val = a.read().unwrap().first().cloned().unwrap_or(Value::Null);
+                                self.stack.push(val);
+                            } else if property == "last" {
+                                let val = a.read().unwrap().last().cloned().unwrap_or(Value::Null);
+                                self.stack.push(val);
+                            } else if matches!(
+                                property.as_str(),
+                                "push"
+                                    | "pop"
+                                    | "map"
+                                    | "filter"
+                                    | "reduce"
+                                    | "sum"
+                                    | "sort"
+                                    | "find"
+                                    | "some"
+                                    | "every"
+                                    | "flat"
+                                    | "join"
+                                    | "reverse"
+                                    | "slice"
+                            ) {
+                                self.stack.push(Value::BoundMethod {
+                                    object: Box::new(target.clone()),
+                                    method: property,
+                                });
+                            } else {
+                                return InterpretResult::RuntimeError(format!(
+                                    "Unknown array property '{}'",
+                                    property
+                                ));
+                            }
+                        }
+                        Value::GcArray(r) => {
+                            let len = self.heap.as_array(r).map(|a| a.len()).unwrap_or(0);
+                            if property == "len" {
+                                self.stack.push(Value::Int(len as i64));
+                            } else {
+                                return InterpretResult::RuntimeError(format!(
+                                    "Unknown array property '{}'",
+                                    property
+                                ));
+                            }
+                        }
+                        Value::String(ref s) => {
+                            if property == "len" {
+                                self.stack.push(Value::Int(s.chars().count() as i64));
+                            } else if matches!(
+                                property.as_str(),
+                                "trim"
+                                    | "upper"
+                                    | "lower"
+                                    | "toUpper"
+                                    | "toLower"
+                                    | "split"
+                                    | "replace"
+                                    | "starts_with"
+                                    | "ends_with"
+                                    | "startsWith"
+                                    | "endsWith"
+                                    | "contains"
+                                    | "indexOf"
+                                    | "slice"
+                                    | "chars"
+                                    | "lines"
+                            ) {
+                                self.stack.push(Value::BoundMethod {
+                                    object: Box::new(target.clone()),
+                                    method: property,
+                                });
+                            } else {
+                                return InterpretResult::RuntimeError(format!(
+                                    "Unknown string property '{}'",
+                                    property
+                                ));
+                            }
+                        }
+                        other => {
+                            return InterpretResult::RuntimeError(format!(
+                                "Cannot read property '{}' of {}",
+                                property,
+                                other.type_name()
+                            ));
+                        }
+                    }
+                }
+                OpCode::SetProperty => {
+                    let name_val = self.read_constant();
+                    let property = match name_val {
+                        Value::String(s) => s,
+                        other => other.to_string(),
+                    };
+                    let value = self.stack.pop().unwrap();
+                    let target = self.stack.pop().unwrap();
+                    match target {
+                        Value::Map(ref m) => {
+                            m.write().unwrap().insert(property, value.clone());
+                            self.stack.push(value);
+                        }
+                        Value::GcMap(r) => {
+                            if let Some(map) = self.heap.as_map_mut(r) {
+                                map.insert(property, value.clone());
+                            }
+                            self.stack.push(value);
+                        }
+                        Value::StructInstance {
+                            ref name,
+                            ref fields,
+                        } => {
+                            if fields.read().unwrap().contains_key(&property) {
+                                fields.write().unwrap().insert(property, value.clone());
+                                self.stack.push(value);
+                            } else {
+                                return InterpretResult::RuntimeError(format!(
+                                    "Struct '{}' has no field '{}'",
+                                    name, property
+                                ));
+                            }
+                        }
+                        other => {
+                            return InterpretResult::RuntimeError(format!(
+                                "Cannot set property '{}' on {}",
+                                property,
+                                other.type_name()
+                            ));
+                        }
+                    }
+                }
+                OpCode::FormatString => {
+                    let count = self.read_byte() as usize;
+                    let mut parts = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        parts.push(self.stack.pop().unwrap());
+                    }
+                    parts.reverse();
+                    let mut res = String::new();
+                    for part in parts {
+                        match part {
+                            Value::String(s) => res.push_str(&s),
+                            other => res.push_str(&other.to_display()),
+                        }
+                    }
+                    self.stack.push(Value::String(res));
+                }
+                OpCode::IndexGetSafe => {
+                    let index = self.stack.pop().unwrap();
+                    let target = self.stack.pop().unwrap();
+                    match target {
+                        Value::GcArray(r) => {
+                            let len = self.heap.as_array(r).map(|a| a.len()).unwrap_or(0);
+                            let idx_opt = match index {
+                                Value::Int(i) if i >= 0 && (i as usize) < len => Some(i as usize),
+                                Value::Float(f) | Value::Number(f)
+                                    if f >= 0.0 && (f as usize) < len =>
+                                {
+                                    Some(f as usize)
+                                }
+                                _ => None,
+                            };
+                            match idx_opt {
+                                Some(idx) => {
+                                    let val = self.heap.as_array(r).unwrap()[idx].clone();
+                                    self.stack.push(val);
+                                }
+                                None => self.stack.push(Value::Null),
+                            }
+                        }
+                        Value::Array(ref arr) => {
+                            let borrow = arr.read().unwrap();
+                            let len = borrow.len();
+                            let idx_opt = match index {
+                                Value::Int(i) if i >= 0 && (i as usize) < len => Some(i as usize),
+                                Value::Float(f) | Value::Number(f)
+                                    if f >= 0.0 && (f as usize) < len =>
+                                {
+                                    Some(f as usize)
+                                }
+                                _ => None,
+                            };
+                            match idx_opt {
+                                Some(idx) => self.stack.push(borrow[idx].clone()),
+                                None => self.stack.push(Value::Null),
+                            }
+                        }
+                        other => {
+                            return InterpretResult::RuntimeError(format!(
+                                "Cannot destructure non-array {} as array",
+                                other.type_name()
+                            ));
+                        }
+                    }
+                }
+                OpCode::ArraySlice => {
+                    let start_val = self.stack.pop().unwrap();
+                    let target = self.stack.pop().unwrap();
+                    let start_idx = match start_val {
+                        Value::Int(i) if i >= 0 => i as usize,
+                        Value::Float(f) | Value::Number(f) if f >= 0.0 => f as usize,
+                        _ => 0,
+                    };
+                    match target {
+                        Value::Array(ref a) => {
+                            let borrow = a.read().unwrap();
+                            let slice_vals = if start_idx < borrow.len() {
+                                borrow[start_idx..].to_vec()
+                            } else {
+                                Vec::new()
+                            };
+                            self.stack
+                                .push(Value::Array(Arc::new(RwLock::new(slice_vals))));
+                        }
+                        Value::GcArray(r) => {
+                            let borrow = self.heap.as_array(r).cloned().unwrap_or_default();
+                            let slice_vals = if start_idx < borrow.len() {
+                                borrow[start_idx..].to_vec()
+                            } else {
+                                Vec::new()
+                            };
+                            self.stack
+                                .push(Value::Array(Arc::new(RwLock::new(slice_vals))));
+                        }
+                        other => {
+                            return InterpretResult::RuntimeError(format!(
+                                "Cannot slice non-array {}",
+                                other.type_name()
+                            ));
+                        }
+                    }
+                }
+                OpCode::MapRest => {
+                    let count = self.read_byte() as usize;
+                    let mut extracted_keys = std::collections::HashSet::with_capacity(count);
+                    for _ in 0..count {
+                        let k_val = self.stack.pop().unwrap();
+                        match k_val {
+                            Value::String(s) => {
+                                extracted_keys.insert(s);
+                            }
+                            other => {
+                                extracted_keys.insert(other.to_string());
+                            }
+                        }
+                    }
+                    let target = self.stack.pop().unwrap();
+                    match target {
+                        Value::Map(ref m) => {
+                            let borrow = m.read().unwrap();
+                            let mut rest_map = indexmap::IndexMap::new();
+                            for (k, v) in borrow.iter() {
+                                if !extracted_keys.contains(k) {
+                                    rest_map.insert(k.clone(), v.clone());
+                                }
+                            }
+                            self.stack.push(Value::Map(Arc::new(RwLock::new(rest_map))));
+                        }
+                        Value::GcMap(r) => {
+                            let borrow = self.heap.as_map(r).cloned().unwrap_or_default();
+                            let mut rest_map = indexmap::IndexMap::new();
+                            for (k, v) in borrow.iter() {
+                                if !extracted_keys.contains(k) {
+                                    rest_map.insert(k.clone(), v.clone());
+                                }
+                            }
+                            self.stack.push(Value::Map(Arc::new(RwLock::new(rest_map))));
+                        }
+                        other => {
+                            return InterpretResult::RuntimeError(format!(
+                                "Cannot destructure non-map {} with rest",
+                                other.type_name()
+                            ));
+                        }
+                    }
+                }
                 OpCode::ForIter => {
                     let seq_local = self.read_byte() as usize;
                     let offset = self.read_short();
@@ -918,6 +1254,15 @@ impl VM {
                             }
                             let mut evaluator = crate::eval::Evaluator::new();
                             match func(&mut evaluator, args, crate::ast::Span::new(1, 1)) {
+                                Ok(val) => self.stack.push(val),
+                                Err(e) => return InterpretResult::RuntimeError(e.message),
+                            }
+                        }
+                        Value::BoundMethod { .. } => {
+                            let args: Vec<Value> = self.stack.drain(callee_slot + 1..).collect();
+                            self.stack.pop(); // pop callee
+                            let mut evaluator = crate::eval::Evaluator::new();
+                            match evaluator.call_value(&callee, args, crate::ast::Span::new(1, 1)) {
                                 Ok(val) => self.stack.push(val),
                                 Err(e) => return InterpretResult::RuntimeError(e.message),
                             }

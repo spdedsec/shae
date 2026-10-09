@@ -467,3 +467,125 @@ outer()
     let result = vm.interpret(chunk);
     assert_eq!(result, InterpretResult::Ok(Value::Int(777)));
 }
+
+#[test]
+fn test_compiler_string_interpolation() {
+    let script = r#"
+let name = "Shae"
+let version = 2
+let msg = "Welcome to ${name} v${version}!"
+msg
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(
+        result,
+        InterpretResult::Ok(Value::String("Welcome to Shae v2!".into()))
+    );
+}
+
+#[test]
+fn test_compiler_property_get_and_set() {
+    let script = r#"
+let user = { name: "Alice", age: 30 }
+user.age = 31
+user.role = "Admin"
+user.name + " is " + str(user.age) + " (" + user.role + ")"
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(
+        result,
+        InterpretResult::Ok(Value::String("Alice is 31 (Admin)".into()))
+    );
+}
+
+#[test]
+fn test_compiler_safe_property_navigation() {
+    let script = r#"
+let user = { profile: null }
+let title = user.profile?.title
+title
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Null));
+}
+
+#[test]
+fn test_compiler_array_destructuring() {
+    let script = r#"
+let [a, b, c] = [10, 20, 30]
+a + b * c
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Int(610)));
+}
+
+#[test]
+fn test_compiler_array_destructuring_with_rest() {
+    let script = r#"
+let [head, second, ..tail] = [1, 2, 3, 4, 5]
+let tlen = tail.len
+head + second + tlen
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Int(1 + 2 + 3)));
+}
+
+#[test]
+fn test_compiler_object_destructuring() {
+    let script = r#"
+let user = { name: "Bob", score: 95 }
+let { name, score } = user
+name + ": " + str(score)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::String("Bob: 95".into())));
+}
+
+#[test]
+fn test_compiler_object_destructuring_rename_and_rest() {
+    let script = r#"
+let config = { host: "localhost", port: 8080, secure: true }
+let { host: server_host, ..rest_cfg } = config
+server_host + ":" + str(rest_cfg.port)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(
+        result,
+        InterpretResult::Ok(Value::String("localhost:8080".into()))
+    );
+}
+
+#[test]
+fn test_compiler_nested_destructuring() {
+    let script = r#"
+let payload = ["ok", { code: 200, count: 42 }]
+let [status, { code, count }] = payload
+status + " " + str(code + count)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::String("ok 242".into())));
+}
