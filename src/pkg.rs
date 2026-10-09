@@ -130,8 +130,7 @@ impl PackageManifest {
 
     pub fn load_from_file(path: &Path) -> Result<Self, PkgError> {
         let content = fs::read_to_string(path)?;
-        toml::from_str(&content)
-            .map_err(|e| PkgError::ManifestParse(path.display().to_string(), e))
+        toml::from_str(&content).map_err(|e| PkgError::ManifestParse(path.display().to_string(), e))
     }
 
     pub fn save_to_dir(&self, dir: &Path) -> Result<(), PkgError> {
@@ -229,7 +228,9 @@ pub fn add_dependency(
         || source.starts_with("git@")
         || source.ends_with(".git");
 
-    let spec = if !is_git_url && (source.starts_with('.') || source.starts_with('/') || source.starts_with('\\')) {
+    let spec = if !is_git_url
+        && (source.starts_with('.') || source.starts_with('/') || source.starts_with('\\'))
+    {
         DependencySpec::Detailed {
             path: Some(source.to_string()),
             git: None,
@@ -290,16 +291,27 @@ pub fn install_dependencies(dir: &Path) -> Result<Lockfile, PkgError> {
             );
         } else if let Some(git_url) = spec.get_git_url() {
             let pkg_dir = packages_dir.join(dep_name);
-            let locked_commit = lockfile.packages.get(dep_name).and_then(|lp| lp.commit.as_deref());
+            let locked_commit = lockfile
+                .packages
+                .get(dep_name)
+                .and_then(|lp| lp.commit.as_deref());
 
             let (branch, tag, rev) = match spec {
-                DependencySpec::Detailed { branch, tag, rev, .. } => {
-                    (branch.as_deref(), tag.as_deref(), rev.as_deref())
-                }
+                DependencySpec::Detailed {
+                    branch, tag, rev, ..
+                } => (branch.as_deref(), tag.as_deref(), rev.as_deref()),
                 _ => (None, None, None),
             };
 
-            let commit_sha = fetch_git_dependency(&pkg_dir, &git_url, locked_commit, branch, tag, rev, dep_name)?;
+            let commit_sha = fetch_git_dependency(
+                &pkg_dir,
+                &git_url,
+                locked_commit,
+                branch,
+                tag,
+                rev,
+                dep_name,
+            )?;
 
             lockfile.packages.insert(
                 dep_name.clone(),
@@ -417,7 +429,9 @@ fn fetch_git_dependency(
         ));
     }
 
-    let commit_sha = String::from_utf8_lossy(&rev_parse.stdout).trim().to_string();
+    let commit_sha = String::from_utf8_lossy(&rev_parse.stdout)
+        .trim()
+        .to_string();
     Ok(commit_sha)
 }
 

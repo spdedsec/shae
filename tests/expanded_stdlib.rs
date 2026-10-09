@@ -1,5 +1,5 @@
-use shae::run;
 use serde_json::json;
+use shae::run;
 
 #[test]
 fn test_std_crypto_hashes_and_hmac() {

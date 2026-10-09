@@ -2,8 +2,8 @@ use crate::chunk::Chunk;
 use crate::gc::{GcHeap, GcStats};
 use crate::opcode::OpCode;
 use crate::value::{
-    resolve_index, resolve_int_index, Closure, CompiledFunction, IndexError, Upvalue,
-    UpvalueLocation, Value,
+    Closure, CompiledFunction, IndexError, Upvalue, UpvalueLocation, Value, resolve_index,
+    resolve_int_index,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -127,9 +127,8 @@ impl VM {
                 }
             }
         }
-        self.open_upvalues.retain(|uv| {
-            matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
-        });
+        self.open_upvalues
+            .retain(|uv| matches!(uv.read().unwrap().location, UpvalueLocation::Open(_)));
     }
 
     fn run(&mut self) -> InterpretResult {
@@ -137,7 +136,17 @@ impl VM {
             if self.frames.is_empty() {
                 return InterpretResult::Ok(Value::Null);
             }
-            if self.frames.last().unwrap().ip >= self.frames.last().unwrap().closure.function.chunk.code.len() {
+            if self.frames.last().unwrap().ip
+                >= self
+                    .frames
+                    .last()
+                    .unwrap()
+                    .closure
+                    .function
+                    .chunk
+                    .code
+                    .len()
+            {
                 let frame = self.frames.pop().unwrap();
                 self.close_upvalues(frame.slots_offset);
                 if self.frames.is_empty() {
@@ -266,7 +275,7 @@ impl VM {
                         _ => {
                             return InterpretResult::RuntimeError(
                                 "Operands must be numbers for comparison.".into(),
-                            )
+                            );
                         }
                     }
                 }
@@ -285,7 +294,7 @@ impl VM {
                         _ => {
                             return InterpretResult::RuntimeError(
                                 "Operands must be numbers for comparison.".into(),
-                            )
+                            );
                         }
                     }
                 }
@@ -322,12 +331,13 @@ impl VM {
                             self.stack.push(Value::Float(a_num + b_num));
                         }
                         (Value::String(a_str), Value::String(b_str)) => {
-                            self.stack.push(Value::String(format!("{}{}", a_str, b_str)));
+                            self.stack
+                                .push(Value::String(format!("{}{}", a_str, b_str)));
                         }
                         _ => {
                             return InterpretResult::RuntimeError(
                                 "Operands must be two numbers or two strings.".into(),
-                            )
+                            );
                         }
                     }
                 }
@@ -353,7 +363,9 @@ impl VM {
                             self.stack.push(Value::Float(a_num - b_num))
                         }
                         _ => {
-                            return InterpretResult::RuntimeError("Operands must be numbers.".into())
+                            return InterpretResult::RuntimeError(
+                                "Operands must be numbers.".into(),
+                            );
                         }
                     }
                 }
@@ -379,7 +391,9 @@ impl VM {
                             self.stack.push(Value::Float(a_num * b_num))
                         }
                         _ => {
-                            return InterpretResult::RuntimeError("Operands must be numbers.".into())
+                            return InterpretResult::RuntimeError(
+                                "Operands must be numbers.".into(),
+                            );
                         }
                     }
                 }
@@ -412,7 +426,9 @@ impl VM {
                             self.stack.push(Value::Float(a_num / b_num));
                         }
                         _ => {
-                            return InterpretResult::RuntimeError("Operands must be numbers.".into())
+                            return InterpretResult::RuntimeError(
+                                "Operands must be numbers.".into(),
+                            );
                         }
                     }
                 }
@@ -435,7 +451,7 @@ impl VM {
                         _ => {
                             return InterpretResult::RuntimeError(
                                 "Operands must be numbers for modulo.".into(),
-                            )
+                            );
                         }
                     }
                 }
@@ -447,7 +463,7 @@ impl VM {
                         _ => {
                             return InterpretResult::RuntimeError(
                                 "Operands must be integers for bitwise AND.".into(),
-                            )
+                            );
                         }
                     }
                 }
@@ -459,7 +475,7 @@ impl VM {
                         _ => {
                             return InterpretResult::RuntimeError(
                                 "Operands must be integers for bitwise OR.".into(),
-                            )
+                            );
                         }
                     }
                 }
@@ -471,7 +487,7 @@ impl VM {
                         _ => {
                             return InterpretResult::RuntimeError(
                                 "Operands must be integers for bitwise XOR.".into(),
-                            )
+                            );
                         }
                     }
                 }
@@ -482,7 +498,7 @@ impl VM {
                         _ => {
                             return InterpretResult::RuntimeError(
                                 "Operand must be an integer for bitwise NOT.".into(),
-                            )
+                            );
                         }
                     }
                 }
@@ -494,7 +510,7 @@ impl VM {
                         _ => {
                             return InterpretResult::RuntimeError(
                                 "Operands must be integers for shift left.".into(),
-                            )
+                            );
                         }
                     }
                 }
@@ -506,7 +522,7 @@ impl VM {
                         _ => {
                             return InterpretResult::RuntimeError(
                                 "Operands must be integers for shift right.".into(),
-                            )
+                            );
                         }
                     }
                 }
@@ -532,7 +548,8 @@ impl VM {
                         elements.push(self.stack.pop().unwrap());
                     }
                     elements.reverse();
-                    self.stack.push(Value::Array(Arc::new(RwLock::new(elements))));
+                    self.stack
+                        .push(Value::Array(Arc::new(RwLock::new(elements))));
                 }
                 OpCode::BuildMap => {
                     let count = self.read_byte() as usize;
@@ -560,13 +577,11 @@ impl VM {
                             let len = self.heap.as_array(r).map(|a| a.len()).unwrap_or(0);
                             let idx_res = match index {
                                 Value::Int(i) => resolve_int_index(i, len),
-                                Value::Float(f) | Value::Number(f) => {
-                                    resolve_index(f, len)
-                                }
+                                Value::Float(f) | Value::Number(f) => resolve_index(f, len),
                                 _ => {
                                     return InterpretResult::RuntimeError(
                                         "Array index must be a number.".into(),
-                                    )
+                                    );
                                 }
                             };
                             match idx_res {
@@ -577,13 +592,13 @@ impl VM {
                                 Err(IndexError::NotWhole) => {
                                     return InterpretResult::RuntimeError(
                                         "Array index must be a whole number.".into(),
-                                    )
+                                    );
                                 }
                                 Err(IndexError::OutOfRange(len)) => {
                                     return InterpretResult::RuntimeError(format!(
                                         "Index out of bounds for array of length {}",
                                         len
-                                    ))
+                                    ));
                                 }
                             }
                         }
@@ -597,7 +612,7 @@ impl VM {
                                 _ => {
                                     return InterpretResult::RuntimeError(
                                         "Array index must be a number.".into(),
-                                    )
+                                    );
                                 }
                             };
                             match idx_res {
@@ -605,13 +620,13 @@ impl VM {
                                 Err(IndexError::NotWhole) => {
                                     return InterpretResult::RuntimeError(
                                         "Array index must be a whole number.".into(),
-                                    )
+                                    );
                                 }
                                 Err(IndexError::OutOfRange(len)) => {
                                     return InterpretResult::RuntimeError(format!(
                                         "Index out of bounds for array of length {}",
                                         len
-                                    ))
+                                    ));
                                 }
                             }
                         }
@@ -619,13 +634,11 @@ impl VM {
                             let chars: Vec<char> = s.chars().collect();
                             let idx_res = match index {
                                 Value::Int(i) => resolve_int_index(i, chars.len()),
-                                Value::Float(f) | Value::Number(f) => {
-                                    resolve_index(f, chars.len())
-                                }
+                                Value::Float(f) | Value::Number(f) => resolve_index(f, chars.len()),
                                 _ => {
                                     return InterpretResult::RuntimeError(
                                         "String index must be a number.".into(),
-                                    )
+                                    );
                                 }
                             };
                             match idx_res {
@@ -633,23 +646,30 @@ impl VM {
                                 Err(IndexError::NotWhole) => {
                                     return InterpretResult::RuntimeError(
                                         "String index must be a whole number.".into(),
-                                    )
+                                    );
                                 }
                                 Err(IndexError::OutOfRange(len)) => {
                                     return InterpretResult::RuntimeError(format!(
                                         "Index out of bounds for string of length {}",
                                         len
-                                    ))
+                                    ));
                                 }
                             }
                         }
                         Value::GcMap(r) => {
                             let key = match index {
                                 Value::String(s) => s,
-                                Value::GcString(sr) => self.heap.as_string(sr).unwrap_or("").to_string(),
+                                Value::GcString(sr) => {
+                                    self.heap.as_string(sr).unwrap_or("").to_string()
+                                }
                                 other => other.to_string(),
                             };
-                            let val = self.heap.as_map(r).and_then(|m| m.get(&key)).cloned().unwrap_or(Value::Null);
+                            let val = self
+                                .heap
+                                .as_map(r)
+                                .and_then(|m| m.get(&key))
+                                .cloned()
+                                .unwrap_or(Value::Null);
                             self.stack.push(val);
                         }
                         Value::Map(m) => {
@@ -680,13 +700,11 @@ impl VM {
                             let len = self.heap.as_array(r).map(|a| a.len()).unwrap_or(0);
                             let idx_res = match index {
                                 Value::Int(i) => resolve_int_index(i, len),
-                                Value::Float(f) | Value::Number(f) => {
-                                    resolve_index(f, len)
-                                }
+                                Value::Float(f) | Value::Number(f) => resolve_index(f, len),
                                 _ => {
                                     return InterpretResult::RuntimeError(
                                         "Array index must be a number.".into(),
-                                    )
+                                    );
                                 }
                             };
                             match idx_res {
@@ -697,13 +715,13 @@ impl VM {
                                 Err(IndexError::NotWhole) => {
                                     return InterpretResult::RuntimeError(
                                         "Array index must be a whole number.".into(),
-                                    )
+                                    );
                                 }
                                 Err(IndexError::OutOfRange(len)) => {
                                     return InterpretResult::RuntimeError(format!(
                                         "Index out of bounds for array of length {}",
                                         len
-                                    ))
+                                    ));
                                 }
                             }
                         }
@@ -717,7 +735,7 @@ impl VM {
                                 _ => {
                                     return InterpretResult::RuntimeError(
                                         "Array index must be a number.".into(),
-                                    )
+                                    );
                                 }
                             };
                             match idx_res {
@@ -728,20 +746,22 @@ impl VM {
                                 Err(IndexError::NotWhole) => {
                                     return InterpretResult::RuntimeError(
                                         "Array index must be a whole number.".into(),
-                                    )
+                                    );
                                 }
                                 Err(IndexError::OutOfRange(len)) => {
                                     return InterpretResult::RuntimeError(format!(
                                         "Index out of bounds for array of length {}",
                                         len
-                                    ))
+                                    ));
                                 }
                             }
                         }
                         Value::GcMap(r) => {
                             let key = match index {
                                 Value::String(s) => s,
-                                Value::GcString(sr) => self.heap.as_string(sr).unwrap_or("").to_string(),
+                                Value::GcString(sr) => {
+                                    self.heap.as_string(sr).unwrap_or("").to_string()
+                                }
                                 other => other.to_string(),
                             };
                             self.heap.as_map_mut(r).unwrap().insert(key, value.clone());
@@ -882,12 +902,14 @@ impl VM {
                             if name == "len" && args.len() == 1 {
                                 match &args[0] {
                                     Value::GcArray(r) => {
-                                        let len = self.heap.as_array(*r).map(|a| a.len()).unwrap_or(0);
+                                        let len =
+                                            self.heap.as_array(*r).map(|a| a.len()).unwrap_or(0);
                                         self.stack.push(Value::Int(len as i64));
                                         continue;
                                     }
                                     Value::GcMap(r) => {
-                                        let len = self.heap.as_map(*r).map(|m| m.len()).unwrap_or(0);
+                                        let len =
+                                            self.heap.as_map(*r).map(|m| m.len()).unwrap_or(0);
                                         self.stack.push(Value::Int(len as i64));
                                         continue;
                                     }
@@ -910,9 +932,16 @@ impl VM {
                 }
                 OpCode::Closure => {
                     let const_idx = self.read_byte() as usize;
-                    let func = match self.frames.last().unwrap().closure.function.chunk.constants[const_idx].clone() {
+                    let func = match self.frames.last().unwrap().closure.function.chunk.constants
+                        [const_idx]
+                        .clone()
+                    {
                         Value::CompiledFunction(f) => f,
-                        _ => return InterpretResult::RuntimeError("Expected compiled function for closure".into()),
+                        _ => {
+                            return InterpretResult::RuntimeError(
+                                "Expected compiled function for closure".into(),
+                            );
+                        }
                     };
                     let mut upvalues = Vec::with_capacity(func.upvalues.len());
                     let current_slots_offset = self.frames.last().unwrap().slots_offset;
@@ -921,7 +950,9 @@ impl VM {
                             let slot = current_slots_offset + desc.index as usize;
                             upvalues.push(self.capture_upvalue(slot));
                         } else {
-                            let parent_upvalue = self.frames.last().unwrap().closure.upvalues[desc.index as usize].clone();
+                            let parent_upvalue = self.frames.last().unwrap().closure.upvalues
+                                [desc.index as usize]
+                                .clone();
                             upvalues.push(parent_upvalue);
                         }
                     }
@@ -944,7 +975,11 @@ impl VM {
                     let slot = self.read_byte() as usize;
                     let val = match self.stack.last().cloned() {
                         Some(v) => v,
-                        None => return InterpretResult::RuntimeError("Stack empty on SetUpvalue".into()),
+                        None => {
+                            return InterpretResult::RuntimeError(
+                                "Stack empty on SetUpvalue".into(),
+                            );
+                        }
                     };
                     let upvalue = self.frames.last().unwrap().closure.upvalues[slot].clone();
                     let mut uv = upvalue.write().unwrap();

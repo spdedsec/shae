@@ -5,10 +5,7 @@ use shae::run;
 fn test_format_basic_let_and_arithmetic() {
     let unformatted = "let   a=10+5*2\nlet b = (a-2) / 3\n";
     let formatted = format_source(unformatted).expect("Formatting should succeed");
-    assert_eq!(
-        formatted,
-        "let a = 10 + 5 * 2\nlet b = (a - 2) / 3\n"
-    );
+    assert_eq!(formatted, "let a = 10 + 5 * 2\nlet b = (a - 2) / 3\n");
 }
 
 #[test]
@@ -78,7 +75,9 @@ _ => "C"
     let formatted = format_source(unformatted).expect("Formatting should succeed");
     assert!(formatted.contains("let [head, ..tail] = [1, 2, 3]"));
     assert!(formatted.contains("let { name, role } = user"));
-    assert!(formatted.contains("match score {\n    90..=100 => \"A\",\n    x if x >= 80 => \"B\",\n    _ => \"C\"\n}"));
+    assert!(formatted.contains(
+        "match score {\n    90..=100 => \"A\",\n    x if x >= 80 => \"B\",\n    _ => \"C\"\n}"
+    ));
 }
 
 #[test]

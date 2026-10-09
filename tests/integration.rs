@@ -93,7 +93,10 @@ fn test_string_interpolation_and_escaped_braces() {
     match res {
         Value::Array(arr) => {
             let b = arr.read().unwrap();
-            assert_eq!(b[0], Value::String("Hello Shae, you have 3 messages!".into()));
+            assert_eq!(
+                b[0],
+                Value::String("Hello Shae, you have 3 messages!".into())
+            );
             assert_eq!(b[1], Value::String("Literal {brace} with Shae".into()));
         }
         _ => panic!("Expected array"),
@@ -169,4 +172,3 @@ fn test_property_access_semantics() {
     let res = run(coalesce_script).expect("Coalescing should succeed");
     assert_eq!(res, Value::Number(25.0));
 }
-

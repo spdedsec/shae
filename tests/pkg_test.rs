@@ -1,4 +1,4 @@
-use shae::pkg::{self, PackageManifest, Lockfile};
+use shae::pkg::{self, Lockfile, PackageManifest};
 use shae::run_file;
 use std::fs;
 use std::path::PathBuf;
@@ -10,7 +10,8 @@ struct TempDir {
 
 impl TempDir {
     fn new(name: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("shae_test_pkg_{}_{}", name, std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("shae_test_pkg_{}_{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).unwrap();
         Self { path }
@@ -142,7 +143,10 @@ fn greet(name) {
     let lock = pkg::add_dependency(&app_dir, "greeter", &git_url, None, None, None)
         .expect("add git dependency failed");
 
-    assert_eq!(lock.packages["greeter"].commit.as_ref().unwrap(), &initial_sha);
+    assert_eq!(
+        lock.packages["greeter"].commit.as_ref().unwrap(),
+        &initial_sha
+    );
 
     // 3. Test running script using git dependency
     let app_code = r#"
@@ -154,9 +158,17 @@ greet("Shae Developer")
     fs::write(&app_main, app_code).unwrap();
 
     let val = run_file(&app_main).expect("Git package execution failed");
-    assert_eq!(val.to_json(), serde_json::json!("Greetings, Shae Developer!"));
+    assert_eq!(
+        val.to_json(),
+        serde_json::json!("Greetings, Shae Developer!")
+    );
 
     // 4. Test Lockfile persistence
-    let reloaded_lock = Lockfile::load_from_dir(&app_dir).unwrap().expect("lockfile should exist");
-    assert_eq!(reloaded_lock.packages["greeter"].commit.as_ref().unwrap(), &initial_sha);
+    let reloaded_lock = Lockfile::load_from_dir(&app_dir)
+        .unwrap()
+        .expect("lockfile should exist");
+    assert_eq!(
+        reloaded_lock.packages["greeter"].commit.as_ref().unwrap(),
+        &initial_sha
+    );
 }

@@ -1,4 +1,4 @@
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
 
@@ -58,7 +58,9 @@ impl<R: Read, W: Write> LspServer<R, W> {
                 if let Some(params) = msg.get("params") {
                     if let (Some(uri), Some(text)) = (
                         params.pointer("/textDocument/uri").and_then(|u| u.as_str()),
-                        params.pointer("/textDocument/text").and_then(|t| t.as_str()),
+                        params
+                            .pointer("/textDocument/text")
+                            .and_then(|t| t.as_str()),
                     ) {
                         self.documents.insert(uri.to_string(), text.to_string());
                         self.publish_diagnostics(uri, text)?;
@@ -67,10 +69,14 @@ impl<R: Read, W: Write> LspServer<R, W> {
             }
             Some("textDocument/didChange") => {
                 if let Some(params) = msg.get("params") {
-                    if let Some(uri) = params.pointer("/textDocument/uri").and_then(|u| u.as_str()) {
-                        if let Some(changes) = params.pointer("/contentChanges").and_then(|c| c.as_array()) {
+                    if let Some(uri) = params.pointer("/textDocument/uri").and_then(|u| u.as_str())
+                    {
+                        if let Some(changes) =
+                            params.pointer("/contentChanges").and_then(|c| c.as_array())
+                        {
                             if let Some(last_change) = changes.last() {
-                                if let Some(text) = last_change.get("text").and_then(|t| t.as_str()) {
+                                if let Some(text) = last_change.get("text").and_then(|t| t.as_str())
+                                {
                                     self.documents.insert(uri.to_string(), text.to_string());
                                     self.publish_diagnostics(uri, text)?;
                                 }
@@ -81,7 +87,8 @@ impl<R: Read, W: Write> LspServer<R, W> {
             }
             Some("textDocument/didClose") => {
                 if let Some(params) = msg.get("params") {
-                    if let Some(uri) = params.pointer("/textDocument/uri").and_then(|u| u.as_str()) {
+                    if let Some(uri) = params.pointer("/textDocument/uri").and_then(|u| u.as_str())
+                    {
                         self.documents.remove(uri);
                     }
                 }
@@ -192,54 +199,54 @@ impl<R: Read, W: Write> LspServer<R, W> {
                     "message": e.to_string()
                 }));
             }
-            Ok(tokens) => {
-                match crate::parser::parse(tokens) {
-                    Err(pe) => {
-                        let (line, col) = match &pe {
-                            crate::parser::ParserError::UnexpectedToken { line, col, .. } => (*line, *col),
-                            crate::parser::ParserError::Advice { line, col, .. } => (*line, *col),
-                            _ => (1, 1),
+            Ok(tokens) => match crate::parser::parse(tokens) {
+                Err(pe) => {
+                    let (line, col) = match &pe {
+                        crate::parser::ParserError::UnexpectedToken { line, col, .. } => {
+                            (*line, *col)
+                        }
+                        crate::parser::ParserError::Advice { line, col, .. } => (*line, *col),
+                        _ => (1, 1),
+                    };
+                    let l = line.saturating_sub(1);
+                    let c = col.saturating_sub(1);
+                    diagnostics.push(json!({
+                        "range": {
+                            "start": { "line": l, "character": c },
+                            "end": { "line": l, "character": c + 1 }
+                        },
+                        "severity": 1,
+                        "source": "shae",
+                        "message": pe.to_string()
+                    }));
+                }
+                Ok(program) => {
+                    let mut linter = crate::linter::Linter::new();
+                    let lints = linter.lint_program(&program);
+                    for diag in lints {
+                        let l = diag.span.line.saturating_sub(1);
+                        let c = diag.span.col.saturating_sub(1);
+                        let sev = match diag.severity {
+                            crate::linter::DiagnosticSeverity::Error => 1,
+                            crate::linter::DiagnosticSeverity::Warning => 2,
                         };
-                        let l = line.saturating_sub(1);
-                        let c = col.saturating_sub(1);
+                        let msg = if let Some(ref h) = diag.hint {
+                            format!("{} (Hint: {})", diag.message, h)
+                        } else {
+                            diag.message.clone()
+                        };
                         diagnostics.push(json!({
                             "range": {
                                 "start": { "line": l, "character": c },
                                 "end": { "line": l, "character": c + 1 }
                             },
-                            "severity": 1,
-                            "source": "shae",
-                            "message": pe.to_string()
+                            "severity": sev,
+                            "source": "shae-linter",
+                            "message": msg
                         }));
                     }
-                    Ok(program) => {
-                        let mut linter = crate::linter::Linter::new();
-                        let lints = linter.lint_program(&program);
-                        for diag in lints {
-                            let l = diag.span.line.saturating_sub(1);
-                            let c = diag.span.col.saturating_sub(1);
-                            let sev = match diag.severity {
-                                crate::linter::DiagnosticSeverity::Error => 1,
-                                crate::linter::DiagnosticSeverity::Warning => 2,
-                            };
-                            let msg = if let Some(ref h) = diag.hint {
-                                format!("{} (Hint: {})", diag.message, h)
-                            } else {
-                                diag.message.clone()
-                            };
-                            diagnostics.push(json!({
-                                "range": {
-                                    "start": { "line": l, "character": c },
-                                    "end": { "line": l, "character": c + 1 }
-                                },
-                                "severity": sev,
-                                "source": "shae-linter",
-                                "message": msg
-                            }));
-                        }
-                    }
                 }
-            }
+            },
         }
 
         let notif = json!({
@@ -285,22 +292,58 @@ impl<R: Read, W: Write> LspServer<R, W> {
         // 2. Builtin Functions
         let builtins = [
             ("print", "print(val) - Print value to stdout", 3),
-            ("println", "println(val) - Print value with newline to stdout", 3),
+            (
+                "println",
+                "println(val) - Print value with newline to stdout",
+                3,
+            ),
             ("read", "read(path) - Read file contents as string", 3),
-            ("write", "write(path, content) - Write string content to file", 3),
+            (
+                "write",
+                "write(path, content) - Write string content to file",
+                3,
+            ),
             ("fetch", "fetch(url) - Make HTTP GET request", 3),
             ("serve", "serve(port, handler) - Start HTTP server", 3),
-            ("serve_tls", "serve_tls(port, handler, cert, key) - Start HTTPS server", 3),
-            ("route_match", "route_match(pattern, path) - Match route parameters", 3),
+            (
+                "serve_tls",
+                "serve_tls(port, handler, cert, key) - Start HTTPS server",
+                3,
+            ),
+            (
+                "route_match",
+                "route_match(pattern, path) - Match route parameters",
+                3,
+            ),
             ("spawn", "spawn(fn) - Spawn background task thread", 3),
             ("join", "join(task) - Await and join task result", 3),
-            ("channel", "channel([capacity]) - Create MPMC message channel", 3),
+            (
+                "channel",
+                "channel([capacity]) - Create MPMC message channel",
+                3,
+            ),
             ("send", "send(ch, val) - Send value into channel", 3),
-            ("recv", "recv(ch, [timeout_ms]) - Receive value from channel", 3),
-            ("try_recv", "try_recv(ch) - Non-blocking receive from channel", 3),
+            (
+                "recv",
+                "recv(ch, [timeout_ms]) - Receive value from channel",
+                3,
+            ),
+            (
+                "try_recv",
+                "try_recv(ch) - Non-blocking receive from channel",
+                3,
+            ),
             ("close", "close(ch) - Close channel", 3),
-            ("assert", "assert(condition, [msg]) - Assert condition is truthy", 3),
-            ("assert_eq", "assert_eq(actual, expected) - Assert equality", 3),
+            (
+                "assert",
+                "assert(condition, [msg]) - Assert condition is truthy",
+                3,
+            ),
+            (
+                "assert_eq",
+                "assert_eq(actual, expected) - Assert equality",
+                3,
+            ),
         ];
         for (name, detail, kind) in builtins {
             items.push(json!({
@@ -312,13 +355,28 @@ impl<R: Read, W: Write> LspServer<R, W> {
 
         // 3. Standard Library Modules
         let std_modules = [
-            ("std:fs", "File system operations (read, write, append, mkdir, exists, readDir)"),
-            ("std:path", "File path manipulation (join, dirname, basename, extname, isAbsolute)"),
-            ("std:sys", "System utilities (platform, arch, cwd, env, exit)"),
+            (
+                "std:fs",
+                "File system operations (read, write, append, mkdir, exists, readDir)",
+            ),
+            (
+                "std:path",
+                "File path manipulation (join, dirname, basename, extname, isAbsolute)",
+            ),
+            (
+                "std:sys",
+                "System utilities (platform, arch, cwd, env, exit)",
+            ),
             ("std:time", "Date and time utilities (now, nowMs, sleep)"),
-            ("std:crypto", "Cryptographic hashes & random bytes (sha256, sha512, hmac, uuid)"),
+            (
+                "std:crypto",
+                "Cryptographic hashes & random bytes (sha256, sha512, hmac, uuid)",
+            ),
             ("std:codec", "Encoding & decoding (base64, url, hex)"),
-            ("std:regex", "Regular expressions (is_match, find, find_all, replace, split)"),
+            (
+                "std:regex",
+                "Regular expressions (is_match, find, find_all, replace, split)",
+            ),
         ];
         for (mod_name, doc) in std_modules {
             items.push(json!({
@@ -329,7 +387,10 @@ impl<R: Read, W: Write> LspServer<R, W> {
         }
 
         // 4. In-document symbols (functions, variables)
-        if let Some(uri) = msg.pointer("/params/textDocument/uri").and_then(|u| u.as_str()) {
+        if let Some(uri) = msg
+            .pointer("/params/textDocument/uri")
+            .and_then(|u| u.as_str())
+        {
             if let Some(source) = self.documents.get(uri) {
                 if let Ok(tokens) = crate::lexer::tokenize(source) {
                     if let Ok(program) = crate::parser::parse(tokens) {
@@ -381,19 +442,39 @@ impl<R: Read, W: Write> LspServer<R, W> {
         let doc = match word.as_str() {
             "print" => "**print(val)**\n\nPrints the value to stdout without a trailing newline.",
             "println" => "**println(val)**\n\nPrints the value to stdout with a trailing newline.",
-            "serve" => "**serve(port, handler_or_router)**\n\nStarts a multi-threaded HTTP server with keep-alive connection pooling.",
-            "serve_tls" => "**serve_tls(port, handler_or_router, cert_path, key_path)**\n\nStarts an HTTPS server using TLS encryption.",
-            "channel" => "**channel([capacity])**\n\nCreates a thread-safe message-passing channel (bounded or unbounded).",
-            "spawn" => "**spawn(fn)**\n\nSpawns a background worker thread executing the given function.",
-            "join" => "**join(task)**\n\nBlocks until the spawned task completes and returns its result.",
-            "route_match" => "**route_match(pattern, path)**\n\nMatches parameterized route patterns (e.g. `\"/users/:id\"`) and returns captured parameters.",
+            "serve" => {
+                "**serve(port, handler_or_router)**\n\nStarts a multi-threaded HTTP server with keep-alive connection pooling."
+            }
+            "serve_tls" => {
+                "**serve_tls(port, handler_or_router, cert_path, key_path)**\n\nStarts an HTTPS server using TLS encryption."
+            }
+            "channel" => {
+                "**channel([capacity])**\n\nCreates a thread-safe message-passing channel (bounded or unbounded)."
+            }
+            "spawn" => {
+                "**spawn(fn)**\n\nSpawns a background worker thread executing the given function."
+            }
+            "join" => {
+                "**join(task)**\n\nBlocks until the spawned task completes and returns its result."
+            }
+            "route_match" => {
+                "**route_match(pattern, path)**\n\nMatches parameterized route patterns (e.g. `\"/users/:id\"`) and returns captured parameters."
+            }
             "std:fs" => "**std:fs**\n\nStandard library module for file system operations.",
-            "std:crypto" => "**std:crypto**\n\nCryptographic functions: SHA-256, SHA-512, HMAC, secure random bytes, and UUID v4.",
-            "std:regex" => "**std:regex**\n\nPCRE-compatible regular expressions: matching, searching, splitting, and substitution.",
-            "std:codec" => "**std:codec**\n\nEncoding/decoding codecs: Base64, URL percent-encoding, and Hex.",
+            "std:crypto" => {
+                "**std:crypto**\n\nCryptographic functions: SHA-256, SHA-512, HMAC, secure random bytes, and UUID v4."
+            }
+            "std:regex" => {
+                "**std:regex**\n\nPCRE-compatible regular expressions: matching, searching, splitting, and substitution."
+            }
+            "std:codec" => {
+                "**std:codec**\n\nEncoding/decoding codecs: Base64, URL percent-encoding, and Hex."
+            }
             "fn" => "**fn keyword**\n\nDeclares a named function or lambda.",
             "let" => "**let keyword**\n\nBinds variables with optional destructuring.",
-            "match" => "**match expression**\n\nPattern matching with guards and exhaustiveness checking.",
+            "match" => {
+                "**match expression**\n\nPattern matching with guards and exhaustiveness checking."
+            }
             _ => return None,
         };
 
@@ -406,7 +487,10 @@ impl<R: Read, W: Write> LspServer<R, W> {
     }
 
     fn compute_formatting(&self, msg: &JsonValue) -> Vec<JsonValue> {
-        let uri = match msg.pointer("/params/textDocument/uri").and_then(|u| u.as_str()) {
+        let uri = match msg
+            .pointer("/params/textDocument/uri")
+            .and_then(|u| u.as_str())
+        {
             Some(u) => u,
             None => return Vec::new(),
         };

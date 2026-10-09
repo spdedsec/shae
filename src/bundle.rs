@@ -66,7 +66,9 @@ pub fn collect_bundle(entry_file: &Path) -> Result<BundleArchive, BundleError> {
                         let parent = current_path.parent().unwrap_or(Path::new("."));
                         let dep_path = if path.starts_with("./") || path.starts_with("../") {
                             parent.join(path)
-                        } else if let Some(pkg_file) = crate::pkg::resolve_package_file(parent, path) {
+                        } else if let Some(pkg_file) =
+                            crate::pkg::resolve_package_file(parent, path)
+                        {
                             pkg_file
                         } else {
                             parent.join(path)
@@ -88,7 +90,10 @@ pub fn collect_bundle(entry_file: &Path) -> Result<BundleArchive, BundleError> {
     Ok(archive)
 }
 
-pub fn create_standalone_binary(entry_file: &Path, output_binary: &Path) -> Result<(), BundleError> {
+pub fn create_standalone_binary(
+    entry_file: &Path,
+    output_binary: &Path,
+) -> Result<(), BundleError> {
     let archive = collect_bundle(entry_file)?;
     let payload = serde_json::to_vec(&archive)?;
     let payload_len = payload.len() as u64;

@@ -1,33 +1,41 @@
+use shae::eval::Evaluator;
+use shae::lexer;
+use shae::parser;
+use shae::run_in_evaluator;
+use shae::value::Value;
 use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process;
-use shae::run_in_evaluator;
-use shae::eval::Evaluator;
-use shae::lexer;
-use shae::parser;
-use shae::value::Value;
 
 fn show_help() {
-    println!("Shae v{} - It runs, it does stuff, it leaves you alone.\n", env!("CARGO_PKG_VERSION"));
+    println!(
+        "Shae v{} - It runs, it does stuff, it leaves you alone.\n",
+        env!("CARGO_PKG_VERSION")
+    );
     println!("Usage:");
     println!("  shae                       Start the interactive REPL");
     println!("  shae repl                  Start the interactive REPL");
     println!("  shae <file.shae>           Run a Shae script");
-    println!("  shae run [file.shae]       Run a Shae script (or package entrypoint from shae.toml)");
+    println!(
+        "  shae run [file.shae]       Run a Shae script (or package entrypoint from shae.toml)"
+    );
     println!("  shae check <file.shae>     Lint and check syntax/declarations of a Shae script");
     println!("  shae test [path]           Run Shae tests (*_test.shae)");
     println!("  shae fmt <file.shae>       Format a Shae script");
     println!("  shae new <project_name>    Create a new Shae project folder");
     println!("  shae init [name]           Initialize package manifest (shae.toml)");
     println!("  shae add <dep> <source>    Add dependency (git URL or local path)");
-    println!("  shae install               Install dependencies into .shae/packages and update shae.lock");
+    println!(
+        "  shae install               Install dependencies into .shae/packages and update shae.lock"
+    );
     println!("  shae pkg <cmd>             Package manager subcommands (init, add, install)");
     println!("  shae lsp                   Start the Language Server Protocol daemon (stdio)");
     println!("  shae bundle <entry.shae>   Bundle application into a standalone executable");
     println!("  shae --joke                Print a programming joke");
     println!("  shae --tip                 Print a Shae tip");
+    println!("  shae --version, -V         Show version information");
     println!("  shae --help, -h            Show this help message");
 }
 
@@ -85,7 +93,10 @@ print(greet("World"))
 }
 
 fn run_repl() {
-    println!("Shae v{} - It runs, it does stuff, it leaves you alone.", env!("CARGO_PKG_VERSION"));
+    println!(
+        "Shae v{} - It runs, it does stuff, it leaves you alone.",
+        env!("CARGO_PKG_VERSION")
+    );
     println!("Type 'exit' or press Ctrl+D to quit.\n");
 
     let mut ev = Evaluator::new();
@@ -203,10 +214,16 @@ fn check_file(filename: &str) {
     }
 
     if error_count > 0 {
-        eprintln!("Found {} error(s), {} warning(s).", error_count, warning_count);
+        eprintln!(
+            "Found {} error(s), {} warning(s).",
+            error_count, warning_count
+        );
         process::exit(1);
     } else if warning_count > 0 {
-        println!("✅ Syntax and declarations OK (with {} warning(s)).", warning_count);
+        println!(
+            "✅ Syntax and declarations OK (with {} warning(s)).",
+            warning_count
+        );
     } else {
         println!("✅ Syntax and declarations OK. No issues found.");
     }
@@ -230,7 +247,10 @@ fn run_tests(target: Option<&str>) {
     }
 
     if test_files.is_empty() {
-        println!("No test files (*_test.shae or test_*.shae) found in '{}'.", root);
+        println!(
+            "No test files (*_test.shae or test_*.shae) found in '{}'.",
+            root
+        );
         return;
     }
 
@@ -279,10 +299,11 @@ fn find_test_files(dir: &Path, out: &mut Vec<String>) {
                 if name != "target" && name != ".git" && name != "node_modules" {
                     find_test_files(&path, out);
                 }
-            } else if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                if file_name.ends_with(".shae") && (file_name.ends_with("_test.shae") || file_name.starts_with("test_")) {
-                    out.push(path.to_string_lossy().to_string());
-                }
+            } else if let Some(file_name) = path.file_name().and_then(|n| n.to_str())
+                && file_name.ends_with(".shae")
+                && (file_name.ends_with("_test.shae") || file_name.starts_with("test_"))
+            {
+                out.push(path.to_string_lossy().to_string());
             }
         }
     }
@@ -297,17 +318,20 @@ fn run_bundled_archive(archive: shae::bundle::BundleArchive) {
             process::exit(1);
         }
     } else {
-        eprintln!("Error: Bundled entry point '{}' not found in archive", archive.entry_path);
+        eprintln!(
+            "Error: Bundled entry point '{}' not found in archive",
+            archive.entry_path
+        );
         process::exit(1);
     }
 }
 
 fn main() {
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Ok(Some(archive)) = shae::bundle::read_embedded_bundle(&exe_path) {
-            run_bundled_archive(archive);
-            return;
-        }
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Ok(Some(archive)) = shae::bundle::read_embedded_bundle(&exe_path)
+    {
+        run_bundled_archive(archive);
+        return;
     }
 
     let args: Vec<String> = env::args().collect();
@@ -321,6 +345,9 @@ fn main() {
         "repl" => run_repl(),
         "--joke" => show_joke(),
         "--tip" => show_tip(),
+        "--version" | "-V" => {
+            println!("shae {}", env!("CARGO_PKG_VERSION"));
+        }
         "--help" | "-h" => show_help(),
         "new" => {
             if args.len() < 3 {
@@ -332,7 +359,10 @@ fn main() {
         "init" => {
             let name = args.get(2).map(|s| s.as_str());
             match shae::pkg::init_project(Path::new("."), name) {
-                Ok(m) => println!("✨ Initialized package '{}' (v{}) with shae.toml", m.package.name, m.package.version),
+                Ok(m) => println!(
+                    "✨ Initialized package '{}' (v{}) with shae.toml",
+                    m.package.name, m.package.version
+                ),
                 Err(e) => {
                     eprintln!("Error initializing package: {}", e);
                     process::exit(1);
@@ -372,15 +402,16 @@ fn main() {
                 }
             }
         }
-        "install" => {
-            match shae::pkg::install_dependencies(Path::new(".")) {
-                Ok(lock) => println!("✅ Installed {} package(s). shae.lock up to date.", lock.packages.len()),
-                Err(e) => {
-                    eprintln!("Error installing dependencies: {}", e);
-                    process::exit(1);
-                }
+        "install" => match shae::pkg::install_dependencies(Path::new(".")) {
+            Ok(lock) => println!(
+                "✅ Installed {} package(s). shae.lock up to date.",
+                lock.packages.len()
+            ),
+            Err(e) => {
+                eprintln!("Error installing dependencies: {}", e);
+                process::exit(1);
             }
-        }
+        },
         "pkg" => {
             if args.len() < 3 {
                 println!("Usage: shae pkg <init|add|install>");
@@ -390,7 +421,10 @@ fn main() {
                 "init" => {
                     let name = args.get(3).map(|s| s.as_str());
                     match shae::pkg::init_project(Path::new("."), name) {
-                        Ok(m) => println!("✨ Initialized package '{}' (v{}) with shae.toml", m.package.name, m.package.version),
+                        Ok(m) => println!(
+                            "✨ Initialized package '{}' (v{}) with shae.toml",
+                            m.package.name, m.package.version
+                        ),
                         Err(e) => {
                             eprintln!("Error initializing package: {}", e);
                             process::exit(1);
@@ -404,7 +438,14 @@ fn main() {
                     }
                     let dep_name = &args[3];
                     let source = &args[4];
-                    match shae::pkg::add_dependency(Path::new("."), dep_name, source, None, None, None) {
+                    match shae::pkg::add_dependency(
+                        Path::new("."),
+                        dep_name,
+                        source,
+                        None,
+                        None,
+                        None,
+                    ) {
                         Ok(_) => println!("✅ Added and resolved dependency '{}'", dep_name),
                         Err(e) => {
                             eprintln!("Error adding dependency: {}", e);
@@ -412,15 +453,16 @@ fn main() {
                         }
                     }
                 }
-                "install" => {
-                    match shae::pkg::install_dependencies(Path::new(".")) {
-                        Ok(lock) => println!("✅ Installed {} package(s). shae.lock up to date.", lock.packages.len()),
-                        Err(e) => {
-                            eprintln!("Error installing dependencies: {}", e);
-                            process::exit(1);
-                        }
+                "install" => match shae::pkg::install_dependencies(Path::new(".")) {
+                    Ok(lock) => println!(
+                        "✅ Installed {} package(s). shae.lock up to date.",
+                        lock.packages.len()
+                    ),
+                    Err(e) => {
+                        eprintln!("Error installing dependencies: {}", e);
+                        process::exit(1);
                     }
-                }
+                },
                 other => {
                     eprintln!("Unknown pkg command: {}", other);
                     process::exit(1);
@@ -451,7 +493,11 @@ fn main() {
             check_file(&args[2]);
         }
         "test" => {
-            let target = if args.len() >= 3 { Some(args[2].as_str()) } else { None };
+            let target = if args.len() >= 3 {
+                Some(args[2].as_str())
+            } else {
+                None
+            };
             run_tests(target);
         }
         "fmt" => {
@@ -459,7 +505,9 @@ fn main() {
             let mut target = None;
             for arg in &args[2..] {
                 if arg == "--help" || arg == "-h" {
-                    println!("Usage: shae fmt [path] [--check]\n\nFormat Shae source files in place, or check formatting with --check.");
+                    println!(
+                        "Usage: shae fmt [path] [--check]\n\nFormat Shae source files in place, or check formatting with --check."
+                    );
                     return;
                 } else if arg == "--check" {
                     check_only = true;
@@ -493,7 +541,10 @@ fn main() {
                 }
             }
             let out_path = output.unwrap_or_else(|| {
-                let stem = entry.file_stem().and_then(|s| s.to_str()).unwrap_or("bundle");
+                let stem = entry
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("bundle");
                 format!("{}.bin", stem)
             });
             match shae::bundle::create_standalone_binary(entry, Path::new(&out_path)) {
@@ -524,10 +575,10 @@ fn find_shae_files(dir: &Path, out: &mut Vec<String>) {
                 if name != "target" && name != ".git" && name != "node_modules" {
                     find_shae_files(&path, out);
                 }
-            } else if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                if file_name.ends_with(".shae") {
-                    out.push(path.to_string_lossy().to_string());
-                }
+            } else if let Some(file_name) = path.file_name().and_then(|n| n.to_str())
+                && file_name.ends_with(".shae")
+            {
+                out.push(path.to_string_lossy().to_string());
             }
         }
     }
@@ -591,7 +642,10 @@ fn format_target(target: &str, check_only: bool) {
 
     if check_only {
         if unformatted > 0 {
-            eprintln!("\n{} file(s) need formatting. Run `shae fmt` to fix.", unformatted);
+            eprintln!(
+                "\n{} file(s) need formatting. Run `shae fmt` to fix.",
+                unformatted
+            );
             process::exit(1);
         } else {
             println!("All {} file(s) properly formatted.", files.len());

@@ -21,11 +21,27 @@ fn test_func(used_param, unused_param, _intentional) {
         .collect();
 
     assert_eq!(unused_warnings.len(), 2);
-    assert!(unused_warnings.iter().any(|d| d.message.contains("unused_param")));
-    assert!(unused_warnings.iter().any(|d| d.message.contains("unused_local")));
+    assert!(
+        unused_warnings
+            .iter()
+            .any(|d| d.message.contains("unused_param"))
+    );
+    assert!(
+        unused_warnings
+            .iter()
+            .any(|d| d.message.contains("unused_local"))
+    );
     // Verify underscore-prefixed variables were NOT warned
-    assert!(!unused_warnings.iter().any(|d| d.message.contains("_intentional")));
-    assert!(!unused_warnings.iter().any(|d| d.message.contains("_ignored")));
+    assert!(
+        !unused_warnings
+            .iter()
+            .any(|d| d.message.contains("_intentional"))
+    );
+    assert!(
+        !unused_warnings
+            .iter()
+            .any(|d| d.message.contains("_ignored"))
+    );
 }
 
 #[test]
@@ -47,7 +63,9 @@ fn compute(x) {
 
     let unreachable_warnings: Vec<_> = diags
         .iter()
-        .filter(|d| d.severity == DiagnosticSeverity::Warning && d.message.contains("Unreachable code"))
+        .filter(|d| {
+            d.severity == DiagnosticSeverity::Warning && d.message.contains("Unreachable code")
+        })
         .collect();
 
     assert_eq!(unreachable_warnings.len(), 3);
@@ -73,8 +91,16 @@ fn inner() {
         .collect();
 
     assert_eq!(shadowing_warnings.len(), 2);
-    assert!(shadowing_warnings.iter().any(|d| d.message.contains("outer variable")));
-    assert!(shadowing_warnings.iter().any(|d| d.message.contains("built-in function")));
+    assert!(
+        shadowing_warnings
+            .iter()
+            .any(|d| d.message.contains("outer variable"))
+    );
+    assert!(
+        shadowing_warnings
+            .iter()
+            .any(|d| d.message.contains("built-in function"))
+    );
 }
 
 #[test]
@@ -94,5 +120,9 @@ print(result)
     let mut linter = Linter::new();
     let diags = linter.lint_program(&program);
 
-    assert!(diags.is_empty(), "Expected 0 diagnostics for clean code, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected 0 diagnostics for clean code, got: {:?}",
+        diags
+    );
 }

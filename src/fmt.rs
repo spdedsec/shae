@@ -86,9 +86,7 @@ impl Formatter {
                 self.output.push('}');
 
                 if let Some(else_stmts) = else_branch {
-                    if else_stmts.len() == 1
-                        && matches!(else_stmts[0].kind, StmtKind::If { .. })
-                    {
+                    if else_stmts.len() == 1 && matches!(else_stmts[0].kind, StmtKind::If { .. }) {
                         self.output.push_str(" else ");
                         self.format_else_if(&else_stmts[0]);
                     } else {
@@ -258,9 +256,7 @@ impl Formatter {
             self.output.push('}');
 
             if let Some(else_stmts) = else_branch {
-                if else_stmts.len() == 1
-                    && matches!(else_stmts[0].kind, StmtKind::If { .. })
-                {
+                if else_stmts.len() == 1 && matches!(else_stmts[0].kind, StmtKind::If { .. }) {
                     self.output.push_str(" else ");
                     self.format_else_if(&else_stmts[0]);
                 } else {
@@ -351,7 +347,8 @@ impl Formatter {
                             self.output.push_str(k);
                         } else {
                             self.output.push('"');
-                            self.output.push_str(&k.replace('\\', "\\\\").replace('"', "\\\""));
+                            self.output
+                                .push_str(&k.replace('\\', "\\\\").replace('"', "\\\""));
                             self.output.push('"');
                         }
                         self.output.push_str(": ");
@@ -390,7 +387,9 @@ impl Formatter {
                 self.output.push_str("use ");
                 self.format_expr(path, 0);
             }
-            Expr::Binary { left, op, right, .. } => {
+            Expr::Binary {
+                left, op, right, ..
+            } => {
                 let prec = op_precedence(*op);
                 let need_paren = prec < parent_prec;
                 if need_paren {
@@ -436,7 +435,12 @@ impl Formatter {
                 }
                 self.output.push(')');
             }
-            Expr::Get { target, property, safe, .. } => {
+            Expr::Get {
+                target,
+                property,
+                safe,
+                ..
+            } => {
                 self.format_expr(target, 14);
                 if *safe {
                     self.output.push_str("?.");
@@ -553,7 +557,11 @@ impl Formatter {
             Pattern::Wildcard => self.output.push('_'),
             Pattern::Variable(v) => self.output.push_str(v),
             Pattern::Literal(lit) => self.format_literal(lit),
-            Pattern::Range { start, end, inclusive } => {
+            Pattern::Range {
+                start,
+                end,
+                inclusive,
+            } => {
                 self.format_literal(start);
                 if *inclusive {
                     self.output.push_str("..=");
@@ -562,7 +570,11 @@ impl Formatter {
                 }
                 self.format_literal(end);
             }
-            Pattern::Enum { enum_name, variant_name, fields } => {
+            Pattern::Enum {
+                enum_name,
+                variant_name,
+                fields,
+            } => {
                 if let Some(e) = enum_name {
                     let _ = write!(self.output, "{}.{}", e, variant_name);
                 } else {
@@ -586,14 +598,10 @@ impl Formatter {
 fn needs_extra_newline(prev: &Stmt, next: &Stmt) -> bool {
     matches!(
         prev.kind,
-        StmtKind::FnDef { .. }
-            | StmtKind::StructDef { .. }
-            | StmtKind::EnumDef { .. }
+        StmtKind::FnDef { .. } | StmtKind::StructDef { .. } | StmtKind::EnumDef { .. }
     ) || matches!(
         next.kind,
-        StmtKind::FnDef { .. }
-            | StmtKind::StructDef { .. }
-            | StmtKind::EnumDef { .. }
+        StmtKind::FnDef { .. } | StmtKind::StructDef { .. } | StmtKind::EnumDef { .. }
     )
 }
 

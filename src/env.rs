@@ -1,7 +1,7 @@
 use crate::value::Value;
-use std::sync::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::RwLock;
 
 #[derive(Debug)]
 pub struct Environment {
@@ -65,4 +65,3 @@ impl Environment {
         map
     }
 }
-

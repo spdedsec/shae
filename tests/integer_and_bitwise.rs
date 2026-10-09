@@ -120,4 +120,3 @@ fn test_array_indexing_with_integers() {
         _ => panic!("Expected array"),
     }
 }
-

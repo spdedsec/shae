@@ -1,5 +1,5 @@
-use shae::{run, run_file};
 use serde_json::json;
+use shae::{run, run_file};
 use std::fs;
 use std::path::Path;
 
@@ -211,15 +211,12 @@ let a = isAbs(p)
 "#;
 
     let val = run(script).expect("std:path script failed");
+    let sep = std::path::MAIN_SEPARATOR;
+    let expected_p = format!("src{}modules{}main.shae", sep, sep);
+    let expected_d = format!("src{}modules", sep);
     assert_eq!(
         val.to_json(),
-        json!([
-            "src/modules/main.shae",
-            "main.shae",
-            "src/modules",
-            "shae",
-            false
-        ])
+        json!([expected_p, "main.shae", expected_d, "shae", false])
     );
 }
 

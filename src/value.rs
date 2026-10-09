@@ -5,10 +5,10 @@ use crate::eval::{Evaluator, RuntimeError};
 use crate::gc::GcRef;
 use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
-use std::sync::RwLock;
-use std::sync::Mutex;
 use std::fmt;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::RwLock;
 
 pub type BuiltinFn =
     fn(&mut Evaluator, Vec<Value>, crate::ast::Span) -> Result<Value, RuntimeError>;
@@ -81,7 +81,7 @@ pub enum Value {
         body: Arc<Vec<Stmt>>,
         closure: Arc<RwLock<Environment>>,
     },
-Builtin {
+    Builtin {
         name: String,
         func: BuiltinFn,
     },
@@ -130,7 +130,7 @@ impl Value {
             Value::GcString(_) => "string",
             Value::GcInstance(_) => "instance",
             Value::Function { .. } => "function",
-Value::Builtin { .. } => "builtin_function",
+            Value::Builtin { .. } => "builtin_function",
             Value::BoundMethod { .. } => "bound_method",
             Value::StructDef { .. } => "struct_def",
             Value::StructInstance { name: _, .. } => "struct_instance",
@@ -153,10 +153,18 @@ Value::Builtin { .. } => "builtin_function",
             Value::Map(m) => !m.read().unwrap().is_empty(),
             Value::CompiledFunction(_) => true,
             Value::Closure(_) => true,
-            Value::GcArray(_) | Value::GcMap(_) | Value::GcClosure(_) | Value::GcString(_) | Value::GcInstance(_) => true,
-Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. } => true,
+            Value::GcArray(_)
+            | Value::GcMap(_)
+            | Value::GcClosure(_)
+            | Value::GcString(_)
+            | Value::GcInstance(_) => true,
+            Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. } => true,
             Value::StructDef { .. } | Value::StructInstance { .. } => true,
-            Value::EnumDef { .. } | Value::EnumConstructor { .. } | Value::EnumInstance { .. } | Value::Task(_) | Value::Channel(_) => true,
+            Value::EnumDef { .. }
+            | Value::EnumConstructor { .. }
+            | Value::EnumInstance { .. }
+            | Value::Task(_)
+            | Value::Channel(_) => true,
         }
     }
 
@@ -179,7 +187,8 @@ Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. } => tr
             }
             Value::Map(m) => {
                 let entries: Vec<String> = m
-                    .read().unwrap()
+                    .read()
+                    .unwrap()
                     .iter()
                     .map(|(k, v)| format!("{}: {}", k, v.to_repr()))
                     .collect();
@@ -206,7 +215,7 @@ Value::Function { .. } | Value::Builtin { .. } | Value::BoundMethod { .. } => tr
                     "<fn anonymous>".to_string()
                 }
             }
-Value::Builtin { name, .. } => format!("<builtin {}>", name),
+            Value::Builtin { name, .. } => format!("<builtin {}>", name),
             Value::BoundMethod { method, .. } => format!("<bound method {}>", method),
             Value::StructDef { name, .. } => format!("<struct {}>", name),
             Value::StructInstance { name, fields } => {
@@ -216,7 +225,9 @@ Value::Builtin { name, .. } => format!("<builtin {}>", name),
                 out.push_str(" { ");
                 let mut first = true;
                 for (k, v) in map.iter() {
-                    if !first { out.push_str(", "); }
+                    if !first {
+                        out.push_str(", ");
+                    }
                     out.push_str(k);
                     out.push_str(": ");
                     out.push_str(&v.to_repr());
@@ -226,8 +237,16 @@ Value::Builtin { name, .. } => format!("<builtin {}>", name),
                 out
             }
             Value::EnumDef { name, .. } => format!("<enum {}>", name),
-            Value::EnumConstructor { enum_name, variant_name, .. } => format!("<constructor {}.{}>", enum_name, variant_name),
-            Value::EnumInstance { enum_name, variant_name, values } => {
+            Value::EnumConstructor {
+                enum_name,
+                variant_name,
+                ..
+            } => format!("<constructor {}.{}>", enum_name, variant_name),
+            Value::EnumInstance {
+                enum_name,
+                variant_name,
+                values,
+            } => {
                 if values.is_empty() {
                     format!("{}.{}", enum_name, variant_name)
                 } else {
@@ -287,14 +306,17 @@ Value::Builtin { name, .. } => format!("<builtin {}>", name),
             Value::CompiledFunction(f) => {
                 JsonValue::String(format!("<fn {}>", f.name.as_deref().unwrap_or("anon")))
             }
-            Value::Closure(c) => {
-                JsonValue::String(format!("<fn {}>", c.function.name.as_deref().unwrap_or("anon")))
-            }
+            Value::Closure(c) => JsonValue::String(format!(
+                "<fn {}>",
+                c.function.name.as_deref().unwrap_or("anon")
+            )),
             Value::Function { name, .. } => {
                 JsonValue::String(format!("<fn {}>", name.as_deref().unwrap_or("anon")))
             }
-Value::Builtin { name, .. } => JsonValue::String(format!("<builtin {}>", name)),
-            Value::BoundMethod { method, .. } => JsonValue::String(format!("<bound method {}>", method)),
+            Value::Builtin { name, .. } => JsonValue::String(format!("<builtin {}>", name)),
+            Value::BoundMethod { method, .. } => {
+                JsonValue::String(format!("<bound method {}>", method))
+            }
             Value::StructDef { name, .. } => JsonValue::String(format!("<struct {}>", name)),
             Value::StructInstance { name, fields } => {
                 let mut map = serde_json::Map::new();
@@ -305,11 +327,22 @@ Value::Builtin { name, .. } => JsonValue::String(format!("<builtin {}>", name)),
                 JsonValue::Object(map)
             }
             Value::EnumDef { name, .. } => JsonValue::String(format!("<enum {}>", name)),
-            Value::EnumConstructor { enum_name, variant_name, .. } => JsonValue::String(format!("<constructor {}.{}>", enum_name, variant_name)),
-            Value::EnumInstance { enum_name, variant_name, values } => {
+            Value::EnumConstructor {
+                enum_name,
+                variant_name,
+                ..
+            } => JsonValue::String(format!("<constructor {}.{}>", enum_name, variant_name)),
+            Value::EnumInstance {
+                enum_name,
+                variant_name,
+                values,
+            } => {
                 let mut map = serde_json::Map::new();
                 map.insert("__enum__".to_string(), JsonValue::String(enum_name.clone()));
-                map.insert("__variant__".to_string(), JsonValue::String(variant_name.clone()));
+                map.insert(
+                    "__variant__".to_string(),
+                    JsonValue::String(variant_name.clone()),
+                );
                 let list: Vec<JsonValue> = values.iter().map(|v| v.to_json()).collect();
                 map.insert("values".to_string(), JsonValue::Array(list));
                 JsonValue::Object(map)
@@ -360,17 +393,37 @@ impl PartialEq for Value {
             (Value::Float(a), Value::Float(b)) => a == b,
             (Value::Number(a), Value::Number(b)) => a == b,
             (Value::Float(a), Value::Number(b)) | (Value::Number(a), Value::Float(b)) => a == b,
-            (Value::Int(a), Value::Float(b)) | (Value::Int(a), Value::Number(b)) => (*a as f64) == *b,
-            (Value::Float(a), Value::Int(b)) | (Value::Number(a), Value::Int(b)) => *a == (*b as f64),
+            (Value::Int(a), Value::Float(b)) | (Value::Int(a), Value::Number(b)) => {
+                (*a as f64) == *b
+            }
+            (Value::Float(a), Value::Int(b)) | (Value::Number(a), Value::Int(b)) => {
+                *a == (*b as f64)
+            }
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => *a.read().unwrap() == *b.read().unwrap(),
-(Value::Map(a), Value::Map(b)) => *a.read().unwrap() == *b.read().unwrap(),
-            (Value::StructInstance { name: n1, fields: f1 }, Value::StructInstance { name: n2, fields: f2 }) => {
-                n1 == n2 && *f1.read().unwrap() == *f2.read().unwrap()
-            }
-            (Value::EnumInstance { enum_name: e1, variant_name: v1, values: vals1 }, Value::EnumInstance { enum_name: e2, variant_name: v2, values: vals2 }) => {
-                e1 == e2 && v1 == v2 && vals1 == vals2
-            }
+            (Value::Map(a), Value::Map(b)) => *a.read().unwrap() == *b.read().unwrap(),
+            (
+                Value::StructInstance {
+                    name: n1,
+                    fields: f1,
+                },
+                Value::StructInstance {
+                    name: n2,
+                    fields: f2,
+                },
+            ) => n1 == n2 && *f1.read().unwrap() == *f2.read().unwrap(),
+            (
+                Value::EnumInstance {
+                    enum_name: e1,
+                    variant_name: v1,
+                    values: vals1,
+                },
+                Value::EnumInstance {
+                    enum_name: e2,
+                    variant_name: v2,
+                    values: vals2,
+                },
+            ) => e1 == e2 && v1 == v2 && vals1 == vals2,
             (Value::Task(a), Value::Task(b)) => Arc::ptr_eq(a, b),
             (Value::Channel(a), Value::Channel(b)) => Arc::ptr_eq(a, b),
             (Value::CompiledFunction(a), Value::CompiledFunction(b)) => Arc::ptr_eq(a, b) || a == b,

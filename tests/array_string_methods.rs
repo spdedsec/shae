@@ -155,4 +155,3 @@ fn test_string_pad_start_lines_chars() {
         _ => panic!("Expected array"),
     }
 }
-

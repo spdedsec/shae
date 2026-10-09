@@ -79,13 +79,15 @@ impl GcHeap {
             }
             GcData::Map(map) => {
                 std::mem::size_of::<IndexMap<String, Value>>()
-                    + map.capacity() * (std::mem::size_of::<String>() + std::mem::size_of::<Value>())
+                    + map.capacity()
+                        * (std::mem::size_of::<String>() + std::mem::size_of::<Value>())
             }
             GcData::Closure(_) => 128,
             GcData::Upvalue(_) => 48,
             GcData::Instance { fields, .. } => {
                 std::mem::size_of::<IndexMap<String, Value>>()
-                    + fields.capacity() * (std::mem::size_of::<String>() + std::mem::size_of::<Value>())
+                    + fields.capacity()
+                        * (std::mem::size_of::<String>() + std::mem::size_of::<Value>())
             }
         };
         header + payload
@@ -132,11 +134,17 @@ impl GcHeap {
     }
 
     pub fn get(&self, r: GcRef) -> Option<&GcData> {
-        self.objects.get(r.0).and_then(|opt| opt.as_ref()).map(|o| &o.data)
+        self.objects
+            .get(r.0)
+            .and_then(|opt| opt.as_ref())
+            .map(|o| &o.data)
     }
 
     pub fn get_mut(&mut self, r: GcRef) -> Option<&mut GcData> {
-        self.objects.get_mut(r.0).and_then(|opt| opt.as_mut()).map(|o| &mut o.data)
+        self.objects
+            .get_mut(r.0)
+            .and_then(|opt| opt.as_mut())
+            .map(|o| &mut o.data)
     }
 
     pub fn as_array(&self, r: GcRef) -> Option<&Vec<Value>> {

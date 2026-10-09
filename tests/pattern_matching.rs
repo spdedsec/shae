@@ -179,4 +179,3 @@ fn test_variant_guards_and_bindings() {
         _ => panic!("Expected array"),
     }
 }
-

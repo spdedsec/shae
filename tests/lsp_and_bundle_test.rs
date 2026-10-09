@@ -1,4 +1,4 @@
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 use shae::bundle;
 use shae::lsp::LspServer;
 use std::fs;
@@ -37,7 +37,8 @@ struct TempDir {
 
 impl TempDir {
     fn new(name: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("shae_test_c10_{}_{}", name, std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("shae_test_c10_{}_{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).unwrap();
         Self { path }
@@ -71,7 +72,8 @@ fn parse_lsp_responses(output: &[u8]) -> Vec<JsonValue> {
             let body_start = cursor + header_end + 4;
             let body_end = body_start + content_length;
             if body_end <= output.len() {
-                let json_val: JsonValue = serde_json::from_slice(&output[body_start..body_end]).unwrap();
+                let json_val: JsonValue =
+                    serde_json::from_slice(&output[body_start..body_end]).unwrap();
                 responses.push(json_val);
                 cursor = body_end;
             } else {
@@ -110,7 +112,9 @@ fn test_lsp_diagnostics_and_linting() {
 
     // 1. Diagnostics on syntax error
     let bad_code = "fn broken( { let x = 1";
-    server.publish_diagnostics("file:///test.shae", bad_code).unwrap();
+    server
+        .publish_diagnostics("file:///test.shae", bad_code)
+        .unwrap();
 
     let resps = parse_lsp_responses(&output.take());
     assert_eq!(resps.len(), 1);
@@ -121,13 +125,20 @@ fn test_lsp_diagnostics_and_linting() {
 
     // 2. Diagnostics on unused variable warning
     let warn_code = "fn test() { let unused_var = 42\n 10 }";
-    server.publish_diagnostics("file:///test_warn.shae", warn_code).unwrap();
+    server
+        .publish_diagnostics("file:///test_warn.shae", warn_code)
+        .unwrap();
     let resps2 = parse_lsp_responses(&output.take());
     assert_eq!(resps2.len(), 1);
     let diags2 = resps2[0]["params"]["diagnostics"].as_array().unwrap();
     assert!(!diags2.is_empty());
     assert_eq!(diags2[0]["severity"], 2); // Warning
-    assert!(diags2[0]["message"].as_str().unwrap().contains("unused_var"));
+    assert!(
+        diags2[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unused_var")
+    );
 }
 
 #[test]
@@ -228,16 +239,37 @@ fn test_bundle_collection_and_archive_roundtrip() {
     let helper_file = temp.path.join("helper.shae");
 
     fs::write(&helper_file, "fn get_answer() { 42 }\n").unwrap();
-    fs::write(&main_file, "use { get_answer } from \"./helper.shae\"\nlet res = get_answer()\n").unwrap();
+    fs::write(
+        &main_file,
+        "use { get_answer } from \"./helper.shae\"\nlet res = get_answer()\n",
+    )
+    .unwrap();
 
     let archive = bundle::collect_bundle(&main_file).expect("collect_bundle failed");
     assert!(archive.files.len() >= 2);
-    assert!(archive.files.contains_key(&main_file.canonicalize().unwrap().to_string_lossy().to_string()));
-    assert!(archive.files.contains_key(&helper_file.canonicalize().unwrap().to_string_lossy().to_string()));
+    assert!(
+        archive.files.contains_key(
+            &main_file
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        )
+    );
+    assert!(
+        archive.files.contains_key(
+            &helper_file
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        )
+    );
 
     // Test standalone binary creation & trailer decoding
     let bin_path = temp.path.join("app.bin");
-    bundle::create_standalone_binary(&main_file, &bin_path).expect("create_standalone_binary failed");
+    bundle::create_standalone_binary(&main_file, &bin_path)
+        .expect("create_standalone_binary failed");
     assert!(bin_path.exists());
 
     let decoded = bundle::read_embedded_bundle(&bin_path)

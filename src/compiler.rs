@@ -1,4 +1,4 @@
-use crate::ast::{BindingPattern, BinaryOp, Expr, Literal, Program, Stmt, StmtKind, UnaryOp};
+use crate::ast::{BinaryOp, BindingPattern, Expr, Literal, Program, Stmt, StmtKind, UnaryOp};
 use crate::chunk::Chunk;
 use crate::opcode::OpCode;
 use crate::value::{CompiledFunction, UpvalueDesc, Value};
@@ -236,43 +236,44 @@ impl Compiler {
                 }
                 Ok(())
             }
-            StmtKind::Assign { target, value } => {
-                match target {
-                    Expr::Variable { name, span } => {
-                        self.compile_expr(value)?;
-                        if let Some(slot) = self.resolve_local(name) {
-                            self.chunk.write_opcode(OpCode::SetLocal, span.line);
-                            self.chunk.write(slot, span.line);
-                        } else if let Some(upvalue_slot) = self.resolve_upvalue(name) {
-                            self.chunk.write_opcode(OpCode::SetUpvalue, span.line);
-                            self.chunk.write(upvalue_slot, span.line);
-                        } else {
-                            let const_idx = self.chunk.add_constant(Value::String(name.clone()));
-                            self.chunk.write_opcode(OpCode::SetGlobal, span.line);
-                            self.chunk.write(const_idx as u8, span.line);
-                        }
-                        if !is_last {
-                            self.chunk.write_opcode(OpCode::Pop, span.line);
-                        }
-                        Ok(())
+            StmtKind::Assign { target, value } => match target {
+                Expr::Variable { name, span } => {
+                    self.compile_expr(value)?;
+                    if let Some(slot) = self.resolve_local(name) {
+                        self.chunk.write_opcode(OpCode::SetLocal, span.line);
+                        self.chunk.write(slot, span.line);
+                    } else if let Some(upvalue_slot) = self.resolve_upvalue(name) {
+                        self.chunk.write_opcode(OpCode::SetUpvalue, span.line);
+                        self.chunk.write(upvalue_slot, span.line);
+                    } else {
+                        let const_idx = self.chunk.add_constant(Value::String(name.clone()));
+                        self.chunk.write_opcode(OpCode::SetGlobal, span.line);
+                        self.chunk.write(const_idx as u8, span.line);
                     }
-                    Expr::Index {
-                        target: idx_target,
-                        index,
-                        span,
-                    } => {
-                        self.compile_expr(idx_target)?;
-                        self.compile_expr(index)?;
-                        self.compile_expr(value)?;
-                        self.chunk.write_opcode(OpCode::IndexSet, span.line);
-                        if !is_last {
-                            self.chunk.write_opcode(OpCode::Pop, span.line);
-                        }
-                        Ok(())
+                    if !is_last {
+                        self.chunk.write_opcode(OpCode::Pop, span.line);
                     }
-                    _ => Err(format!("Unsupported assign target in VM compiler: {:?}", target)),
+                    Ok(())
                 }
-            }
+                Expr::Index {
+                    target: idx_target,
+                    index,
+                    span,
+                } => {
+                    self.compile_expr(idx_target)?;
+                    self.compile_expr(index)?;
+                    self.compile_expr(value)?;
+                    self.chunk.write_opcode(OpCode::IndexSet, span.line);
+                    if !is_last {
+                        self.chunk.write_opcode(OpCode::Pop, span.line);
+                    }
+                    Ok(())
+                }
+                _ => Err(format!(
+                    "Unsupported assign target in VM compiler: {:?}",
+                    target
+                )),
+            },
             StmtKind::If {
                 condition,
                 then_branch,
@@ -437,7 +438,8 @@ impl Compiler {
                     self.add_local(name.clone());
                 } else {
                     let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                    self.chunk.write_opcode(OpCode::DefineGlobal, stmt.span.line);
+                    self.chunk
+                        .write_opcode(OpCode::DefineGlobal, stmt.span.line);
                     self.chunk.write(name_idx as u8, stmt.span.line);
                 }
                 if is_last {
@@ -445,7 +447,10 @@ impl Compiler {
                 }
                 Ok(())
             }
-            _ => Err(format!("Statement kind not yet supported in VM compiler: {:?}", stmt.kind)),
+            _ => Err(format!(
+                "Statement kind not yet supported in VM compiler: {:?}",
+                stmt.kind
+            )),
         }
     }
 
@@ -455,7 +460,10 @@ impl Compiler {
                 self.add_local(name.clone());
                 Ok(())
             }
-            _ => Err(format!("Destructuring patterns not yet supported in VM compiler: {:?}", pattern)),
+            _ => Err(format!(
+                "Destructuring patterns not yet supported in VM compiler: {:?}",
+                pattern
+            )),
         }
     }
 
@@ -505,62 +513,74 @@ impl Compiler {
                 }
                 Ok(())
             }
-            Expr::Binary { left, op, right, span } => {
-                match op {
-                    BinaryOp::And => {
-                        self.compile_expr(left)?;
-                        let end_jump = self.emit_jump(OpCode::JumpIfFalse, span.line);
-                        self.chunk.write_opcode(OpCode::Pop, span.line);
-                        self.compile_expr(right)?;
-                        self.patch_jump(end_jump)?;
-                        Ok(())
-                    }
-                    BinaryOp::Or => {
-                        self.compile_expr(left)?;
-                        let else_jump = self.emit_jump(OpCode::JumpIfFalse, span.line);
-                        let end_jump = self.emit_jump(OpCode::Jump, span.line);
-                        self.patch_jump(else_jump)?;
-                        self.chunk.write_opcode(OpCode::Pop, span.line);
-                        self.compile_expr(right)?;
-                        self.patch_jump(end_jump)?;
-                        Ok(())
-                    }
-                    _ => {
-                        self.compile_expr(left)?;
-                        self.compile_expr(right)?;
-                        match op {
-                            BinaryOp::Add => self.chunk.write_opcode(OpCode::Add, span.line),
-                            BinaryOp::Sub => self.chunk.write_opcode(OpCode::Subtract, span.line),
-                            BinaryOp::Mul => self.chunk.write_opcode(OpCode::Multiply, span.line),
-                            BinaryOp::Div => self.chunk.write_opcode(OpCode::Divide, span.line),
-                            BinaryOp::Mod => self.chunk.write_opcode(OpCode::Mod, span.line),
-                            BinaryOp::Eq => self.chunk.write_opcode(OpCode::Equal, span.line),
-                            BinaryOp::NotEq => {
-                                self.chunk.write_opcode(OpCode::Equal, span.line);
-                                self.chunk.write_opcode(OpCode::Not, span.line);
-                            }
-                            BinaryOp::Gt => self.chunk.write_opcode(OpCode::Greater, span.line),
-                            BinaryOp::Lt => self.chunk.write_opcode(OpCode::Less, span.line),
-                            BinaryOp::GtEq => {
-                                self.chunk.write_opcode(OpCode::Less, span.line);
-                                self.chunk.write_opcode(OpCode::Not, span.line);
-                            }
-                            BinaryOp::LtEq => {
-                                self.chunk.write_opcode(OpCode::Greater, span.line);
-                                self.chunk.write_opcode(OpCode::Not, span.line);
-                            }
-                            BinaryOp::BitAnd => self.chunk.write_opcode(OpCode::BitAnd, span.line),
-                            BinaryOp::BitOr => self.chunk.write_opcode(OpCode::BitOr, span.line),
-                            BinaryOp::BitXor => self.chunk.write_opcode(OpCode::BitXor, span.line),
-                            BinaryOp::Shl => self.chunk.write_opcode(OpCode::Shl, span.line),
-                            BinaryOp::Shr => self.chunk.write_opcode(OpCode::Shr, span.line),
-                            _ => return Err(format!("Unsupported binary op {:?} for VM compilation", op)),
-                        }
-                        Ok(())
-                    }
+            Expr::Binary {
+                left,
+                op,
+                right,
+                span,
+            } => match op {
+                BinaryOp::And => {
+                    self.compile_expr(left)?;
+                    let end_jump = self.emit_jump(OpCode::JumpIfFalse, span.line);
+                    self.chunk.write_opcode(OpCode::Pop, span.line);
+                    self.compile_expr(right)?;
+                    self.patch_jump(end_jump)?;
+                    Ok(())
                 }
-            }
-            Expr::Unary { op, expr: right, span } => {
+                BinaryOp::Or => {
+                    self.compile_expr(left)?;
+                    let else_jump = self.emit_jump(OpCode::JumpIfFalse, span.line);
+                    let end_jump = self.emit_jump(OpCode::Jump, span.line);
+                    self.patch_jump(else_jump)?;
+                    self.chunk.write_opcode(OpCode::Pop, span.line);
+                    self.compile_expr(right)?;
+                    self.patch_jump(end_jump)?;
+                    Ok(())
+                }
+                _ => {
+                    self.compile_expr(left)?;
+                    self.compile_expr(right)?;
+                    match op {
+                        BinaryOp::Add => self.chunk.write_opcode(OpCode::Add, span.line),
+                        BinaryOp::Sub => self.chunk.write_opcode(OpCode::Subtract, span.line),
+                        BinaryOp::Mul => self.chunk.write_opcode(OpCode::Multiply, span.line),
+                        BinaryOp::Div => self.chunk.write_opcode(OpCode::Divide, span.line),
+                        BinaryOp::Mod => self.chunk.write_opcode(OpCode::Mod, span.line),
+                        BinaryOp::Eq => self.chunk.write_opcode(OpCode::Equal, span.line),
+                        BinaryOp::NotEq => {
+                            self.chunk.write_opcode(OpCode::Equal, span.line);
+                            self.chunk.write_opcode(OpCode::Not, span.line);
+                        }
+                        BinaryOp::Gt => self.chunk.write_opcode(OpCode::Greater, span.line),
+                        BinaryOp::Lt => self.chunk.write_opcode(OpCode::Less, span.line),
+                        BinaryOp::GtEq => {
+                            self.chunk.write_opcode(OpCode::Less, span.line);
+                            self.chunk.write_opcode(OpCode::Not, span.line);
+                        }
+                        BinaryOp::LtEq => {
+                            self.chunk.write_opcode(OpCode::Greater, span.line);
+                            self.chunk.write_opcode(OpCode::Not, span.line);
+                        }
+                        BinaryOp::BitAnd => self.chunk.write_opcode(OpCode::BitAnd, span.line),
+                        BinaryOp::BitOr => self.chunk.write_opcode(OpCode::BitOr, span.line),
+                        BinaryOp::BitXor => self.chunk.write_opcode(OpCode::BitXor, span.line),
+                        BinaryOp::Shl => self.chunk.write_opcode(OpCode::Shl, span.line),
+                        BinaryOp::Shr => self.chunk.write_opcode(OpCode::Shr, span.line),
+                        _ => {
+                            return Err(format!(
+                                "Unsupported binary op {:?} for VM compilation",
+                                op
+                            ));
+                        }
+                    }
+                    Ok(())
+                }
+            },
+            Expr::Unary {
+                op,
+                expr: right,
+                span,
+            } => {
                 self.compile_expr(right)?;
                 match op {
                     UnaryOp::Neg => self.chunk.write_opcode(OpCode::Negate, span.line),

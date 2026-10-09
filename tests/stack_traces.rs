@@ -10,7 +10,7 @@ fn test_stack_trace() {
     "#;
     let err = run(script).unwrap_err();
     let err_str = shae::render_error(&err, script);
-    
+
     println!("ERR STR:\n{}", err_str);
     assert!(err_str.contains("Stack Trace:"));
     assert!(err_str.contains("at c"));

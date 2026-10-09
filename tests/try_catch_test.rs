@@ -1,5 +1,5 @@
-use shae::run;
 use serde_json::json;
+use shae::run;
 
 #[test]
 fn test_try_catch_success() {

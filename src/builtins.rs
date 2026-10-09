@@ -3,8 +3,8 @@ use crate::env::Environment;
 use crate::eval::{Evaluator, RuntimeError};
 use crate::value::Value;
 use indexmap::IndexMap;
-use std::sync::RwLock;
 use std::sync::Arc;
+use std::sync::RwLock;
 
 pub fn expect_args(
     name: &str,
@@ -28,6 +28,7 @@ pub fn expect_args(
 pub fn register(env: &mut Environment) {
     let builtins: Vec<(&str, crate::value::BuiltinFn)> = vec![
         ("print", builtin_print),
+        ("println", builtin_print),
         ("dbg", builtin_dbg),
         ("len", builtin_len),
         ("type", builtin_type),
@@ -152,9 +153,13 @@ fn builtin_range(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
                 }
             }
             3 => {
-                if let (Value::Int(s), Value::Int(e), Value::Int(st)) = (&args[0], &args[1], &args[2]) {
+                if let (Value::Int(s), Value::Int(e), Value::Int(st)) =
+                    (&args[0], &args[1], &args[2])
+                {
                     if *st == 0 {
-                        return Err(RuntimeError::new("range() step cannot be zero".into()).at(span));
+                        return Err(
+                            RuntimeError::new("range() step cannot be zero".into()).at(span)
+                        );
                     }
                     (*s, *e, *st)
                 } else {
@@ -212,7 +217,9 @@ fn builtin_range(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
             }
         }
         3 => {
-            if let (Some(s), Some(e), Some(st)) = (to_f64(&args[0]), to_f64(&args[1]), to_f64(&args[2])) {
+            if let (Some(s), Some(e), Some(st)) =
+                (to_f64(&args[0]), to_f64(&args[1]), to_f64(&args[2]))
+            {
                 if st == 0.0 {
                     return Err(RuntimeError::new("range() step cannot be zero".into()).at(span));
                 }
@@ -269,7 +276,8 @@ fn builtin_push(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
 fn builtin_pop(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     expect_args("pop", 1, &args, span)?;
     if let Value::Array(arr) = &args[0] {
-        arr.write().unwrap()
+        arr.write()
+            .unwrap()
             .pop()
             .ok_or_else(|| RuntimeError::new("Cannot pop from an empty array".into()).at(span))
     } else {
@@ -281,7 +289,8 @@ fn builtin_keys(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
     expect_args("keys", 1, &args, span)?;
     if let Value::Map(m) = &args[0] {
         let keys = m
-            .read().unwrap()
+            .read()
+            .unwrap()
             .keys()
             .map(|k| Value::String(k.clone()))
             .collect();
@@ -372,8 +381,15 @@ fn builtin_serve(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
         if args.len() == 3 {
             if let Value::Map(m) = &args[2] {
                 let map = m.read().unwrap();
-                if let (Some(Value::String(cert)), Some(Value::String(key))) = (map.get("cert"), map.get("key")) {
-                    let tls_args = vec![args[0].clone(), args[1].clone(), Value::String(cert.clone()), Value::String(key.clone())];
+                if let (Some(Value::String(cert)), Some(Value::String(key))) =
+                    (map.get("cert"), map.get("key"))
+                {
+                    let tls_args = vec![
+                        args[0].clone(),
+                        args[1].clone(),
+                        Value::String(cert.clone()),
+                        Value::String(key.clone()),
+                    ];
                     return builtin_serve_tls(ev, tls_args, span);
                 }
             }
@@ -386,24 +402,38 @@ fn builtin_serve(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
     let port = match args[0] {
         Value::Int(p) => {
             if p < 1 || p > 65535 {
-                return Err(RuntimeError::new("Port must be a whole number between 1 and 65535".into()).at(span));
+                return Err(RuntimeError::new(
+                    "Port must be a whole number between 1 and 65535".into(),
+                )
+                .at(span));
             }
             p as u16
         }
         Value::Float(p) | Value::Number(p) => {
             if p.fract() != 0.0 || p < 1.0 || p > 65535.0 {
-                return Err(RuntimeError::new("Port must be a whole number between 1 and 65535".into()).at(span));
+                return Err(RuntimeError::new(
+                    "Port must be a whole number between 1 and 65535".into(),
+                )
+                .at(span));
             }
             p as u16
         }
-        _ => return Err(RuntimeError::new("First argument to serve must be a port number".into()).at(span)),
+        _ => {
+            return Err(
+                RuntimeError::new("First argument to serve must be a port number".into()).at(span),
+            );
+        }
     };
 
     let handler = args[1].clone();
-    if !matches!(handler, Value::Function { .. } | Value::Builtin { .. } | Value::Map(_)) {
-        return Err(
-            RuntimeError::new("Second argument to serve must be a function or route map".into()).at(span),
-        );
+    if !matches!(
+        handler,
+        Value::Function { .. } | Value::Builtin { .. } | Value::Map(_)
+    ) {
+        return Err(RuntimeError::new(
+            "Second argument to serve must be a function or route map".into(),
+        )
+        .at(span));
     }
 
     use std::net::TcpListener;
@@ -430,26 +460,46 @@ fn builtin_serve(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
     Ok(Value::Null)
 }
 
-fn load_tls_config(cert_path: &str, key_path: &str, span: Span) -> Result<Arc<rustls::ServerConfig>, RuntimeError> {
+fn load_tls_config(
+    cert_path: &str,
+    key_path: &str,
+    span: Span,
+) -> Result<Arc<rustls::ServerConfig>, RuntimeError> {
     let cert_file = std::fs::File::open(cert_path).map_err(|e| {
-        RuntimeError::new(format!("Failed to open certificate file '{}': {}", cert_path, e)).at(span)
+        RuntimeError::new(format!(
+            "Failed to open certificate file '{}': {}",
+            cert_path, e
+        ))
+        .at(span)
     })?;
     let mut cert_reader = std::io::BufReader::new(cert_file);
-    let certs: Vec<rustls::pki_types::CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| RuntimeError::new(format!("Failed to parse certificates: {}", e)).at(span))?;
+    let certs: Vec<rustls::pki_types::CertificateDer<'static>> =
+        rustls_pemfile::certs(&mut cert_reader)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| {
+                RuntimeError::new(format!("Failed to parse certificates: {}", e)).at(span)
+            })?;
 
     if certs.is_empty() {
-        return Err(RuntimeError::new(format!("No certificates found in '{}'", cert_path)).at(span));
+        return Err(
+            RuntimeError::new(format!("No certificates found in '{}'", cert_path)).at(span),
+        );
     }
 
     let key_file = std::fs::File::open(key_path).map_err(|e| {
-        RuntimeError::new(format!("Failed to open private key file '{}': {}", key_path, e)).at(span)
+        RuntimeError::new(format!(
+            "Failed to open private key file '{}': {}",
+            key_path, e
+        ))
+        .at(span)
     })?;
     let mut key_reader = std::io::BufReader::new(key_file);
-    let key: rustls::pki_types::PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
-        .map_err(|e| RuntimeError::new(format!("Failed to parse private key: {}", e)).at(span))?
-        .ok_or_else(|| RuntimeError::new(format!("No private key found in '{}'", key_path)).at(span))?;
+    let key: rustls::pki_types::PrivateKeyDer<'static> =
+        rustls_pemfile::private_key(&mut key_reader)
+            .map_err(|e| RuntimeError::new(format!("Failed to parse private key: {}", e)).at(span))?
+            .ok_or_else(|| {
+                RuntimeError::new(format!("No private key found in '{}'", key_path)).at(span)
+            })?;
 
     let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -461,43 +511,106 @@ fn load_tls_config(cert_path: &str, key_path: &str, span: Span) -> Result<Arc<ru
     Ok(Arc::new(config))
 }
 
-fn builtin_serve_tls(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
-    expect_args("serve_tls", 4, &args, span)?;
+fn builtin_serve_tls(
+    ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    let (port_val, handler, cert_path, key_path) = if args.len() == 2 {
+        if let Value::Map(map_lock) = &args[0] {
+            let map = map_lock.read().unwrap();
+            let port = map.get("port").cloned().ok_or_else(|| {
+                RuntimeError::new("serve_tls config map must contain 'port'".into()).at(span)
+            })?;
+            let cert = match map.get("cert") {
+                Some(Value::String(s)) => s.clone(),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "serve_tls config map must contain 'cert' path string".into(),
+                    )
+                    .at(span));
+                }
+            };
+            let key = match map.get("key") {
+                Some(Value::String(s)) => s.clone(),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "serve_tls config map must contain 'key' path string".into(),
+                    )
+                    .at(span));
+                }
+            };
+            (port, args[1].clone(), cert, key)
+        } else {
+            return Err(RuntimeError::new(
+                "serve_tls with 2 arguments expects (config_map, handler)".into(),
+            )
+            .at(span));
+        }
+    } else if args.len() == 4 {
+        let cert = match &args[2] {
+            Value::String(s) => s.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "Third argument to serve_tls must be certificate path string".into(),
+                )
+                .at(span));
+            }
+        };
+        let key = match &args[3] {
+            Value::String(s) => s.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "Fourth argument to serve_tls must be private key path string".into(),
+                )
+                .at(span));
+            }
+        };
+        (args[0].clone(), args[1].clone(), cert, key)
+    } else {
+        return Err(RuntimeError::new(format!(
+            "'serve_tls' expects 2 arguments (config_map, handler) or 4 arguments (port, handler, cert, key), got {}",
+            args.len()
+        )).at(span));
+    };
 
-    let port = match args[0] {
+    let port = match port_val {
         Value::Int(p) => {
             if p < 1 || p > 65535 {
-                return Err(RuntimeError::new("Port must be a whole number between 1 and 65535".into()).at(span));
+                return Err(RuntimeError::new(
+                    "Port must be a whole number between 1 and 65535".into(),
+                )
+                .at(span));
             }
             p as u16
         }
         Value::Float(p) | Value::Number(p) => {
             if p.fract() != 0.0 || p < 1.0 || p > 65535.0 {
-                return Err(RuntimeError::new("Port must be a whole number between 1 and 65535".into()).at(span));
+                return Err(RuntimeError::new(
+                    "Port must be a whole number between 1 and 65535".into(),
+                )
+                .at(span));
             }
             p as u16
         }
-        _ => return Err(RuntimeError::new("First argument to serve_tls must be a port number".into()).at(span)),
+        _ => {
+            return Err(RuntimeError::new(
+                "First argument to serve_tls must be a port number".into(),
+            )
+            .at(span));
+        }
     };
 
-    let handler = args[1].clone();
-    if !matches!(handler, Value::Function { .. } | Value::Builtin { .. } | Value::Map(_)) {
+    if !matches!(
+        handler,
+        Value::Function { .. } | Value::Builtin { .. } | Value::Map(_)
+    ) {
         return Err(
-            RuntimeError::new("Second argument to serve_tls must be a function or route map".into()).at(span),
+            RuntimeError::new("serve_tls handler must be a function or route map".into()).at(span),
         );
     }
 
-    let cert_path = match &args[2] {
-        Value::String(s) => s.as_str(),
-        _ => return Err(RuntimeError::new("Third argument to serve_tls must be certificate path string".into()).at(span)),
-    };
-
-    let key_path = match &args[3] {
-        Value::String(s) => s.as_str(),
-        _ => return Err(RuntimeError::new("Fourth argument to serve_tls must be private key path string".into()).at(span)),
-    };
-
-    let tls_config = load_tls_config(cert_path, key_path, span)?;
+    let tls_config = load_tls_config(&cert_path, &key_path, span)?;
 
     use std::net::TcpListener;
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).map_err(|e| {
@@ -557,7 +670,11 @@ pub fn match_route_pattern(pattern: &str, path: &str) -> Option<IndexMap<String,
         if let Some(param_name) = pat_seg.strip_prefix(':') {
             params.insert(param_name.to_string(), Value::String(path_seg.to_string()));
         } else if let Some(param_name) = pat_seg.strip_prefix('*') {
-            let name = if param_name.is_empty() { "wildcard" } else { param_name };
+            let name = if param_name.is_empty() {
+                "wildcard"
+            } else {
+                param_name
+            };
             params.insert(name.to_string(), Value::String(path_seg.to_string()));
         } else if pat_seg != path_seg {
             return None;
@@ -581,8 +698,12 @@ fn url_decode(s: &str) -> String {
                 }
             }
             result.push('%');
-            if let Some(c1) = h1 { result.push(c1); }
-            if let Some(c2) = h2 { result.push(c2); }
+            if let Some(c1) = h1 {
+                result.push(c1);
+            }
+            if let Some(c2) = h2 {
+                result.push(c2);
+            }
         } else if ch == '+' {
             result.push(' ');
         } else {
@@ -622,11 +743,12 @@ fn dispatch_request(
         Value::Map(route_map) => {
             let routes = route_map.read().unwrap();
             for (route_pattern, handler_fn) in routes.iter() {
-                let (expected_method, path_pattern) = if let Some((m, p)) = route_pattern.split_once(' ') {
-                    (Some(m.trim().to_uppercase()), p.trim())
-                } else {
-                    (None, route_pattern.as_str())
-                };
+                let (expected_method, path_pattern) =
+                    if let Some((m, p)) = route_pattern.split_once(' ') {
+                        (Some(m.trim().to_uppercase()), p.trim())
+                    } else {
+                        (None, route_pattern.as_str())
+                    };
 
                 if let Some(exp_m) = expected_method {
                     if exp_m != method {
@@ -639,10 +761,22 @@ fn dispatch_request(
                     req_map.insert("method".to_string(), Value::String(method.to_string()));
                     req_map.insert("path".to_string(), Value::String(path.to_string()));
                     req_map.insert("query".to_string(), Value::String(query.to_string()));
-                    req_map.insert("queryParams".to_string(), Value::Map(Arc::new(RwLock::new(query_params.clone()))));
-                    req_map.insert("query_params".to_string(), Value::Map(Arc::new(RwLock::new(query_params.clone()))));
-                    req_map.insert("params".to_string(), Value::Map(Arc::new(RwLock::new(params))));
-                    req_map.insert("headers".to_string(), Value::Map(Arc::new(RwLock::new(headers.clone()))));
+                    req_map.insert(
+                        "queryParams".to_string(),
+                        Value::Map(Arc::new(RwLock::new(query_params.clone()))),
+                    );
+                    req_map.insert(
+                        "query_params".to_string(),
+                        Value::Map(Arc::new(RwLock::new(query_params.clone()))),
+                    );
+                    req_map.insert(
+                        "params".to_string(),
+                        Value::Map(Arc::new(RwLock::new(params))),
+                    );
+                    req_map.insert(
+                        "headers".to_string(),
+                        Value::Map(Arc::new(RwLock::new(headers.clone()))),
+                    );
                     req_map.insert("body".to_string(), Value::String(body_str.to_string()));
 
                     let req_val = Value::Map(Arc::new(RwLock::new(req_map)));
@@ -653,7 +787,10 @@ fn dispatch_request(
             // No route matched
             let mut not_found_map = IndexMap::new();
             not_found_map.insert("status".to_string(), Value::Int(404));
-            not_found_map.insert("body".to_string(), Value::String(format!("Route '{} {}' not found", method, path)));
+            not_found_map.insert(
+                "body".to_string(),
+                Value::String(format!("Route '{} {}' not found", method, path)),
+            );
             Ok(Value::Map(Arc::new(RwLock::new(not_found_map))))
         }
         _ => {
@@ -661,10 +798,22 @@ fn dispatch_request(
             req_map.insert("method".to_string(), Value::String(method.to_string()));
             req_map.insert("path".to_string(), Value::String(path.to_string()));
             req_map.insert("query".to_string(), Value::String(query.to_string()));
-            req_map.insert("queryParams".to_string(), Value::Map(Arc::new(RwLock::new(query_params.clone()))));
-            req_map.insert("query_params".to_string(), Value::Map(Arc::new(RwLock::new(query_params.clone()))));
-            req_map.insert("params".to_string(), Value::Map(Arc::new(RwLock::new(IndexMap::new()))));
-            req_map.insert("headers".to_string(), Value::Map(Arc::new(RwLock::new(headers.clone()))));
+            req_map.insert(
+                "queryParams".to_string(),
+                Value::Map(Arc::new(RwLock::new(query_params.clone()))),
+            );
+            req_map.insert(
+                "query_params".to_string(),
+                Value::Map(Arc::new(RwLock::new(query_params.clone()))),
+            );
+            req_map.insert(
+                "params".to_string(),
+                Value::Map(Arc::new(RwLock::new(IndexMap::new()))),
+            );
+            req_map.insert(
+                "headers".to_string(),
+                Value::Map(Arc::new(RwLock::new(headers.clone()))),
+            );
             req_map.insert("body".to_string(), Value::String(body_str.to_string()));
 
             let req_val = Value::Map(Arc::new(RwLock::new(req_map)));
@@ -713,7 +862,11 @@ fn handle_http_io<S: std::io::Read + std::io::Write>(
 
         let method = parts[0].to_uppercase();
         let full_path = parts[1].to_string();
-        let http_version = if parts.len() >= 3 { parts[2] } else { "HTTP/1.1" };
+        let http_version = if parts.len() >= 3 {
+            parts[2]
+        } else {
+            "HTTP/1.1"
+        };
 
         let mut path = full_path.clone();
         let mut query = "".to_string();
@@ -759,7 +912,13 @@ fn handle_http_io<S: std::io::Read + std::io::Write>(
             Err(e) => {
                 let err_msg = e.to_string();
                 eprintln!("Handler error: {}", err_msg);
-                (500, "Internal Server Error", "text/plain".to_string(), vec![], err_msg)
+                (
+                    500,
+                    "Internal Server Error",
+                    "text/plain".to_string(),
+                    vec![],
+                    err_msg,
+                )
             }
         };
 
@@ -771,7 +930,11 @@ fn handle_http_io<S: std::io::Read + std::io::Write>(
 
         let mut response_head = format!(
             "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: {}\r\n",
-            status_code, status_text, content_type, resp_body.len(), conn_header
+            status_code,
+            status_text,
+            content_type,
+            resp_body.len(),
+            conn_header
         );
         if conn_header == "keep-alive" {
             response_head.push_str("Keep-Alive: timeout=5, max=100\r\n");
@@ -798,7 +961,11 @@ fn handle_http_io<S: std::io::Read + std::io::Write>(
     Ok(())
 }
 
-fn builtin_route_match(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn builtin_route_match(
+    _eval: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("route_match", 2, &args, span)?;
     if let (Value::String(pattern), Value::String(path)) = (&args[0], &args[1]) {
         if let Some(params) = match_route_pattern(pattern, path) {
@@ -815,7 +982,8 @@ fn format_http_response(val: Value) -> (u16, &'static str, String, Vec<(String, 
     match val {
         Value::Map(m) => {
             let map = m.read().unwrap();
-            let status_num = map.get("status")
+            let status_num = map
+                .get("status")
                 .or_else(|| map.get("statusCode"))
                 .or_else(|| map.get("status_code"))
                 .and_then(|v| match v {
@@ -837,23 +1005,33 @@ fn format_http_response(val: Value) -> (u16, &'static str, String, Vec<(String, 
                     let (ct, body_str) = match body_val {
                         Value::Map(_) | Value::Array(_) => (
                             "application/json".to_string(),
-                            serde_json::to_string(&body_val.to_json()).unwrap_or_else(|_| "{}".to_string())
+                            serde_json::to_string(&body_val.to_json())
+                                .unwrap_or_else(|_| "{}".to_string()),
                         ),
                         Value::String(s) => ("text/html".to_string(), s.clone()),
                         other => ("text/plain".to_string(), other.to_display()),
                     };
                     return (code, text, ct, custom_headers, body_str);
                 } else {
-                    let json_str = serde_json::to_string(&Value::Map(m.clone()).to_json()).unwrap_or_else(|_| "{}".to_string());
-                    return (code, text, "application/json".to_string(), custom_headers, json_str);
+                    let json_str = serde_json::to_string(&Value::Map(m.clone()).to_json())
+                        .unwrap_or_else(|_| "{}".to_string());
+                    return (
+                        code,
+                        text,
+                        "application/json".to_string(),
+                        custom_headers,
+                        json_str,
+                    );
                 }
             }
 
-            let body_str = serde_json::to_string(&Value::Map(m.clone()).to_json()).unwrap_or_else(|_| "{}".to_string());
+            let body_str = serde_json::to_string(&Value::Map(m.clone()).to_json())
+                .unwrap_or_else(|_| "{}".to_string());
             (200, "OK", "application/json".to_string(), vec![], body_str)
         }
         Value::Array(_) => {
-            let body_str = serde_json::to_string(&val.to_json()).unwrap_or_else(|_| "[]".to_string());
+            let body_str =
+                serde_json::to_string(&val.to_json()).unwrap_or_else(|_| "[]".to_string());
             (200, "OK", "application/json".to_string(), vec![], body_str)
         }
         _ => {
@@ -891,7 +1069,9 @@ fn builtin_read(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
     if let Value::String(path) = &args[0] {
         match std::fs::read_to_string(path) {
             Ok(content) => Ok(Value::String(content)),
-            Err(e) => Err(RuntimeError::new(format!("Failed to read file '{}': {}", path, e)).at(span)),
+            Err(e) => {
+                Err(RuntimeError::new(format!("Failed to read file '{}': {}", path, e)).at(span))
+            }
         }
     } else {
         Err(RuntimeError::new("read expects a string path".into()).at(span))
@@ -903,7 +1083,9 @@ fn builtin_write(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
     if let (Value::String(path), Value::String(content)) = (&args[0], &args[1]) {
         match std::fs::write(path, content) {
             Ok(_) => Ok(Value::Null),
-            Err(e) => Err(RuntimeError::new(format!("Failed to write to file '{}': {}", path, e)).at(span)),
+            Err(e) => Err(
+                RuntimeError::new(format!("Failed to write to file '{}': {}", path, e)).at(span),
+            ),
         }
     } else {
         Err(RuntimeError::new("write expects (string path, string content)".into()).at(span))
@@ -914,12 +1096,14 @@ fn builtin_fetch(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
     expect_args("fetch", 1, &args, span)?;
     if let Value::String(url) = &args[0] {
         match reqwest::blocking::get(url) {
-            Ok(response) => {
-                match response.text() {
-                    Ok(text) => Ok(Value::String(text)),
-                    Err(e) => Err(RuntimeError::new(format!("Failed to read response from '{}': {}", url, e)).at(span)),
-                }
-            }
+            Ok(response) => match response.text() {
+                Ok(text) => Ok(Value::String(text)),
+                Err(e) => Err(RuntimeError::new(format!(
+                    "Failed to read response from '{}': {}",
+                    url, e
+                ))
+                .at(span)),
+            },
             Err(e) => Err(RuntimeError::new(format!("Failed to fetch '{}': {}", url, e)).at(span)),
         }
     } else {
@@ -927,7 +1111,11 @@ fn builtin_fetch(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
     }
 }
 
-fn builtin_time(_eval: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+fn builtin_time(
+    _eval: &mut Evaluator,
+    _args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
     if let Ok(duration) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
         Ok(Value::Number(duration.as_secs_f64()))
     } else {
@@ -948,7 +1136,11 @@ fn builtin_env(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
     }
 }
 
-fn builtin_exec(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn builtin_exec(
+    _eval: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("exec", 1, &args, span)?;
     if let Value::String(cmd) = &args[0] {
         if let Ok(output) = std::process::Command::new("sh").arg("-c").arg(cmd).output() {
@@ -962,7 +1154,11 @@ fn builtin_exec(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<V
     }
 }
 
-fn builtin_spawn(eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn builtin_spawn(
+    eval: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("spawn", 1, &args, span)?;
     let func = args[0].clone();
     let env = eval.global_env.clone();
@@ -973,7 +1169,11 @@ fn builtin_spawn(eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<V
     Ok(Value::Task(Arc::new(std::sync::Mutex::new(Some(handle)))))
 }
 
-fn builtin_join(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn builtin_join(
+    _eval: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("join", 1, &args, span)?;
     match &args[0] {
         Value::Task(t) => {
@@ -988,23 +1188,35 @@ fn builtin_join(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<V
                 Ok(Value::Null)
             }
         }
-        other => Err(RuntimeError::new(format!("join() expects a task, got {}", other.type_name())).at(span)),
+        other => Err(RuntimeError::new(format!(
+            "join() expects a task, got {}",
+            other.type_name()
+        ))
+        .at(span)),
     }
 }
 
-fn builtin_channel(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn builtin_channel(
+    _eval: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     let capacity = match args.len() {
         0 => None,
         1 => match args[0] {
             Value::Int(n) => {
                 if n < 0 {
-                    return Err(RuntimeError::new("channel capacity must be non-negative".into()).at(span));
+                    return Err(
+                        RuntimeError::new("channel capacity must be non-negative".into()).at(span),
+                    );
                 }
                 Some(n as usize)
             }
             Value::Float(n) | Value::Number(n) => {
                 if n < 0.0 {
-                    return Err(RuntimeError::new("channel capacity must be non-negative".into()).at(span));
+                    return Err(
+                        RuntimeError::new("channel capacity must be non-negative".into()).at(span),
+                    );
                 }
                 Some(n as usize)
             }
@@ -1016,7 +1228,11 @@ fn builtin_channel(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Resul
     Ok(Value::Channel(crate::channel::Channel::new(capacity)))
 }
 
-fn builtin_send(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn builtin_send(
+    _eval: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("send", 2, &args, span)?;
     if let Value::Channel(ch) = &args[0] {
         ch.send(args[1].clone(), span)?;
@@ -1026,9 +1242,16 @@ fn builtin_send(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<V
     }
 }
 
-fn builtin_recv(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn builtin_recv(
+    _eval: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.is_empty() || args.len() > 2 {
-        return Err(RuntimeError::new("recv() expects 1 or 2 arguments: recv(channel, [timeout_ms])".into()).at(span));
+        return Err(RuntimeError::new(
+            "recv() expects 1 or 2 arguments: recv(channel, [timeout_ms])".into(),
+        )
+        .at(span));
     }
     if let Value::Channel(ch) = &args[0] {
         let timeout = if args.len() == 2 {
@@ -1036,7 +1259,12 @@ fn builtin_recv(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<V
                 Value::Int(ms) if ms >= 0 => Some(ms as u64),
                 Value::Float(ms) | Value::Number(ms) if ms >= 0.0 => Some(ms as u64),
                 Value::Null => None,
-                _ => return Err(RuntimeError::new("recv() timeout must be non-negative integer".into()).at(span)),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "recv() timeout must be non-negative integer".into(),
+                    )
+                    .at(span));
+                }
             }
         } else {
             None
@@ -1047,7 +1275,11 @@ fn builtin_recv(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<V
     }
 }
 
-fn builtin_try_recv(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn builtin_try_recv(
+    _eval: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("try_recv", 1, &args, span)?;
     if let Value::Channel(ch) = &args[0] {
         ch.try_recv(span)
@@ -1056,7 +1288,11 @@ fn builtin_try_recv(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Resu
     }
 }
 
-fn builtin_close(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn builtin_close(
+    _eval: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("close", 1, &args, span)?;
     if let Value::Channel(ch) = &args[0] {
         ch.close();
@@ -1066,9 +1302,16 @@ fn builtin_close(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<
     }
 }
 
-fn builtin_assert(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn builtin_assert(
+    _eval: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.is_empty() || args.len() > 2 {
-        return Err(RuntimeError::new("'assert' expects 1 or 2 arguments (condition, [message])".into()).at(span));
+        return Err(RuntimeError::new(
+            "'assert' expects 1 or 2 arguments (condition, [message])".into(),
+        )
+        .at(span));
     }
     let cond = &args[0];
     if !cond.is_truthy() {
@@ -1082,9 +1325,16 @@ fn builtin_assert(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result
     Ok(Value::Null)
 }
 
-fn builtin_assert_eq(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn builtin_assert_eq(
+    _eval: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.len() < 2 || args.len() > 3 {
-        return Err(RuntimeError::new("'assert_eq' expects 2 or 3 arguments (actual, expected, [message])".into()).at(span));
+        return Err(RuntimeError::new(
+            "'assert_eq' expects 2 or 3 arguments (actual, expected, [message])".into(),
+        )
+        .at(span));
     }
     let actual = &args[0];
     let expected = &args[1];
@@ -1099,7 +1349,8 @@ fn builtin_assert_eq(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Res
             expected.to_repr(),
             actual.to_repr(),
             extra
-        )).at(span));
+        ))
+        .at(span));
     }
     Ok(Value::Null)
 }
@@ -1113,7 +1364,9 @@ fn builtin_map(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value
             let mapped = ev.call_value(func, vec![item.clone()], span)?;
             new_arr.push(mapped);
         }
-        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(new_arr))))
+        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
+            new_arr,
+        ))))
     } else {
         Err(RuntimeError::new("First argument to map must be an array".into()).at(span))
     }
@@ -1130,7 +1383,9 @@ fn builtin_filter(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
                 new_arr.push(item.clone());
             }
         }
-        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(new_arr))))
+        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
+            new_arr,
+        ))))
     } else {
         Err(RuntimeError::new("First argument to filter must be an array".into()).at(span))
     }

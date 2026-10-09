@@ -13,14 +13,14 @@ pub enum StrPart {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Keywords
-    Struct,        // struct
-    Enum,          // enum
-    Match,         // match
-    
+    Struct, // struct
+    Enum,   // enum
+    Match,  // match
+
     // Symbols
-    FatArrow,      // =>
-    Pipe,          // |>
-    Underscore,    // _
+    FatArrow,   // =>
+    Pipe,       // |>
+    Underscore, // _
     Let,
     Fn,
     Return,
@@ -82,15 +82,15 @@ pub enum Token {
     GtEq,        // >=
     And,         // &&
     Or,          // ||
-    Not,        // !
+    Not,         // !
 
     // Bitwise Operators
-    Amp,         // &
-    BitOr,       // |
-    Caret,       // ^
-    Tilde,       // ~
-    Shl,         // <<
-    Shr,         // >>
+    Amp,   // &
+    BitOr, // |
+    Caret, // ^
+    Tilde, // ~
+    Shl,   // <<
+    Shr,   // >>
 
     Eof,
 }

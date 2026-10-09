@@ -522,6 +522,7 @@ impl Lexer {
                             '\\' => current_text.push('\\'),
                             '{' => current_text.push('{'),
                             '}' => current_text.push('}'),
+                            '$' => current_text.push('$'),
                             other => {
                                 return Err(LexerError::InvalidEscape {
                                     ch: other,
@@ -545,6 +546,9 @@ impl Lexer {
                 }
                 '{' => {
                     has_interp = true;
+                    if current_text.ends_with('$') {
+                        current_text.pop();
+                    }
                     if !current_text.is_empty() {
                         parts.push(StrPart::Text(current_text.clone()));
                         current_text.clear();
@@ -644,11 +648,13 @@ impl Lexer {
                                 col: start_col,
                             });
                         }
-                        let num = i64::from_str_radix(&hex_str, 16).map_err(|e| LexerError::InvalidNumber {
-                            raw: format!("0{}{}", prefix, hex_str),
-                            msg: e.to_string(),
-                            line: start_line,
-                            col: start_col,
+                        let num = i64::from_str_radix(&hex_str, 16).map_err(|e| {
+                            LexerError::InvalidNumber {
+                                raw: format!("0{}{}", prefix, hex_str),
+                                msg: e.to_string(),
+                                line: start_line,
+                                col: start_col,
+                            }
                         })?;
                         return Ok(SpannedToken {
                             token: Token::IntLit(num),
@@ -678,11 +684,13 @@ impl Lexer {
                                 col: start_col,
                             });
                         }
-                        let num = i64::from_str_radix(&bin_str, 2).map_err(|e| LexerError::InvalidNumber {
-                            raw: format!("0{}{}", prefix, bin_str),
-                            msg: e.to_string(),
-                            line: start_line,
-                            col: start_col,
+                        let num = i64::from_str_radix(&bin_str, 2).map_err(|e| {
+                            LexerError::InvalidNumber {
+                                raw: format!("0{}{}", prefix, bin_str),
+                                msg: e.to_string(),
+                                line: start_line,
+                                col: start_col,
+                            }
                         })?;
                         return Ok(SpannedToken {
                             token: Token::IntLit(num),
@@ -712,11 +720,13 @@ impl Lexer {
                                 col: start_col,
                             });
                         }
-                        let num = i64::from_str_radix(&oct_str, 8).map_err(|e| LexerError::InvalidNumber {
-                            raw: format!("0{}{}", prefix, oct_str),
-                            msg: e.to_string(),
-                            line: start_line,
-                            col: start_col,
+                        let num = i64::from_str_radix(&oct_str, 8).map_err(|e| {
+                            LexerError::InvalidNumber {
+                                raw: format!("0{}{}", prefix, oct_str),
+                                msg: e.to_string(),
+                                line: start_line,
+                                col: start_col,
+                            }
                         })?;
                         return Ok(SpannedToken {
                             token: Token::IntLit(num),
@@ -753,7 +763,10 @@ impl Lexer {
                 }
             } else if (ch == 'e' || ch == 'E') && !seen_exp {
                 if let Some(next_ch) = self.peek(1) {
-                    if next_ch.is_ascii_digit() || ((next_ch == '+' || next_ch == '-') && self.peek(2).map(|c| c.is_ascii_digit()).unwrap_or(false)) {
+                    if next_ch.is_ascii_digit()
+                        || ((next_ch == '+' || next_ch == '-')
+                            && self.peek(2).map(|c| c.is_ascii_digit()).unwrap_or(false))
+                    {
                         seen_exp = true;
                         s.push(ch);
                         self.advance();

@@ -46,7 +46,10 @@ fn test_spawn_task_error_propagation() {
         t.join()
     "#;
     let err = run(script).unwrap_err();
-    assert!(err.to_string().contains("Dividing by zero creates black holes"));
+    assert!(
+        err.to_string()
+            .contains("Dividing by zero creates black holes")
+    );
 }
 
 #[test]
@@ -151,7 +154,7 @@ serve({}, app)
 
     // 1. Root route
     let r1 = client
-        .get(&format!("http://127.0.0.1:{}/", port))
+        .get(format!("http://127.0.0.1:{}/", port))
         .send()
         .expect("Root request failed");
     assert_eq!(r1.status().as_u16(), 200);
@@ -159,7 +162,7 @@ serve({}, app)
 
     // 2. Route with path parameters: /users/:userId/posts/:postId
     let r2 = client
-        .get(&format!("http://127.0.0.1:{}/users/42/posts/999", port))
+        .get(format!("http://127.0.0.1:{}/users/42/posts/999", port))
         .send()
         .expect("Params request failed");
     assert_eq!(r2.status().as_u16(), 200);
@@ -169,7 +172,10 @@ serve({}, app)
 
     // 3. Query params: /search?q=shae+programming&page=3
     let r3 = client
-        .get(&format!("http://127.0.0.1:{}/search?q=shae+programming&page=3", port))
+        .get(format!(
+            "http://127.0.0.1:{}/search?q=shae+programming&page=3",
+            port
+        ))
         .send()
         .expect("Query request failed");
     assert_eq!(r3.status().as_u16(), 200);
@@ -179,7 +185,7 @@ serve({}, app)
 
     // 4. POST echo
     let r4 = client
-        .post(&format!("http://127.0.0.1:{}/echo", port))
+        .post(format!("http://127.0.0.1:{}/echo", port))
         .body("payload-content")
         .send()
         .expect("Post request failed");
@@ -188,7 +194,7 @@ serve({}, app)
 
     // 5. 404 Route Not Found
     let r5 = client
-        .get(&format!("http://127.0.0.1:{}/unknown/path", port))
+        .get(format!("http://127.0.0.1:{}/unknown/path", port))
         .send()
         .expect("404 request failed");
     assert_eq!(r5.status().as_u16(), 404);
@@ -231,7 +237,7 @@ serve_tls({}, handle, "{}", "{}")
         .unwrap();
 
     let resp = client
-        .get(&format!("https://127.0.0.1:{}/", port))
+        .get(format!("https://127.0.0.1:{}/", port))
         .send()
         .expect("HTTPS request failed");
 

@@ -48,7 +48,9 @@ c
 "#;
     let program = parse_source(script).expect("Parsing should succeed");
     let compiler = Compiler::new();
-    let chunk = compiler.compile_program(&program).expect("Compilation should succeed");
+    let chunk = compiler
+        .compile_program(&program)
+        .expect("Compilation should succeed");
 
     let mut vm = VM::new();
     let result = vm.interpret(chunk);
@@ -65,7 +67,9 @@ x + 5
 "#;
     let program = parse_source(script).expect("Parsing should succeed");
     let compiler = Compiler::new();
-    let chunk = compiler.compile_program(&program).expect("Compilation should succeed");
+    let chunk = compiler
+        .compile_program(&program)
+        .expect("Compilation should succeed");
 
     let mut vm = VM::new();
     let result = vm.interpret(chunk);
@@ -83,7 +87,9 @@ bit_shifted
 "#;
     let program = parse_source(script).expect("Parsing should succeed");
     let compiler = Compiler::new();
-    let chunk = compiler.compile_program(&program).expect("Compilation should succeed");
+    let chunk = compiler
+        .compile_program(&program)
+        .expect("Compilation should succeed");
 
     let mut vm = VM::new();
     let result = vm.interpret(chunk);
@@ -108,7 +114,9 @@ grade
 "#;
     let program = parse_source(script).expect("Parsing should succeed");
     let compiler = Compiler::new();
-    let chunk = compiler.compile_program(&program).expect("Compilation should succeed");
+    let chunk = compiler
+        .compile_program(&program)
+        .expect("Compilation should succeed");
 
     let mut vm = VM::new();
     let result = vm.interpret(chunk);
@@ -135,7 +143,9 @@ sum
 "#;
     let program = parse_source(script).expect("Parsing should succeed");
     let compiler = Compiler::new();
-    let chunk = compiler.compile_program(&program).expect("Compilation should succeed");
+    let chunk = compiler
+        .compile_program(&program)
+        .expect("Compilation should succeed");
 
     let mut vm = VM::new();
     let result = vm.interpret(chunk);
@@ -457,4 +467,3 @@ outer()
     let result = vm.interpret(chunk);
     assert_eq!(result, InterpretResult::Ok(Value::Int(777)));
 }
-

@@ -1,5 +1,5 @@
-use shae::run;
 use serde_json::json;
+use shae::run;
 
 #[test]
 fn test_array_methods() {
@@ -16,10 +16,7 @@ fn test_array_methods() {
         [sum, doubled, evens, reduced]
     "#;
     let val = run(script).expect("Execution failed");
-    assert_eq!(
-        val.to_json(),
-        json!([10, [2, 4, 6, 8], [2, 4], 20])
-    );
+    assert_eq!(val.to_json(), json!([10, [2, 4, 6, 8], [2, 4], 20]));
 }
 
 #[test]
@@ -37,6 +34,12 @@ fn test_string_methods() {
     let val = run(script).expect("Execution failed");
     assert_eq!(
         val.to_json(),
-        json!(["Hello World", "HELLO WORLD", "hello world", ["Hello", "World"], "Hello Shae"])
+        json!([
+            "Hello World",
+            "HELLO WORLD",
+            "hello world",
+            ["Hello", "World"],
+            "Hello Shae"
+        ])
     );
 }

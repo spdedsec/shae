@@ -33,11 +33,40 @@ impl Linter {
     pub fn new() -> Self {
         let mut builtins = HashSet::new();
         let list = [
-            "print", "dbg", "len", "type", "str", "num", "range",
-            "push", "pop", "map", "filter", "reduce", "sum", "sort",
-            "keys", "values", "get", "json_parse", "json_stringify",
-            "serve", "serve_tls", "route_match", "read", "write", "fetch", "time", "env", "exec",
-            "spawn", "join", "channel", "assert", "assert_eq",
+            "print",
+            "println",
+            "dbg",
+            "len",
+            "type",
+            "str",
+            "num",
+            "range",
+            "push",
+            "pop",
+            "map",
+            "filter",
+            "reduce",
+            "sum",
+            "sort",
+            "keys",
+            "values",
+            "get",
+            "json_parse",
+            "json_stringify",
+            "serve",
+            "serve_tls",
+            "route_match",
+            "read",
+            "write",
+            "fetch",
+            "time",
+            "env",
+            "exec",
+            "spawn",
+            "join",
+            "channel",
+            "assert",
+            "assert_eq",
         ];
         for b in list {
             builtins.insert(b.to_string());
@@ -142,7 +171,9 @@ impl Linter {
                 self.diagnostics.push(Diagnostic {
                     severity: DiagnosticSeverity::Warning,
                     message: format!("Variable '{}' is already declared in this scope", name),
-                    hint: Some("Consider reusing the existing variable or using a different name.".into()),
+                    hint: Some(
+                        "Consider reusing the existing variable or using a different name.".into(),
+                    ),
                     span,
                 });
             } else if !name.starts_with('_') {
@@ -258,11 +289,7 @@ impl Linter {
                 }
                 self.lint_expr(value);
             }
-            StmtKind::FnDef {
-                name,
-                params,
-                body,
-            } => {
+            StmtKind::FnDef { name, params, body } => {
                 if self.scopes.len() > 1 {
                     self.declare_var(name, stmt.span, false);
                 }
@@ -400,7 +427,8 @@ impl Linter {
                 // Check built-in arities statically where possible
                 if let Expr::Variable { name, .. } = &**callee {
                     let expected_arity = match name.as_str() {
-                        "len" | "type" | "str" | "num" | "read" | "fetch" | "env" | "exec" | "spawn" | "join" => Some(1),
+                        "len" | "type" | "str" | "num" | "read" | "fetch" | "env" | "exec"
+                        | "spawn" | "join" => Some(1),
                         "push" | "write" | "serve" => Some(2),
                         _ => None,
                     };
@@ -408,7 +436,12 @@ impl Linter {
                         if args.len() != expected {
                             self.diagnostics.push(Diagnostic {
                                 severity: DiagnosticSeverity::Error,
-                                message: format!("Built-in '{}' expects {} argument(s), but got {}", name, expected, args.len()),
+                                message: format!(
+                                    "Built-in '{}' expects {} argument(s), but got {}",
+                                    name,
+                                    expected,
+                                    args.len()
+                                ),
                                 hint: None,
                                 span: *span,
                             });
@@ -445,7 +478,12 @@ impl Linter {
             Expr::Match { target, arms, .. } => {
                 self.lint_expr(target);
                 let fallback = target.span().unwrap_or(Span { line: 0, col: 0 });
-                for MatchArm { pattern, guard, body } in arms {
+                for MatchArm {
+                    pattern,
+                    guard,
+                    body,
+                } in arms
+                {
                     self.push_scope();
                     self.bind_pattern(pattern, fallback);
                     if let Some(g) = guard {

@@ -71,10 +71,7 @@ join(t)
 [cap, len_before, first, second, third]
 "#;
     let val = run(script).expect("Execution failed");
-    assert_eq!(
-        val.to_json(),
-        json!([2, 2, "item1", "item2", "item3"])
-    );
+    assert_eq!(val.to_json(), json!([2, 2, "item1", "item2", "item3"]));
 }
 
 #[test]

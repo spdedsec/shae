@@ -99,8 +99,12 @@ fn test_gc_collects_cyclic_references() {
     let b_ref = heap.alloc_array(vec![Value::Int(2)]);
 
     // Make them point to each other: A -> B, B -> A
-    heap.as_array_mut(a_ref).unwrap().push(Value::GcArray(b_ref));
-    heap.as_array_mut(b_ref).unwrap().push(Value::GcArray(a_ref));
+    heap.as_array_mut(a_ref)
+        .unwrap()
+        .push(Value::GcArray(b_ref));
+    heap.as_array_mut(b_ref)
+        .unwrap()
+        .push(Value::GcArray(a_ref));
 
     assert_eq!(heap.live_objects_count(), 2);
 
@@ -197,7 +201,9 @@ fn test_vm_gc_builtin_execution() {
 gc()
 "#;
     let program = shae::parse_source(script).unwrap();
-    let chunk = shae::compiler::Compiler::new().compile_program(&program).unwrap();
+    let chunk = shae::compiler::Compiler::new()
+        .compile_program(&program)
+        .unwrap();
     let mut vm = shae::vm::VM::new();
     let result = vm.interpret(chunk);
     assert_eq!(result, shae::vm::InterpretResult::Ok(Value::Int(0)));
@@ -224,7 +230,8 @@ fn test_vm_gc_preserves_globals_and_stack() {
     let mut vm = shae::vm::VM::new();
 
     let root_ref = vm.heap.alloc_array(vec![Value::Int(100), Value::Int(200)]);
-    vm.globals.insert("my_global".to_string(), Value::GcArray(root_ref));
+    vm.globals
+        .insert("my_global".to_string(), Value::GcArray(root_ref));
 
     let _garbage = vm.heap.alloc_string("temporary string".to_string());
     assert_eq!(vm.heap.live_objects_count(), 2);
@@ -242,4 +249,3 @@ fn test_vm_gc_preserves_globals_and_stack() {
         panic!("my_global not found in globals");
     }
 }
-

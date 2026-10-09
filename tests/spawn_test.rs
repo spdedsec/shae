@@ -1,5 +1,5 @@
-use shae::run;
 use serde_json::json;
+use shae::run;
 use std::fs;
 use std::thread;
 use std::time::Duration;
@@ -16,15 +16,15 @@ fn test_spawn() {
     "#;
     let val = run(script).expect("Execution failed");
     assert_eq!(val.to_json(), json!("init"));
-    
+
     // Wait for the spawned thread to execute
     let mut content = String::new();
     for _ in 0..100 {
-        if let Ok(c) = fs::read_to_string("spawn_test.txt") {
-            if !c.is_empty() {
-                content = c;
-                break;
-            }
+        if let Ok(c) = fs::read_to_string("spawn_test.txt")
+            && !c.is_empty()
+        {
+            content = c;
+            break;
         }
         thread::sleep(Duration::from_millis(15));
     }

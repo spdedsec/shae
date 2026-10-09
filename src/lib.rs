@@ -1,24 +1,24 @@
 pub mod ast;
 pub mod builtins;
+pub mod bundle;
+pub mod channel;
+pub mod chunk;
+pub mod compiler;
 pub mod env;
 pub mod eval;
+pub mod fmt;
+pub mod gc;
 pub mod lexer;
+pub mod linter;
+pub mod lsp;
+pub mod opcode;
 pub mod parser;
+pub mod pkg;
+pub mod stdlib;
 pub mod suggest;
 pub mod token;
 pub mod value;
-pub mod opcode;
-pub mod chunk;
-pub mod compiler;
 pub mod vm;
-pub mod linter;
-pub mod fmt;
-pub mod gc;
-pub mod stdlib;
-pub mod channel;
-pub mod pkg;
-pub mod lsp;
-pub mod bundle;
 
 use thiserror::Error;
 
@@ -93,10 +93,16 @@ pub fn run(source: &str) -> Result<value::Value, ShaeError> {
 pub fn run_file<P: AsRef<std::path::Path>>(path: P) -> Result<value::Value, ShaeError> {
     let path_ref = path.as_ref();
     let source = std::fs::read_to_string(path_ref).map_err(|e| {
-        eval::RuntimeError::new(format!("Failed to read file '{}': {}", path_ref.display(), e))
+        eval::RuntimeError::new(format!(
+            "Failed to read file '{}': {}",
+            path_ref.display(),
+            e
+        ))
     })?;
     let mut ev = eval::Evaluator::new();
-    ev.current_file = std::fs::canonicalize(path_ref).ok().or_else(|| Some(path_ref.to_path_buf()));
+    ev.current_file = std::fs::canonicalize(path_ref)
+        .ok()
+        .or_else(|| Some(path_ref.to_path_buf()));
     run_in_evaluator(&source, &mut ev)
 }
 
@@ -114,4 +120,3 @@ pub fn parse_source(source: &str) -> Result<ast::Program, ShaeError> {
 }
 
 pub use fmt::{format_program, format_source};
-
