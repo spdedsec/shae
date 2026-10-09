@@ -40,6 +40,10 @@ pub fn collect_bundle(entry_file: &Path) -> Result<BundleArchive, BundleError> {
         .canonicalize()
         .unwrap_or_else(|_| entry_file.to_path_buf());
     let mut archive = BundleArchive::new(&canonical_entry.to_string_lossy());
+    let entry_dir = canonical_entry
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
 
     let mut queue = vec![canonical_entry];
     let mut visited = std::collections::HashSet::new();
@@ -52,7 +56,15 @@ pub fn collect_bundle(entry_file: &Path) -> Result<BundleArchive, BundleError> {
         visited.insert(path_str.clone());
 
         let source = fs::read_to_string(&current_path)?;
-        archive.files.insert(path_str, source.clone());
+        archive.files.insert(path_str.clone(), source.clone());
+
+        if let Ok(rel) = current_path.strip_prefix(&entry_dir) {
+            let rel_str = rel.to_string_lossy().to_string();
+            archive.files.insert(rel_str.clone(), source.clone());
+            archive
+                .files
+                .insert(format!("./{}", rel_str), source.clone());
+        }
 
         // Parse AST to discover local imports
         if let Ok(tokens) = crate::lexer::tokenize(&source) {

@@ -247,3 +247,88 @@ serve_tls({}, handle, "{}", "{}")
     let _ = std::fs::remove_file(cert_file);
     let _ = std::fs::remove_file(key_file);
 }
+
+#[test]
+fn test_http_server_body_framing_and_crlf_protection() {
+    let port = 18995;
+    let server_script = format!(
+        r#"
+fn handle(req) {{
+    if req.method == "POST" && req.path == "/echo-body" {{
+        return {{
+            "status": 200,
+            "headers": {{
+                "X-Valid": "SafeValue",
+                "X-Bad-Key\r\nInjection": "Injected",
+                "X-Bad-Val": "Val\r\nInjected: true"
+            }},
+            "body": req.body
+        }}
+    }}
+    return "ok"
+}}
+serve({}, handle)
+"#,
+        port
+    );
+
+    thread::spawn(move || {
+        let _ = run(&server_script);
+    });
+
+    thread::sleep(Duration::from_millis(200));
+
+    let client = reqwest::blocking::Client::new();
+    let large_body = "A".repeat(32768);
+
+    let resp = client
+        .post(format!("http://127.0.0.1:{}/echo-body", port))
+        .body(large_body.clone())
+        .send()
+        .expect("Post request failed");
+
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(resp.headers().get("X-Valid").unwrap(), "SafeValue");
+    // Verify malicious headers were stripped / ignored
+    assert!(!resp.headers().contains_key("Injected"));
+    assert!(!resp.headers().contains_key("X-Bad-Key\r\nInjection"));
+    assert!(!resp.headers().contains_key("X-Bad-Val"));
+    assert_eq!(resp.text().unwrap(), large_body);
+}
+
+#[test]
+fn test_http_server_fragmented_tcp_request() {
+    let port = 18996;
+    let server_script = format!(
+        r#"
+fn handle(req) {{
+    return "Fragmented Success"
+}}
+serve({}, handle)
+"#,
+        port
+    );
+
+    thread::spawn(move || {
+        let _ = run(&server_script);
+    });
+
+    thread::sleep(Duration::from_millis(200));
+
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
+
+    // Send headers fragmented over multiple writes
+    stream
+        .write_all(b"GET /fragmented HTTP/1.1\r\nHost: 127.0.0.1\r\n")
+        .unwrap();
+    stream.flush().unwrap();
+    thread::sleep(Duration::from_millis(50));
+    stream.write_all(b"Connection: close\r\n\r\n").unwrap();
+    stream.flush().unwrap();
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.contains("200 OK"));
+    assert!(response.contains("Fragmented Success"));
+}

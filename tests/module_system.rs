@@ -313,3 +313,24 @@ a.from_a() + a.call_b()
     let _ = fs::remove_file(file_a);
     let _ = fs::remove_file(file_b);
 }
+
+#[test]
+fn test_module_cache_cleared_on_error() {
+    let file = "tests/test_fail_then_fix.shae";
+
+    // 1. Write file with syntax/parse error
+    fs::write(file, "let x = @@@ invalid syntax").unwrap();
+
+    let mut ev = shae::eval::Evaluator::new();
+    let res1 = ev.load_module(file, shae::ast::Span::new(1, 1));
+    assert!(res1.is_err(), "First load must fail");
+
+    // 2. Fix the file
+    fs::write(file, "fn answer() { 42 }").unwrap();
+
+    // 3. Second load in same evaluator must succeed, not return empty poisoned map
+    let res2 = ev.load_module(file, shae::ast::Span::new(1, 1));
+    assert!(res2.is_ok(), "Second load must succeed after fix");
+
+    let _ = fs::remove_file(file);
+}

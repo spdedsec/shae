@@ -18,6 +18,32 @@ pub enum PkgError {
     Git(String, String),
     #[error("Package '{0}' not found: {1}")]
     NotFound(String, String),
+    #[error("Invalid package name or manifest: {0}")]
+    InvalidManifest(String),
+}
+
+pub fn validate_package_name(name: &str) -> Result<(), PkgError> {
+    if name.is_empty() {
+        return Err(PkgError::InvalidManifest(
+            "Package name cannot be empty".into(),
+        ));
+    }
+    if name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        return Err(PkgError::InvalidManifest(format!(
+            "Invalid package name '{}': path traversal characters not allowed",
+            name
+        )));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+    {
+        return Err(PkgError::InvalidManifest(format!(
+            "Invalid package name '{}': must contain only alphanumeric, '_', '-', or '.'",
+            name
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,9 +241,13 @@ pub fn add_dependency(
     tag: Option<&str>,
     rev: Option<&str>,
 ) -> Result<Lockfile, PkgError> {
-    let mut manifest = match PackageManifest::load_from_dir(dir) {
-        Ok(m) => m,
-        Err(_) => init_project(dir, None)?,
+    validate_package_name(dep_name)?;
+
+    let manifest_path = dir.join("shae.toml");
+    let mut manifest = if manifest_path.exists() {
+        PackageManifest::load_from_dir(dir)?
+    } else {
+        init_project(dir, None)?
     };
 
     let is_git_url = source.starts_with("git://")
@@ -264,6 +294,15 @@ pub fn install_dependencies(dir: &Path) -> Result<Lockfile, PkgError> {
     fs::create_dir_all(&packages_dir)?;
 
     for (dep_name, spec) in &manifest.dependencies {
+        validate_package_name(dep_name)?;
+        let pkg_dir = packages_dir.join(dep_name);
+        if !pkg_dir.starts_with(&packages_dir) {
+            return Err(PkgError::InvalidManifest(format!(
+                "Dependency name '{}' escapes packages directory",
+                dep_name
+            )));
+        }
+
         if let Some(path_str) = spec.get_path() {
             let target_path = if Path::new(&path_str).is_absolute() {
                 PathBuf::from(&path_str)
@@ -278,8 +317,7 @@ pub fn install_dependencies(dir: &Path) -> Result<Lockfile, PkgError> {
                 ));
             }
 
-            let pkg_dir = packages_dir.join(dep_name);
-            sync_path_dependency(&target_path, &pkg_dir)?;
+            sync_path_dependency(&target_path, &pkg_dir, &packages_dir)?;
 
             lockfile.packages.insert(
                 dep_name.clone(),
@@ -290,7 +328,6 @@ pub fn install_dependencies(dir: &Path) -> Result<Lockfile, PkgError> {
                 },
             );
         } else if let Some(git_url) = spec.get_git_url() {
-            let pkg_dir = packages_dir.join(dep_name);
             let locked_commit = lockfile
                 .packages
                 .get(dep_name)
@@ -328,7 +365,14 @@ pub fn install_dependencies(dir: &Path) -> Result<Lockfile, PkgError> {
     Ok(lockfile)
 }
 
-fn sync_path_dependency(source: &Path, dest: &Path) -> Result<(), PkgError> {
+fn sync_path_dependency(source: &Path, dest: &Path, packages_dir: &Path) -> Result<(), PkgError> {
+    if !dest.starts_with(packages_dir) {
+        return Err(PkgError::InvalidManifest(format!(
+            "Destination '{}' escapes packages directory '{}'",
+            dest.display(),
+            packages_dir.display()
+        )));
+    }
     if dest.exists() {
         let _ = fs::remove_dir_all(dest);
     }

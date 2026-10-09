@@ -175,3 +175,26 @@ let caps = captures(r"(\w+)@(\w+\.\w+)", "Contact: admin@shaelang.org today")
         })
     );
 }
+
+#[test]
+fn test_std_time_sleep_negative_rejected() {
+    let script = r#"
+        use { sleep } from "std:time"
+        sleep(-50)
+    "#;
+    let res = run(script);
+    assert!(res.is_err());
+    assert!(res.unwrap_err().to_string().contains("non-negative"));
+}
+
+#[test]
+fn test_std_codec_multibyte_utf8_url_decode() {
+    let script = r#"
+        use { url_decode } from "std:codec"
+        // %F0%9F%98%80 is 😀 and %C3%A9 is é
+        let decoded = url_decode("%F0%9F%98%80+hello+%C3%A9")
+        decoded
+    "#;
+    let res = run(script).expect("url_decode failed");
+    assert_eq!(res.to_json(), json!("😀 hello é"));
+}

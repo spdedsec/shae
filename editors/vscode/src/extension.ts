@@ -6,7 +6,8 @@ import {
     LanguageClient,
     LanguageClientOptions,
     ServerOptions,
-    TransportKind
+    TransportKind,
+    Trace
 } from 'vscode-languageclient/node';
 
 let client: LanguageClient | undefined;
@@ -108,6 +109,7 @@ async function startLanguageServer(context: vscode.ExtensionContext) {
             fileEvents: vscode.workspace.createFileSystemWatcher('**/*.shae'),
         },
         outputChannelName: 'Shae Language Server',
+        traceOutputChannel: vscode.window.createOutputChannel('Shae Language Server Trace'),
     };
 
     client = new LanguageClient(
@@ -116,6 +118,10 @@ async function startLanguageServer(context: vscode.ExtensionContext) {
         serverOptions,
         clientOptions
     );
+
+    const config = vscode.workspace.getConfiguration('shae');
+    const traceStr = config.get<string>('lsp.trace.server', 'off');
+    await client.setTrace(Trace.fromString(traceStr));
 
     try {
         await client.start();
@@ -126,6 +132,16 @@ async function startLanguageServer(context: vscode.ExtensionContext) {
 
 export async function activate(context: vscode.ExtensionContext) {
     await startLanguageServer(context);
+
+    // Watch for trace configuration changes
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration(async (e) => {
+            if (e.affectsConfiguration('shae.lsp.trace.server') && client) {
+                const newTrace = vscode.workspace.getConfiguration('shae').get<string>('lsp.trace.server', 'off');
+                await client.setTrace(Trace.fromString(newTrace));
+            }
+        })
+    );
 
     // Register restart command
     context.subscriptions.push(

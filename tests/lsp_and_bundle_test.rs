@@ -279,3 +279,35 @@ fn test_bundle_collection_and_archive_roundtrip() {
     assert_eq!(decoded.entry_path, archive.entry_path);
     assert_eq!(decoded.files.len(), archive.files.len());
 }
+
+#[test]
+fn test_standalone_bundle_executes_after_source_removal() {
+    let temp = TempDir::new("bundle_reloc");
+    let main_file = temp.path.join("main.shae");
+    let helper_file = temp.path.join("helper.shae");
+
+    fs::write(&helper_file, "fn get_answer() { 42 }\n").unwrap();
+    fs::write(
+        &main_file,
+        "use { get_answer } from \"./helper.shae\"\nlet res = get_answer()\nres\n",
+    )
+    .unwrap();
+
+    let archive = bundle::collect_bundle(&main_file).expect("collect_bundle failed");
+
+    // Remove the source files completely
+    fs::remove_file(&main_file).unwrap();
+    fs::remove_file(&helper_file).unwrap();
+    assert!(!main_file.exists());
+    assert!(!helper_file.exists());
+
+    // Execute using Evaluator with embedded_archive
+    let mut ev = shae::eval::Evaluator::new();
+    ev.current_file = Some(std::path::PathBuf::from(&archive.entry_path));
+    ev.embedded_archive = Some(std::sync::Arc::new(archive.files.clone()));
+
+    let entry_source = archive.files.get(&archive.entry_path).unwrap();
+    let val = shae::run_in_evaluator(entry_source, &mut ev)
+        .expect("execution should succeed without source files");
+    assert_eq!(val, shae::value::Value::Int(42));
+}

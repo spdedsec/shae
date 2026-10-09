@@ -399,9 +399,24 @@ fn builtin_serve(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
     }
     expect_args("serve", 2, &args, span)?;
 
-    let port = match args[0] {
+    let (port_val, host_str) = match &args[0] {
+        Value::Map(m) => {
+            let map = m.read().unwrap();
+            let p = map.get("port").cloned().ok_or_else(|| {
+                RuntimeError::new("serve config map must contain 'port'".into()).at(span)
+            })?;
+            let h = match map.get("host") {
+                Some(Value::String(s)) => s.clone(),
+                _ => "127.0.0.1".to_string(),
+            };
+            (p, h)
+        }
+        other => (other.clone(), "127.0.0.1".to_string()),
+    };
+
+    let port = match port_val {
         Value::Int(p) => {
-            if p < 1 || p > 65535 {
+            if !(1..=65535).contains(&p) {
                 return Err(RuntimeError::new(
                     "Port must be a whole number between 1 and 65535".into(),
                 )
@@ -410,7 +425,7 @@ fn builtin_serve(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
             p as u16
         }
         Value::Float(p) | Value::Number(p) => {
-            if p.fract() != 0.0 || p < 1.0 || p > 65535.0 {
+            if p.fract() != 0.0 || !(1.0..=65535.0).contains(&p) {
                 return Err(RuntimeError::new(
                     "Port must be a whole number between 1 and 65535".into(),
                 )
@@ -419,9 +434,10 @@ fn builtin_serve(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
             p as u16
         }
         _ => {
-            return Err(
-                RuntimeError::new("First argument to serve must be a port number".into()).at(span),
-            );
+            return Err(RuntimeError::new(
+                "First argument to serve must be a port number or config map".into(),
+            )
+            .at(span));
         }
     };
 
@@ -438,24 +454,45 @@ fn builtin_serve(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
 
     use std::net::TcpListener;
 
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).map_err(|e| {
-        RuntimeError::new(format!("Failed to bind to port {}: {}", port, e)).at(span)
+    let bind_addr = format!("{}:{}", host_str, port);
+    let listener = TcpListener::bind(&bind_addr).map_err(|e| {
+        RuntimeError::new(format!("Failed to bind to {}: {}", bind_addr, e)).at(span)
     })?;
 
-    println!("Server running on http://localhost:{}", port);
+    let display_host = if host_str == "0.0.0.0" {
+        "localhost"
+    } else {
+        &host_str
+    };
+    println!("Server running on http://{}:{}", display_host, port);
 
     let env_root = ev.global_env.clone();
     let handler_root = handler.clone();
+    const MAX_CONCURRENT_CONNECTIONS: usize = 128;
+    let active_connections = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-    for stream in listener.incoming() {
-        if let Ok(mut stream) = stream {
-            let env_clone = env_root.clone();
-            let handler_clone = handler_root.clone();
-            std::thread::spawn(move || {
-                let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
-                let _ = handle_http_io(&mut stream, &env_clone, &handler_clone, span);
-            });
+    for mut stream in listener.incoming().flatten() {
+        let active = active_connections.clone();
+        if active.load(std::sync::atomic::Ordering::Relaxed) >= MAX_CONCURRENT_CONNECTIONS {
+            use std::io::Write;
+            let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 1\r\n\r\nServer Busy\r\n");
+            let _ = stream.flush();
+            continue;
         }
+        active.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let env_clone = env_root.clone();
+        let handler_clone = handler_root.clone();
+        std::thread::spawn(move || {
+            struct ConnGuard(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+            impl Drop for ConnGuard {
+                fn drop(&mut self) {
+                    self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            let _guard = ConnGuard(active);
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+            let _ = handle_http_io(&mut stream, &env_clone, &handler_clone, span);
+        });
     }
     Ok(Value::Null)
 }
@@ -516,12 +553,16 @@ fn builtin_serve_tls(
     args: Vec<Value>,
     span: Span,
 ) -> Result<Value, RuntimeError> {
-    let (port_val, handler, cert_path, key_path) = if args.len() == 2 {
+    let (port_val, handler, cert_path, key_path, host) = if args.len() == 2 {
         if let Value::Map(map_lock) = &args[0] {
             let map = map_lock.read().unwrap();
             let port = map.get("port").cloned().ok_or_else(|| {
                 RuntimeError::new("serve_tls config map must contain 'port'".into()).at(span)
             })?;
+            let host = match map.get("host") {
+                Some(Value::String(s)) => s.clone(),
+                _ => "127.0.0.1".to_string(),
+            };
             let cert = match map.get("cert") {
                 Some(Value::String(s)) => s.clone(),
                 _ => {
@@ -540,7 +581,7 @@ fn builtin_serve_tls(
                     .at(span));
                 }
             };
-            (port, args[1].clone(), cert, key)
+            (port, args[1].clone(), cert, key, host)
         } else {
             return Err(RuntimeError::new(
                 "serve_tls with 2 arguments expects (config_map, handler)".into(),
@@ -566,7 +607,13 @@ fn builtin_serve_tls(
                 .at(span));
             }
         };
-        (args[0].clone(), args[1].clone(), cert, key)
+        (
+            args[0].clone(),
+            args[1].clone(),
+            cert,
+            key,
+            "127.0.0.1".to_string(),
+        )
     } else {
         return Err(RuntimeError::new(format!(
             "'serve_tls' expects 2 arguments (config_map, handler) or 4 arguments (port, handler, cert, key), got {}",
@@ -576,7 +623,7 @@ fn builtin_serve_tls(
 
     let port = match port_val {
         Value::Int(p) => {
-            if p < 1 || p > 65535 {
+            if !(1..=65535).contains(&p) {
                 return Err(RuntimeError::new(
                     "Port must be a whole number between 1 and 65535".into(),
                 )
@@ -585,7 +632,7 @@ fn builtin_serve_tls(
             p as u16
         }
         Value::Float(p) | Value::Number(p) => {
-            if p.fract() != 0.0 || p < 1.0 || p > 65535.0 {
+            if p.fract() != 0.0 || !(1.0..=65535.0).contains(&p) {
                 return Err(RuntimeError::new(
                     "Port must be a whole number between 1 and 65535".into(),
                 )
@@ -613,28 +660,46 @@ fn builtin_serve_tls(
     let tls_config = load_tls_config(&cert_path, &key_path, span)?;
 
     use std::net::TcpListener;
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).map_err(|e| {
-        RuntimeError::new(format!("Failed to bind to port {}: {}", port, e)).at(span)
+    let bind_addr = format!("{}:{}", host, port);
+    let listener = TcpListener::bind(&bind_addr).map_err(|e| {
+        RuntimeError::new(format!("Failed to bind to {}: {}", bind_addr, e)).at(span)
     })?;
 
-    println!("HTTPS Server running on https://localhost:{}", port);
+    let display_host = if host == "0.0.0.0" {
+        "localhost"
+    } else {
+        &host
+    };
+    println!("HTTPS Server running on https://{}:{}", display_host, port);
 
     let env_root = ev.global_env.clone();
     let handler_root = handler.clone();
+    const MAX_CONCURRENT_CONNECTIONS: usize = 128;
+    let active_connections = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-    for stream in listener.incoming() {
-        if let Ok(mut tcp_stream) = stream {
-            let env_clone = env_root.clone();
-            let handler_clone = handler_root.clone();
-            let config_clone = tls_config.clone();
-            std::thread::spawn(move || {
-                let _ = tcp_stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
-                if let Ok(mut conn) = rustls::ServerConnection::new(config_clone) {
-                    let mut tls_stream = rustls::Stream::new(&mut conn, &mut tcp_stream);
-                    let _ = handle_http_io(&mut tls_stream, &env_clone, &handler_clone, span);
-                }
-            });
+    for mut tcp_stream in listener.incoming().flatten() {
+        let active = active_connections.clone();
+        if active.load(std::sync::atomic::Ordering::Relaxed) >= MAX_CONCURRENT_CONNECTIONS {
+            continue;
         }
+        active.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let env_clone = env_root.clone();
+        let handler_clone = handler_root.clone();
+        let config_clone = tls_config.clone();
+        std::thread::spawn(move || {
+            struct ConnGuard(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+            impl Drop for ConnGuard {
+                fn drop(&mut self) {
+                    self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            let _guard = ConnGuard(active);
+            let _ = tcp_stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+            if let Ok(mut conn) = rustls::ServerConnection::new(config_clone) {
+                let mut tls_stream = rustls::Stream::new(&mut conn, &mut tcp_stream);
+                let _ = handle_http_io(&mut tls_stream, &env_clone, &handler_clone, span);
+            }
+        });
     }
     Ok(Value::Null)
 }
@@ -684,7 +749,7 @@ pub fn match_route_pattern(pattern: &str, path: &str) -> Option<IndexMap<String,
 }
 
 fn url_decode(s: &str) -> String {
-    let mut result = String::new();
+    let mut bytes = Vec::new();
     let mut chars = s.chars();
     while let Some(ch) = chars.next() {
         if ch == '%' {
@@ -693,24 +758,24 @@ fn url_decode(s: &str) -> String {
             if let (Some(c1), Some(c2)) = (h1, h2) {
                 let hex_str = format!("{}{}", c1, c2);
                 if let Ok(byte) = u8::from_str_radix(&hex_str, 16) {
-                    result.push(byte as char);
+                    bytes.push(byte);
                     continue;
                 }
             }
-            result.push('%');
+            bytes.push(b'%');
             if let Some(c1) = h1 {
-                result.push(c1);
+                bytes.extend_from_slice(c1.encode_utf8(&mut [0; 4]).as_bytes());
             }
             if let Some(c2) = h2 {
-                result.push(c2);
+                bytes.extend_from_slice(c2.encode_utf8(&mut [0; 4]).as_bytes());
             }
         } else if ch == '+' {
-            result.push(' ');
+            bytes.push(b' ');
         } else {
-            result.push(ch);
+            bytes.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
         }
     }
-    result
+    String::from_utf8_lossy(&bytes).to_string()
 }
 
 fn parse_query_params(query: &str) -> IndexMap<String, Value> {
@@ -830,27 +895,47 @@ fn handle_http_io<S: std::io::Read + std::io::Write>(
 ) -> Result<(), ()> {
     let mut request_count = 0;
     const MAX_REQUESTS: usize = 100;
+    const MAX_HEADER_SIZE: usize = 65536; // 64 KiB
+    const MAX_BODY_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
+    let mut stream_buf: Vec<u8> = Vec::with_capacity(16384);
 
     while request_count < MAX_REQUESTS {
-        let mut buffer = [0u8; 16384];
-        let size = match stream.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(s) => s,
-            Err(_) => break,
+        // Read until headers delimiter "\r\n\r\n" or "\n\n"
+        let (header_end, header_delim_len) = loop {
+            if let Some(pos) = stream_buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break (pos, 4);
+            }
+            if let Some(pos) = stream_buf.windows(2).position(|w| w == b"\n\n") {
+                break (pos, 2);
+            }
+            if stream_buf.len() > MAX_HEADER_SIZE {
+                let _ = stream.write_all(
+                    b"HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n",
+                );
+                let _ = stream.flush();
+                return Ok(());
+            }
+            let mut chunk = [0u8; 4096];
+            match stream.read(&mut chunk) {
+                Ok(0) => return Ok(()), // Client closed connection / EOF
+                Ok(n) => stream_buf.extend_from_slice(&chunk[..n]),
+                Err(_) => return Ok(()),
+            }
         };
 
         request_count += 1;
 
-        let req_str = String::from_utf8_lossy(&buffer[..size]);
-        let (head, body_str) = if let Some(idx) = req_str.find("\r\n\r\n") {
-            (&req_str[..idx], &req_str[idx + 4..])
-        } else if let Some(idx) = req_str.find("\n\n") {
-            (&req_str[..idx], &req_str[idx + 2..])
-        } else {
-            (req_str.as_ref(), "")
+        let head_bytes = &stream_buf[..header_end];
+        let head_str = match std::str::from_utf8(head_bytes) {
+            Ok(s) => s,
+            Err(_) => {
+                let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+                let _ = stream.flush();
+                return Ok(());
+            }
         };
 
-        let mut lines = head.lines();
+        let mut lines = head_str.lines();
         let request_line = match lines.next() {
             Some(l) => l,
             None => break,
@@ -877,6 +962,8 @@ fn handle_http_io<S: std::io::Read + std::io::Write>(
 
         let mut headers = IndexMap::new();
         let mut client_close = http_version == "HTTP/1.0";
+        let mut content_length: usize = 0;
+
         for line in lines {
             if let Some(idx) = line.find(':') {
                 let key = line[..idx].trim().to_lowercase();
@@ -887,10 +974,38 @@ fn handle_http_io<S: std::io::Read + std::io::Write>(
                     } else if val.eq_ignore_ascii_case("keep-alive") {
                         client_close = false;
                     }
+                } else if key == "content-length" {
+                    content_length = val.parse::<usize>().unwrap_or(0);
                 }
                 headers.insert(key, Value::String(val.to_string()));
             }
         }
+
+        if content_length > MAX_BODY_SIZE {
+            let _ =
+                stream.write_all(b"HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\n\r\n");
+            let _ = stream.flush();
+            return Ok(());
+        }
+
+        // Drain the headers from stream_buf
+        let body_start = header_end + header_delim_len;
+        stream_buf.drain(..body_start);
+
+        // Read remaining body bytes according to Content-Length
+        while stream_buf.len() < content_length {
+            let mut chunk = [0u8; 4096];
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => stream_buf.extend_from_slice(&chunk[..n]),
+                Err(_) => break,
+            }
+        }
+
+        let body_bytes: Vec<u8> = stream_buf
+            .drain(..std::cmp::min(content_length, stream_buf.len()))
+            .collect();
+        let body_str = String::from_utf8_lossy(&body_bytes).to_string();
 
         let query_params = parse_query_params(&query);
 
@@ -903,7 +1018,7 @@ fn handle_http_io<S: std::io::Read + std::io::Write>(
             &query,
             &query_params,
             &headers,
-            body_str,
+            &body_str,
             span,
         );
 
@@ -940,6 +1055,22 @@ fn handle_http_io<S: std::io::Read + std::io::Write>(
             response_head.push_str("Keep-Alive: timeout=5, max=100\r\n");
         }
         for (k, v) in custom_headers {
+            // CRLF injection prevention: skip headers containing control characters
+            if k.contains('\r')
+                || k.contains('\n')
+                || k.contains('\0')
+                || v.contains('\r')
+                || v.contains('\n')
+                || v.contains('\0')
+            {
+                continue;
+            }
+            if !k
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                continue;
+            }
             response_head.push_str(&format!("{}: {}\r\n", k, v));
         }
         response_head.push_str("\r\n");
@@ -1358,10 +1489,11 @@ fn builtin_assert_eq(
 fn builtin_map(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     expect_args("map", 2, &args, span)?;
     if let Value::Array(arr) = &args[0] {
+        let items: Vec<Value> = arr.read().unwrap().clone();
         let func = &args[1];
-        let mut new_arr = Vec::new();
-        for item in arr.read().unwrap().iter() {
-            let mapped = ev.call_value(func, vec![item.clone()], span)?;
+        let mut new_arr = Vec::with_capacity(items.len());
+        for item in items {
+            let mapped = ev.call_value(func, vec![item], span)?;
             new_arr.push(mapped);
         }
         Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
@@ -1375,12 +1507,13 @@ fn builtin_map(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value
 fn builtin_filter(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     expect_args("filter", 2, &args, span)?;
     if let Value::Array(arr) = &args[0] {
+        let items: Vec<Value> = arr.read().unwrap().clone();
         let func = &args[1];
         let mut new_arr = Vec::new();
-        for item in arr.read().unwrap().iter() {
+        for item in items {
             let cond = ev.call_value(func, vec![item.clone()], span)?;
             if cond.is_truthy() {
-                new_arr.push(item.clone());
+                new_arr.push(item);
             }
         }
         Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(

@@ -43,3 +43,18 @@ fn test_string_methods() {
         ])
     );
 }
+
+#[test]
+fn test_array_map_filter_no_deadlock_on_mutation() {
+    let script = r#"
+        let arr = [1, 2, 3]
+        // Mutate array inside map callback - previously deadlocked
+        let mapped = arr.map(fn(x) {
+            arr.push(99)
+            return x * 10
+        })
+        mapped
+    "#;
+    let val = run(script).expect("Should not deadlock when mutating inside map callback");
+    assert_eq!(val.to_json(), json!([10, 20, 30]));
+}

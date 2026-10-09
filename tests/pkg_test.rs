@@ -172,3 +172,45 @@ greet("Shae Developer")
         &initial_sha
     );
 }
+
+#[test]
+fn test_pkg_traversal_attack_rejected() {
+    let temp = TempDir::new("traversal_reject");
+    let _ = pkg::init_project(&temp.path, Some("safe_app")).unwrap();
+
+    let bad_names = vec![
+        "../escape",
+        "../../escape",
+        "sub/dep",
+        "sub\\dep",
+        "/absolute",
+        ".",
+        "..",
+        "bad name with spaces",
+        "evil;cmd",
+    ];
+
+    for bad in bad_names {
+        let res = pkg::add_dependency(&temp.path, bad, "./some/path", None, None, None);
+        assert!(
+            res.is_err(),
+            "Expected dependency name '{}' to be rejected",
+            bad
+        );
+    }
+}
+
+#[test]
+fn test_pkg_invalid_manifest_not_overwritten() {
+    let temp = TempDir::new("corrupt_preserve");
+    let corrupt_content = "this is broken [[ toml syntax @@";
+    let toml_file = temp.path.join("shae.toml");
+    fs::write(&toml_file, corrupt_content).unwrap();
+
+    let res = pkg::add_dependency(&temp.path, "somelib", "./path", None, None, None);
+    assert!(res.is_err(), "Expected error on corrupt manifest");
+
+    // Verify user file was not overwritten
+    let current_content = fs::read_to_string(&toml_file).unwrap();
+    assert_eq!(current_content, corrupt_content);
+}

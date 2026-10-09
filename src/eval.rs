@@ -81,12 +81,27 @@ pub enum Signal {
     Continue,
 }
 
+pub fn normalize_path(path: &std::path::Path) -> PathBuf {
+    let mut components = Vec::new();
+    for comp in path.components() {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                components.pop();
+            }
+            c => components.push(c),
+        }
+    }
+    components.into_iter().collect()
+}
+
 pub struct Evaluator {
     pub global_env: Arc<RwLock<Environment>>,
     max_depth: usize,
     depth: usize,
     pub current_file: Option<PathBuf>,
     pub module_cache: Arc<RwLock<HashMap<String, Value>>>,
+    pub embedded_archive: Option<Arc<HashMap<String, String>>>,
 }
 
 impl Evaluator {
@@ -99,6 +114,7 @@ impl Evaluator {
             depth: 0,
             current_file: None,
             module_cache: Arc::new(RwLock::new(HashMap::new())),
+            embedded_archive: None,
         }
     }
 
@@ -113,6 +129,7 @@ impl Evaluator {
             depth: 0,
             current_file: None,
             module_cache: Arc::new(RwLock::new(HashMap::new())),
+            embedded_archive: None,
         }
     }
 
@@ -127,6 +144,7 @@ impl Evaluator {
             depth: 0,
             current_file,
             module_cache,
+            embedded_archive: None,
         }
     }
 
@@ -180,15 +198,39 @@ impl Evaluator {
             PathBuf::from(path_str)
         };
 
+        let norm_resolved = normalize_path(&resolved_path);
         let canonical_key = match std::fs::canonicalize(&resolved_path) {
             Ok(p) => p.to_string_lossy().to_string(),
-            Err(_) => resolved_path.to_string_lossy().to_string(),
+            Err(_) => norm_resolved.to_string_lossy().to_string(),
         };
 
         // Cache hit
         if let Some(cached) = self.module_cache.read().unwrap().get(&canonical_key) {
             return Ok(cached.clone());
         }
+
+        // Check embedded archive for standalone bundles
+        let maybe_archive_source = if let Some(archive) = &self.embedded_archive {
+            let norm_str = norm_resolved.to_string_lossy().to_string();
+            let raw_str = resolved_path.to_string_lossy().to_string();
+            let trimmed = path_str.strip_prefix("./").unwrap_or(path_str);
+            archive
+                .get(&norm_str)
+                .or_else(|| archive.get(&raw_str))
+                .or_else(|| archive.get(&canonical_key))
+                .or_else(|| archive.get(path_str))
+                .or_else(|| archive.get(trimmed))
+                .or_else(|| {
+                    archive.iter().find_map(
+                        |(k, v)| {
+                            if k.ends_with(trimmed) { Some(v) } else { None }
+                        },
+                    )
+                })
+                .cloned()
+        } else {
+            None
+        };
 
         // Guard against circular import loops by inserting an empty map into cache early
         let export_map = Arc::new(RwLock::new(indexmap::IndexMap::new()));
@@ -198,9 +240,21 @@ impl Evaluator {
             .unwrap()
             .insert(canonical_key.clone(), module_val.clone());
 
-        let source = std::fs::read_to_string(&resolved_path).map_err(|e| {
-            RuntimeError::new(format!("Failed to read module '{}': {}", path_str, e)).at(span)
-        })?;
+        let source = if let Some(s) = maybe_archive_source {
+            s
+        } else {
+            match std::fs::read_to_string(&resolved_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    self.module_cache.write().unwrap().remove(&canonical_key);
+                    return Err(RuntimeError::new(format!(
+                        "Failed to read module '{}': {}",
+                        path_str, e
+                    ))
+                    .at(span));
+                }
+            }
+        };
 
         let mut builtin_env = Environment::new();
         crate::builtins::register(&mut builtin_env);
@@ -209,7 +263,7 @@ impl Evaluator {
 
         let child_file = match std::fs::canonicalize(&resolved_path) {
             Ok(p) => Some(p),
-            Err(_) => Some(resolved_path),
+            Err(_) => Some(norm_resolved),
         };
 
         let mut ev = Evaluator::with_env_cache_file(
@@ -217,20 +271,38 @@ impl Evaluator {
             self.module_cache.clone(),
             child_file,
         );
+        ev.embedded_archive = self.embedded_archive.clone();
 
-        let tokens = crate::lexer::tokenize(&source).map_err(|e| {
-            RuntimeError::new(format!("Lexer error in module '{}': {}", path_str, e)).at(span)
-        })?;
-        let program = crate::parser::parse(tokens).map_err(|e| {
-            RuntimeError::new(format!("Parser error in module '{}': {}", path_str, e)).at(span)
-        })?;
-        ev.eval_program(&program).map_err(|e| {
-            RuntimeError::new(format!(
+        let tokens = match crate::lexer::tokenize(&source) {
+            Ok(t) => t,
+            Err(e) => {
+                self.module_cache.write().unwrap().remove(&canonical_key);
+                return Err(RuntimeError::new(format!(
+                    "Lexer error in module '{}': {}",
+                    path_str, e
+                ))
+                .at(span));
+            }
+        };
+        let program = match crate::parser::parse(tokens) {
+            Ok(p) => p,
+            Err(e) => {
+                self.module_cache.write().unwrap().remove(&canonical_key);
+                return Err(RuntimeError::new(format!(
+                    "Parser error in module '{}': {}",
+                    path_str, e
+                ))
+                .at(span));
+            }
+        };
+        if let Err(e) = ev.eval_program(&program) {
+            self.module_cache.write().unwrap().remove(&canonical_key);
+            return Err(RuntimeError::new(format!(
                 "Runtime error in module '{}': {}",
                 path_str, e.message
             ))
-            .at(span)
-        })?;
+            .at(span));
+        }
 
         let evaluated_map = module_env.read().unwrap().export_map();
         *export_map.write().unwrap() = evaluated_map;
@@ -1545,9 +1617,10 @@ impl Evaluator {
                             )
                             .at(span));
                         }
-                        let mut new_arr = Vec::new();
-                        for item in a.read().unwrap().iter() {
-                            let mapped = self.call_value(func, vec![item.clone()], span)?;
+                        let items: Vec<Value> = a.read().unwrap().clone();
+                        let mut new_arr = Vec::with_capacity(items.len());
+                        for item in items {
+                            let mapped = self.call_value(func, vec![item], span)?;
                             new_arr.push(mapped);
                         }
                         Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
@@ -1575,11 +1648,12 @@ impl Evaluator {
                             )
                             .at(span));
                         }
+                        let items: Vec<Value> = a.read().unwrap().clone();
                         let mut new_arr = Vec::new();
-                        for item in a.read().unwrap().iter() {
+                        for item in items {
                             let keep = self.call_value(func, vec![item.clone()], span)?;
                             if keep.is_truthy() {
-                                new_arr.push(item.clone());
+                                new_arr.push(item);
                             }
                         }
                         Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
@@ -1608,8 +1682,9 @@ impl Evaluator {
                             )
                             .at(span));
                         }
-                        for item in a.read().unwrap().iter() {
-                            acc = self.call_value(func, vec![acc, item.clone()], span)?;
+                        let items: Vec<Value> = a.read().unwrap().clone();
+                        for item in items {
+                            acc = self.call_value(func, vec![acc, item], span)?;
                         }
                         Ok(acc)
                     }

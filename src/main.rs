@@ -310,11 +310,27 @@ fn find_test_files(dir: &Path, out: &mut Vec<String>) {
 }
 
 fn run_bundled_archive(archive: shae::bundle::BundleArchive) {
-    if let Some(entry_source) = archive.files.get(&archive.entry_path) {
+    let entry_source = archive
+        .files
+        .get(&archive.entry_path)
+        .or_else(|| {
+            let p = Path::new(&archive.entry_path);
+            let name = p.file_name()?.to_str()?;
+            archive.files.get(name)
+        })
+        .or_else(|| {
+            let p = Path::new(&archive.entry_path);
+            let name = p.file_name()?.to_str()?;
+            archive.files.get(&format!("./{}", name))
+        })
+        .cloned();
+
+    if let Some(entry_source) = entry_source {
         let mut ev = Evaluator::new();
         ev.current_file = Some(std::path::PathBuf::from(&archive.entry_path));
-        if let Err(e) = shae::run_in_evaluator(entry_source, &mut ev) {
-            eprintln!("{}", shae::render_error(&e, entry_source));
+        ev.embedded_archive = Some(std::sync::Arc::new(archive.files));
+        if let Err(e) = shae::run_in_evaluator(&entry_source, &mut ev) {
+            eprintln!("{}", shae::render_error(&e, &entry_source));
             process::exit(1);
         }
     } else {
@@ -502,21 +518,24 @@ fn main() {
         }
         "fmt" => {
             let mut check_only = false;
+            let mut force = false;
             let mut target = None;
             for arg in &args[2..] {
                 if arg == "--help" || arg == "-h" {
                     println!(
-                        "Usage: shae fmt [path] [--check]\n\nFormat Shae source files in place, or check formatting with --check."
+                        "Usage: shae fmt [path] [--check] [--force]\n\nFormat Shae source files in place, or check formatting with --check."
                     );
                     return;
                 } else if arg == "--check" {
                     check_only = true;
+                } else if arg == "--force" || arg == "-f" {
+                    force = true;
                 } else if target.is_none() {
                     target = Some(arg.as_str());
                 }
             }
             let path = target.unwrap_or(".");
-            format_target(path, check_only);
+            format_target(path, check_only, force);
         }
         "lsp" => {
             if let Err(e) = shae::lsp::start_lsp_server() {
@@ -584,7 +603,7 @@ fn find_shae_files(dir: &Path, out: &mut Vec<String>) {
     }
 }
 
-fn format_target(target: &str, check_only: bool) {
+fn format_target(target: &str, check_only: bool, force: bool) {
     let mut files = Vec::new();
     let path = Path::new(target);
     if path.is_file() {
@@ -624,10 +643,20 @@ fn format_target(target: &str, check_only: bool) {
             }
         };
 
+        let has_comments = source.contains("//") || source.contains("/*");
+
         if source != formatted {
             if check_only {
+                if has_comments {
+                    println!("⚠️  Contains comments (would strip): {}", file);
+                }
                 println!("❌ Needs formatting: {}", file);
                 unformatted += 1;
+            } else if has_comments && !force {
+                eprintln!(
+                    "⚠️  Warning: '{}' contains comments which are not preserved by the AST formatter. Skipped to prevent comment loss (use --force to format anyway).",
+                    file
+                );
             } else {
                 if let Err(e) = fs::write(file, &formatted) {
                     eprintln!("Error writing '{}': {}", file, e);

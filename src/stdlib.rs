@@ -395,8 +395,23 @@ fn time_now_ms(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Va
 fn time_sleep(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     expect_args("sleep", 1, &args, span)?;
     let ms = match &args[0] {
-        Value::Int(i) => *i as u64,
-        Value::Float(f) | Value::Number(f) => *f as u64,
+        Value::Int(i) => {
+            if *i < 0 {
+                return Err(
+                    RuntimeError::new("time.sleep expects non-negative duration".into()).at(span),
+                );
+            }
+            *i as u64
+        }
+        Value::Float(f) | Value::Number(f) => {
+            if *f < 0.0 || f.is_nan() || f.is_infinite() {
+                return Err(RuntimeError::new(
+                    "time.sleep expects non-negative finite duration".into(),
+                )
+                .at(span));
+            }
+            *f as u64
+        }
         _ => {
             return Err(
                 RuntimeError::new("time.sleep expects milliseconds as number".into()).at(span),
@@ -700,7 +715,7 @@ fn codec_url_decode(
 ) -> Result<Value, RuntimeError> {
     expect_args("codec.url_decode", 1, &args, span)?;
     if let Value::String(s) = &args[0] {
-        let mut result = String::new();
+        let mut bytes = Vec::new();
         let mut chars = s.chars();
         while let Some(ch) = chars.next() {
             if ch == '%' {
@@ -709,24 +724,24 @@ fn codec_url_decode(
                 if let (Some(c1), Some(c2)) = (h1, h2) {
                     let hex_str = format!("{}{}", c1, c2);
                     if let Ok(byte) = u8::from_str_radix(&hex_str, 16) {
-                        result.push(byte as char);
+                        bytes.push(byte);
                         continue;
                     }
                 }
-                result.push('%');
+                bytes.push(b'%');
                 if let Some(c1) = h1 {
-                    result.push(c1);
+                    bytes.extend_from_slice(c1.encode_utf8(&mut [0; 4]).as_bytes());
                 }
                 if let Some(c2) = h2 {
-                    result.push(c2);
+                    bytes.extend_from_slice(c2.encode_utf8(&mut [0; 4]).as_bytes());
                 }
             } else if ch == '+' {
-                result.push(' ');
+                bytes.push(b' ');
             } else {
-                result.push(ch);
+                bytes.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
             }
         }
-        Ok(Value::String(result))
+        Ok(Value::String(String::from_utf8_lossy(&bytes).to_string()))
     } else {
         Err(RuntimeError::new("codec.url_decode expects string argument".into()).at(span))
     }
