@@ -54,6 +54,12 @@ pub enum OpCode {
     IndexGetSafe,
     ArraySlice,
     MapRest,
+    BuildStruct,
+    MatchEnum,
+    MatchRange,
+    MatchError,
+    PushTry,
+    PopTry,
 }
 
 impl From<u8> for OpCode {

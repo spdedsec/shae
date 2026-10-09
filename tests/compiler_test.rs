@@ -589,3 +589,211 @@ status + " " + str(code + count)
     let result = vm.interpret(chunk);
     assert_eq!(result, InterpretResult::Ok(Value::String("ok 242".into())));
 }
+
+#[test]
+fn test_compiler_struct_def_and_init() {
+    let script = r#"
+struct User { name, age, is_admin }
+let u = User {
+    name: "Alice",
+    age: 25,
+    is_admin: true
+}
+u.age = 26
+u.age
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Int(26)));
+}
+
+#[test]
+fn test_compiler_enum_and_pattern_match() {
+    let script = r#"
+enum Status {
+    Pending(),
+    Active(days),
+    Banned(reason, days)
+}
+
+let s1 = Status.Active(42)
+let s2 = Status.Banned("spam", 99)
+let s3 = Status.Pending()
+
+fn check_status(s) {
+    match s {
+        Status.Active(d) => "active for " + str(d) + " days",
+        Status.Banned(r, d) => "banned for " + str(r),
+        Status.Pending() => "waiting",
+        _ => "unknown"
+    }
+}
+
+[check_status(s1), check_status(s2), check_status(s3)]
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    match result {
+        InterpretResult::Ok(Value::Array(arr)) => {
+            let b = arr.read().unwrap();
+            assert_eq!(b[0], Value::String("active for 42 days".into()));
+            assert_eq!(b[1], Value::String("banned for spam".into()));
+            assert_eq!(b[2], Value::String("waiting".into()));
+        }
+        other => panic!("Expected array result, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_compiler_match_arm_guards() {
+    let script = r#"
+enum Task {
+    Priority(level, title),
+    Routine(title)
+}
+
+let t1 = Task.Priority(10, "Emergency Fix")
+let t2 = Task.Priority(2, "Refactor Docs")
+let t3 = Task.Routine("Drink Water")
+
+fn handle_task(t) {
+    match t {
+        Task.Priority(lvl, title) if lvl >= 5 => "URGENT: " + title,
+        Task.Priority(lvl, title) => "Normal: " + title,
+        Task.Routine(title) => "Routine: " + title
+    }
+}
+
+[handle_task(t1), handle_task(t2), handle_task(t3)]
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    match result {
+        InterpretResult::Ok(Value::Array(arr)) => {
+            let b = arr.read().unwrap();
+            assert_eq!(b[0], Value::String("URGENT: Emergency Fix".into()));
+            assert_eq!(b[1], Value::String("Normal: Refactor Docs".into()));
+            assert_eq!(b[2], Value::String("Routine: Drink Water".into()));
+        }
+        other => panic!("Expected array result, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_compiler_range_pattern_matching() {
+    let script = r#"
+fn category(age) {
+    match age {
+        0..=2 => "toddler",
+        3..13 => "child",
+        13..=19 => "teen",
+        20..=64 => "adult",
+        _ => "senior"
+    }
+}
+
+[category(2), category(3), category(12), category(13), category(19), category(25), category(70)]
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    match result {
+        InterpretResult::Ok(Value::Array(arr)) => {
+            let b = arr.read().unwrap();
+            assert_eq!(b[0], Value::String("toddler".into()));
+            assert_eq!(b[1], Value::String("child".into()));
+            assert_eq!(b[2], Value::String("child".into()));
+            assert_eq!(b[3], Value::String("teen".into()));
+            assert_eq!(b[4], Value::String("teen".into()));
+            assert_eq!(b[5], Value::String("adult".into()));
+            assert_eq!(b[6], Value::String("senior".into()));
+        }
+        other => panic!("Expected array result, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_compiler_try_catch_unwinding() {
+    let script = r#"
+let result = "init"
+let error_msg = ""
+try {
+    let temp = 10 + "string"
+    result = "success"
+} catch (e) {
+    result = "caught"
+    error_msg = e
+}
+[result, error_msg]
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    match result {
+        InterpretResult::Ok(Value::Array(arr)) => {
+            let b = arr.read().unwrap();
+            assert_eq!(b[0], Value::String("caught".into()));
+            match &b[1] {
+                Value::String(s) => assert!(s.contains("Operands must be two numbers")),
+                other => panic!("Expected string error, got {:?}", other),
+            }
+        }
+        other => panic!("Expected array result, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_compiler_try_catch_across_function_calls() {
+    let script = r#"
+fn fail_fn() {
+    let x = 1 / 0
+    return x
+}
+
+let status = "ok"
+try {
+    fail_fn()
+    status = "not reached"
+} catch (err) {
+    status = "caught: " + err
+}
+status
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(
+        result,
+        InterpretResult::Ok(Value::String("caught: Divide by zero.".into()))
+    );
+}
+
+#[test]
+fn test_compiler_non_exhaustive_match_error() {
+    let script = r#"
+let caught = false
+try {
+    match 99 {
+        1 => "one",
+        2 => "two"
+    }
+} catch (err) {
+    caught = true
+}
+caught
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Bool(true)));
+}

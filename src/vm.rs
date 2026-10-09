@@ -9,10 +9,17 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone)]
+pub struct TryHandler {
+    pub catch_ip: usize,
+    pub stack_len: usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct CallFrame {
     pub closure: Arc<Closure>,
     pub ip: usize,
     pub slots_offset: usize,
+    pub try_handlers: Vec<TryHandler>,
 }
 
 pub struct VM {
@@ -28,6 +35,14 @@ pub enum InterpretResult {
     Ok(Value),
     CompileError,
     RuntimeError(String),
+}
+
+fn to_f64_val(v: &Value) -> Option<f64> {
+    match v {
+        Value::Int(n) => Some(*n as f64),
+        Value::Float(n) | Value::Number(n) => Some(*n),
+        _ => None,
+    }
 }
 
 impl VM {
@@ -101,6 +116,7 @@ impl VM {
             closure: top_closure,
             ip: 0,
             slots_offset: 0,
+            try_handlers: Vec::new(),
         });
         self.run()
     }
@@ -131,7 +147,40 @@ impl VM {
             .retain(|uv| matches!(uv.read().unwrap().location, UpvalueLocation::Open(_)));
     }
 
+    fn handle_runtime_error(&mut self, msg: String) -> Option<InterpretResult> {
+        while let Some(mut frame) = self.frames.pop() {
+            if let Some(handler) = frame.try_handlers.pop() {
+                frame.ip = handler.catch_ip;
+                self.close_upvalues(handler.stack_len);
+                self.stack.truncate(handler.stack_len);
+                self.stack.push(Value::String(msg));
+                self.frames.push(frame);
+                return None;
+            }
+            self.close_upvalues(frame.slots_offset);
+            self.stack.truncate(frame.slots_offset);
+        }
+        Some(InterpretResult::RuntimeError(msg))
+    }
+
     fn run(&mut self) -> InterpretResult {
+        macro_rules! runtime_error {
+            ($self:ident, $msg:expr $(,)?) => {
+                if let Some(err) = $self.handle_runtime_error($msg.to_string()) {
+                    return err;
+                } else {
+                    continue;
+                }
+            };
+            ($msg:expr $(,)?) => {
+                if let Some(err) = self.handle_runtime_error($msg.to_string()) {
+                    return err;
+                } else {
+                    continue;
+                }
+            };
+        }
+
         loop {
             if self.frames.is_empty() {
                 return InterpretResult::Ok(Value::Null);
@@ -193,10 +242,7 @@ impl VM {
                     if slot < self.stack.len() {
                         self.stack.push(self.stack[slot].clone());
                     } else {
-                        return InterpretResult::RuntimeError(format!(
-                            "Stack underflow on local slot {}",
-                            slot_idx
-                        ));
+                        runtime_error!(self, format!("Stack underflow on local slot {}", slot_idx));
                     }
                 }
                 OpCode::SetLocal => {
@@ -206,13 +252,13 @@ impl VM {
                         if slot < self.stack.len() {
                             self.stack[slot] = val;
                         } else {
-                            return InterpretResult::RuntimeError(format!(
-                                "Invalid local slot {} for assignment",
-                                slot_idx
-                            ));
+                            runtime_error!(
+                                self,
+                                format!("Invalid local slot {} for assignment", slot_idx)
+                            );
                         }
                     } else {
-                        return InterpretResult::RuntimeError("Stack empty on SetLocal".into());
+                        runtime_error!(self, "Stack empty on SetLocal");
                     }
                 }
                 OpCode::DefineGlobal => {
@@ -231,10 +277,7 @@ impl VM {
                     if let Some(val) = self.globals.get(&name) {
                         self.stack.push(val.clone());
                     } else {
-                        return InterpretResult::RuntimeError(format!(
-                            "Undefined variable '{}'.",
-                            name
-                        ));
+                        runtime_error!(self, format!("Undefined variable '{}'.", name));
                     }
                 }
                 OpCode::SetGlobal => {
@@ -246,13 +289,10 @@ impl VM {
                         if self.globals.contains_key(&name) {
                             self.globals.insert(name, val);
                         } else {
-                            return InterpretResult::RuntimeError(format!(
-                                "Undefined variable '{}'.",
-                                name
-                            ));
+                            runtime_error!(self, format!("Undefined variable '{}'.", name));
                         }
                     } else {
-                        return InterpretResult::RuntimeError("Stack empty on SetGlobal".into());
+                        runtime_error!(self, "Stack empty on SetGlobal");
                     }
                 }
                 OpCode::Equal => {
@@ -273,9 +313,7 @@ impl VM {
                             self.stack.push(Value::Bool(x > (y as f64)))
                         }
                         _ => {
-                            return InterpretResult::RuntimeError(
-                                "Operands must be numbers for comparison.".into(),
-                            );
+                            runtime_error!(self, "Operands must be numbers for comparison.",);
                         }
                     }
                 }
@@ -292,9 +330,7 @@ impl VM {
                             self.stack.push(Value::Bool(x < (y as f64)))
                         }
                         _ => {
-                            return InterpretResult::RuntimeError(
-                                "Operands must be numbers for comparison.".into(),
-                            );
+                            runtime_error!(self, "Operands must be numbers for comparison.",);
                         }
                     }
                 }
@@ -307,7 +343,7 @@ impl VM {
                     Some(Value::Float(n)) | Some(Value::Number(n)) => {
                         self.stack.push(Value::Float(-n))
                     }
-                    _ => return InterpretResult::RuntimeError("Operand must be a number.".into()),
+                    _ => runtime_error!(self, "Operand must be a number."),
                 },
                 OpCode::Add => {
                     let b = self.stack.pop().unwrap();
@@ -335,9 +371,7 @@ impl VM {
                                 .push(Value::String(format!("{}{}", a_str, b_str)));
                         }
                         _ => {
-                            return InterpretResult::RuntimeError(
-                                "Operands must be two numbers or two strings.".into(),
-                            );
+                            runtime_error!(self, "Operands must be two numbers or two strings.",);
                         }
                     }
                 }
@@ -363,9 +397,7 @@ impl VM {
                             self.stack.push(Value::Float(a_num - b_num))
                         }
                         _ => {
-                            return InterpretResult::RuntimeError(
-                                "Operands must be numbers.".into(),
-                            );
+                            runtime_error!(self, "Operands must be numbers.",);
                         }
                     }
                 }
@@ -391,9 +423,7 @@ impl VM {
                             self.stack.push(Value::Float(a_num * b_num))
                         }
                         _ => {
-                            return InterpretResult::RuntimeError(
-                                "Operands must be numbers.".into(),
-                            );
+                            runtime_error!(self, "Operands must be numbers.",);
                         }
                     }
                 }
@@ -403,7 +433,7 @@ impl VM {
                     match (a, b) {
                         (Value::Int(a_num), Value::Int(b_num)) => {
                             if b_num == 0 {
-                                return InterpretResult::RuntimeError("Divide by zero.".into());
+                                runtime_error!(self, "Divide by zero.");
                             }
                             if a_num % b_num == 0 {
                                 self.stack.push(Value::Int(a_num / b_num));
@@ -426,9 +456,7 @@ impl VM {
                             self.stack.push(Value::Float(a_num / b_num));
                         }
                         _ => {
-                            return InterpretResult::RuntimeError(
-                                "Operands must be numbers.".into(),
-                            );
+                            runtime_error!(self, "Operands must be numbers.",);
                         }
                     }
                 }
@@ -438,20 +466,18 @@ impl VM {
                     match (a, b) {
                         (Value::Int(x), Value::Int(y)) => {
                             if y == 0 {
-                                return InterpretResult::RuntimeError("Modulo by zero.".into());
+                                runtime_error!(self, "Modulo by zero.");
                             }
                             self.stack.push(Value::Int(x % y));
                         }
                         (Value::Float(x), Value::Float(y)) => {
                             if y == 0.0 {
-                                return InterpretResult::RuntimeError("Modulo by zero.".into());
+                                runtime_error!(self, "Modulo by zero.");
                             }
                             self.stack.push(Value::Float(x % y));
                         }
                         _ => {
-                            return InterpretResult::RuntimeError(
-                                "Operands must be numbers for modulo.".into(),
-                            );
+                            runtime_error!(self, "Operands must be numbers for modulo.",);
                         }
                     }
                 }
@@ -461,9 +487,7 @@ impl VM {
                     match (a, b) {
                         (Value::Int(x), Value::Int(y)) => self.stack.push(Value::Int(x & y)),
                         _ => {
-                            return InterpretResult::RuntimeError(
-                                "Operands must be integers for bitwise AND.".into(),
-                            );
+                            runtime_error!(self, "Operands must be integers for bitwise AND.",);
                         }
                     }
                 }
@@ -473,9 +497,7 @@ impl VM {
                     match (a, b) {
                         (Value::Int(x), Value::Int(y)) => self.stack.push(Value::Int(x | y)),
                         _ => {
-                            return InterpretResult::RuntimeError(
-                                "Operands must be integers for bitwise OR.".into(),
-                            );
+                            runtime_error!(self, "Operands must be integers for bitwise OR.",);
                         }
                     }
                 }
@@ -485,9 +507,7 @@ impl VM {
                     match (a, b) {
                         (Value::Int(x), Value::Int(y)) => self.stack.push(Value::Int(x ^ y)),
                         _ => {
-                            return InterpretResult::RuntimeError(
-                                "Operands must be integers for bitwise XOR.".into(),
-                            );
+                            runtime_error!(self, "Operands must be integers for bitwise XOR.",);
                         }
                     }
                 }
@@ -496,9 +516,7 @@ impl VM {
                     match a {
                         Value::Int(x) => self.stack.push(Value::Int(!x)),
                         _ => {
-                            return InterpretResult::RuntimeError(
-                                "Operand must be an integer for bitwise NOT.".into(),
-                            );
+                            runtime_error!(self, "Operand must be an integer for bitwise NOT.",);
                         }
                     }
                 }
@@ -508,9 +526,7 @@ impl VM {
                     match (a, b) {
                         (Value::Int(x), Value::Int(y)) => self.stack.push(Value::Int(x << y)),
                         _ => {
-                            return InterpretResult::RuntimeError(
-                                "Operands must be integers for shift left.".into(),
-                            );
+                            runtime_error!(self, "Operands must be integers for shift left.",);
                         }
                     }
                 }
@@ -520,9 +536,7 @@ impl VM {
                     match (a, b) {
                         (Value::Int(x), Value::Int(y)) => self.stack.push(Value::Int(x >> y)),
                         _ => {
-                            return InterpretResult::RuntimeError(
-                                "Operands must be integers for shift right.".into(),
-                            );
+                            runtime_error!(self, "Operands must be integers for shift right.",);
                         }
                     }
                 }
@@ -579,9 +593,7 @@ impl VM {
                                 Value::Int(i) => resolve_int_index(i, len),
                                 Value::Float(f) | Value::Number(f) => resolve_index(f, len),
                                 _ => {
-                                    return InterpretResult::RuntimeError(
-                                        "Array index must be a number.".into(),
-                                    );
+                                    runtime_error!(self, "Array index must be a number.",);
                                 }
                             };
                             match idx_res {
@@ -590,15 +602,13 @@ impl VM {
                                     self.stack.push(val);
                                 }
                                 Err(IndexError::NotWhole) => {
-                                    return InterpretResult::RuntimeError(
-                                        "Array index must be a whole number.".into(),
-                                    );
+                                    runtime_error!(self, "Array index must be a whole number.",);
                                 }
                                 Err(IndexError::OutOfRange(len)) => {
-                                    return InterpretResult::RuntimeError(format!(
-                                        "Index out of bounds for array of length {}",
-                                        len
-                                    ));
+                                    runtime_error!(
+                                        self,
+                                        format!("Index out of bounds for array of length {}", len)
+                                    );
                                 }
                             }
                         }
@@ -610,23 +620,19 @@ impl VM {
                                     resolve_index(f, borrow.len())
                                 }
                                 _ => {
-                                    return InterpretResult::RuntimeError(
-                                        "Array index must be a number.".into(),
-                                    );
+                                    runtime_error!(self, "Array index must be a number.",);
                                 }
                             };
                             match idx_res {
                                 Ok(idx) => self.stack.push(borrow[idx].clone()),
                                 Err(IndexError::NotWhole) => {
-                                    return InterpretResult::RuntimeError(
-                                        "Array index must be a whole number.".into(),
-                                    );
+                                    runtime_error!(self, "Array index must be a whole number.",);
                                 }
                                 Err(IndexError::OutOfRange(len)) => {
-                                    return InterpretResult::RuntimeError(format!(
-                                        "Index out of bounds for array of length {}",
-                                        len
-                                    ));
+                                    runtime_error!(
+                                        self,
+                                        format!("Index out of bounds for array of length {}", len)
+                                    );
                                 }
                             }
                         }
@@ -636,23 +642,19 @@ impl VM {
                                 Value::Int(i) => resolve_int_index(i, chars.len()),
                                 Value::Float(f) | Value::Number(f) => resolve_index(f, chars.len()),
                                 _ => {
-                                    return InterpretResult::RuntimeError(
-                                        "String index must be a number.".into(),
-                                    );
+                                    runtime_error!(self, "String index must be a number.",);
                                 }
                             };
                             match idx_res {
                                 Ok(idx) => self.stack.push(Value::String(chars[idx].to_string())),
                                 Err(IndexError::NotWhole) => {
-                                    return InterpretResult::RuntimeError(
-                                        "String index must be a whole number.".into(),
-                                    );
+                                    runtime_error!(self, "String index must be a whole number.",);
                                 }
                                 Err(IndexError::OutOfRange(len)) => {
-                                    return InterpretResult::RuntimeError(format!(
-                                        "Index out of bounds for string of length {}",
-                                        len
-                                    ));
+                                    runtime_error!(
+                                        self,
+                                        format!("Index out of bounds for string of length {}", len)
+                                    );
                                 }
                             }
                         }
@@ -678,16 +680,40 @@ impl VM {
                                 let val = borrow.get(&key).cloned().unwrap_or(Value::Null);
                                 self.stack.push(val);
                             } else {
-                                return InterpretResult::RuntimeError(
-                                    "Map key must be a string.".into(),
-                                );
+                                runtime_error!(self, "Map key must be a string.",);
+                            }
+                        }
+                        Value::EnumInstance { ref values, .. } => {
+                            let idx_res = match index {
+                                Value::Int(i) => resolve_int_index(i, values.len()),
+                                Value::Float(f) | Value::Number(f) => {
+                                    resolve_index(f, values.len())
+                                }
+                                _ => {
+                                    runtime_error!(self, "Enum index must be a number.",);
+                                }
+                            };
+                            match idx_res {
+                                Ok(idx) => self.stack.push(values[idx].clone()),
+                                Err(IndexError::NotWhole) => {
+                                    runtime_error!(self, "Enum index must be a whole number.",);
+                                }
+                                Err(IndexError::OutOfRange(len)) => {
+                                    runtime_error!(
+                                        self,
+                                        format!(
+                                            "Index out of bounds for enum variant of length {}",
+                                            len
+                                        )
+                                    );
+                                }
                             }
                         }
                         other => {
-                            return InterpretResult::RuntimeError(format!(
-                                "Cannot index into {}.",
-                                other.type_name()
-                            ));
+                            runtime_error!(
+                                self,
+                                format!("Cannot index into {}.", other.type_name())
+                            );
                         }
                     }
                 }
@@ -702,9 +728,7 @@ impl VM {
                                 Value::Int(i) => resolve_int_index(i, len),
                                 Value::Float(f) | Value::Number(f) => resolve_index(f, len),
                                 _ => {
-                                    return InterpretResult::RuntimeError(
-                                        "Array index must be a number.".into(),
-                                    );
+                                    runtime_error!(self, "Array index must be a number.",);
                                 }
                             };
                             match idx_res {
@@ -713,15 +737,13 @@ impl VM {
                                     self.stack.push(value);
                                 }
                                 Err(IndexError::NotWhole) => {
-                                    return InterpretResult::RuntimeError(
-                                        "Array index must be a whole number.".into(),
-                                    );
+                                    runtime_error!(self, "Array index must be a whole number.",);
                                 }
                                 Err(IndexError::OutOfRange(len)) => {
-                                    return InterpretResult::RuntimeError(format!(
-                                        "Index out of bounds for array of length {}",
-                                        len
-                                    ));
+                                    runtime_error!(
+                                        self,
+                                        format!("Index out of bounds for array of length {}", len)
+                                    );
                                 }
                             }
                         }
@@ -733,9 +755,7 @@ impl VM {
                                     resolve_index(f, borrow.len())
                                 }
                                 _ => {
-                                    return InterpretResult::RuntimeError(
-                                        "Array index must be a number.".into(),
-                                    );
+                                    runtime_error!(self, "Array index must be a number.",);
                                 }
                             };
                             match idx_res {
@@ -744,15 +764,13 @@ impl VM {
                                     self.stack.push(value);
                                 }
                                 Err(IndexError::NotWhole) => {
-                                    return InterpretResult::RuntimeError(
-                                        "Array index must be a whole number.".into(),
-                                    );
+                                    runtime_error!(self, "Array index must be a whole number.",);
                                 }
                                 Err(IndexError::OutOfRange(len)) => {
-                                    return InterpretResult::RuntimeError(format!(
-                                        "Index out of bounds for array of length {}",
-                                        len
-                                    ));
+                                    runtime_error!(
+                                        self,
+                                        format!("Index out of bounds for array of length {}", len)
+                                    );
                                 }
                             }
                         }
@@ -772,16 +790,14 @@ impl VM {
                                 m.write().unwrap().insert(key, value.clone());
                                 self.stack.push(value);
                             } else {
-                                return InterpretResult::RuntimeError(
-                                    "Map key must be a string.".into(),
-                                );
+                                runtime_error!(self, "Map key must be a string.",);
                             }
                         }
                         other => {
-                            return InterpretResult::RuntimeError(format!(
-                                "Cannot index into {}.",
-                                other.type_name()
-                            ));
+                            runtime_error!(
+                                self,
+                                format!("Cannot index into {}.", other.type_name())
+                            );
                         }
                     }
                 }
@@ -798,9 +814,7 @@ impl VM {
                             if is_safe {
                                 self.stack.push(Value::Null);
                             } else {
-                                return InterpretResult::RuntimeError(
-                                    "Cannot read property of null".into(),
-                                );
+                                runtime_error!(self, "Cannot read property of null",);
                             }
                         }
                         Value::Map(ref m) => {
@@ -810,10 +824,10 @@ impl VM {
                             } else if is_safe {
                                 self.stack.push(Value::Null);
                             } else {
-                                return InterpretResult::RuntimeError(format!(
-                                    "Property '{}' not found in map",
-                                    property
-                                ));
+                                runtime_error!(
+                                    self,
+                                    format!("Property '{}' not found in map", property)
+                                );
                             }
                         }
                         Value::GcMap(r) => {
@@ -823,10 +837,10 @@ impl VM {
                             } else if is_safe {
                                 self.stack.push(Value::Null);
                             } else {
-                                return InterpretResult::RuntimeError(format!(
-                                    "Property '{}' not found in map",
-                                    property
-                                ));
+                                runtime_error!(
+                                    self,
+                                    format!("Property '{}' not found in map", property)
+                                );
                             }
                         }
                         Value::StructInstance {
@@ -838,10 +852,29 @@ impl VM {
                             } else if is_safe {
                                 self.stack.push(Value::Null);
                             } else {
-                                return InterpretResult::RuntimeError(format!(
-                                    "Struct '{}' has no field '{}'",
-                                    name, property
-                                ));
+                                runtime_error!(
+                                    self,
+                                    format!("Struct '{}' has no field '{}'", name, property)
+                                );
+                            }
+                        }
+                        Value::EnumDef {
+                            ref name,
+                            ref variants,
+                        } => {
+                            if let Some(params) = variants.get(&property) {
+                                self.stack.push(Value::EnumConstructor {
+                                    enum_name: name.clone(),
+                                    variant_name: property,
+                                    params: params.clone(),
+                                });
+                            } else if is_safe {
+                                self.stack.push(Value::Null);
+                            } else {
+                                runtime_error!(
+                                    self,
+                                    format!("Enum '{}' has no variant '{}'", name, property)
+                                );
                             }
                         }
                         Value::Array(ref a) => {
@@ -875,10 +908,10 @@ impl VM {
                                     method: property,
                                 });
                             } else {
-                                return InterpretResult::RuntimeError(format!(
-                                    "Unknown array property '{}'",
-                                    property
-                                ));
+                                runtime_error!(
+                                    self,
+                                    format!("Unknown array property '{}'", property)
+                                );
                             }
                         }
                         Value::GcArray(r) => {
@@ -886,10 +919,10 @@ impl VM {
                             if property == "len" {
                                 self.stack.push(Value::Int(len as i64));
                             } else {
-                                return InterpretResult::RuntimeError(format!(
-                                    "Unknown array property '{}'",
-                                    property
-                                ));
+                                runtime_error!(
+                                    self,
+                                    format!("Unknown array property '{}'", property)
+                                );
                             }
                         }
                         Value::String(ref s) => {
@@ -919,18 +952,21 @@ impl VM {
                                     method: property,
                                 });
                             } else {
-                                return InterpretResult::RuntimeError(format!(
-                                    "Unknown string property '{}'",
-                                    property
-                                ));
+                                runtime_error!(
+                                    self,
+                                    format!("Unknown string property '{}'", property)
+                                );
                             }
                         }
                         other => {
-                            return InterpretResult::RuntimeError(format!(
-                                "Cannot read property '{}' of {}",
-                                property,
-                                other.type_name()
-                            ));
+                            runtime_error!(
+                                self,
+                                format!(
+                                    "Cannot read property '{}' of {}",
+                                    property,
+                                    other.type_name()
+                                )
+                            );
                         }
                     }
                 }
@@ -961,18 +997,21 @@ impl VM {
                                 fields.write().unwrap().insert(property, value.clone());
                                 self.stack.push(value);
                             } else {
-                                return InterpretResult::RuntimeError(format!(
-                                    "Struct '{}' has no field '{}'",
-                                    name, property
-                                ));
+                                runtime_error!(
+                                    self,
+                                    format!("Struct '{}' has no field '{}'", name, property)
+                                );
                             }
                         }
                         other => {
-                            return InterpretResult::RuntimeError(format!(
-                                "Cannot set property '{}' on {}",
-                                property,
-                                other.type_name()
-                            ));
+                            runtime_error!(
+                                self,
+                                format!(
+                                    "Cannot set property '{}' on {}",
+                                    property,
+                                    other.type_name()
+                                )
+                            );
                         }
                     }
                 }
@@ -1032,11 +1071,31 @@ impl VM {
                                 None => self.stack.push(Value::Null),
                             }
                         }
+                        Value::EnumInstance { ref values, .. } => {
+                            let idx_opt = match index {
+                                Value::Int(i) if i >= 0 && (i as usize) < values.len() => {
+                                    Some(i as usize)
+                                }
+                                Value::Float(f) | Value::Number(f)
+                                    if f >= 0.0 && (f as usize) < values.len() =>
+                                {
+                                    Some(f as usize)
+                                }
+                                _ => None,
+                            };
+                            match idx_opt {
+                                Some(idx) => self.stack.push(values[idx].clone()),
+                                None => self.stack.push(Value::Null),
+                            }
+                        }
                         other => {
-                            return InterpretResult::RuntimeError(format!(
-                                "Cannot destructure non-array {} as array",
-                                other.type_name()
-                            ));
+                            runtime_error!(
+                                self,
+                                format!(
+                                    "Cannot destructure non-array {} as array",
+                                    other.type_name()
+                                )
+                            );
                         }
                     }
                 }
@@ -1070,10 +1129,10 @@ impl VM {
                                 .push(Value::Array(Arc::new(RwLock::new(slice_vals))));
                         }
                         other => {
-                            return InterpretResult::RuntimeError(format!(
-                                "Cannot slice non-array {}",
-                                other.type_name()
-                            ));
+                            runtime_error!(
+                                self,
+                                format!("Cannot slice non-array {}", other.type_name())
+                            );
                         }
                     }
                 }
@@ -1114,12 +1173,164 @@ impl VM {
                             self.stack.push(Value::Map(Arc::new(RwLock::new(rest_map))));
                         }
                         other => {
-                            return InterpretResult::RuntimeError(format!(
-                                "Cannot destructure non-map {} with rest",
-                                other.type_name()
-                            ));
+                            runtime_error!(
+                                self,
+                                format!(
+                                    "Cannot destructure non-map {} with rest",
+                                    other.type_name()
+                                )
+                            );
                         }
                     }
+                }
+                OpCode::BuildStruct => {
+                    let field_count = self.read_byte() as usize;
+                    let mut provided_fields = indexmap::IndexMap::new();
+                    let mut provided_names = std::collections::HashSet::new();
+                    for _ in 0..field_count {
+                        let val = self.stack.pop().unwrap();
+                        let name_val = self.stack.pop().unwrap();
+                        let name_str = match name_val {
+                            Value::String(s) => s,
+                            other => other.to_string(),
+                        };
+                        provided_names.insert(name_str.clone());
+                        provided_fields.insert(name_str, val);
+                    }
+                    let def_val = self.stack.pop().unwrap();
+                    match def_val {
+                        Value::StructDef {
+                            name,
+                            fields: def_fields,
+                        } => {
+                            if field_count != def_fields.len() {
+                                runtime_error!(
+                                    self,
+                                    format!(
+                                        "Struct '{}' expects {} fields, but got {}.",
+                                        name,
+                                        def_fields.len(),
+                                        field_count
+                                    )
+                                );
+                            }
+                            for (f_name, _) in provided_fields.iter() {
+                                if !def_fields.contains(f_name) {
+                                    runtime_error!(
+                                        self,
+                                        format!("Struct '{}' has no field '{}'.", name, f_name)
+                                    );
+                                }
+                            }
+                            if provided_names.len() != def_fields.len() {
+                                runtime_error!(
+                                    self,
+                                    format!("Struct '{}' initialization is missing fields.", name)
+                                );
+                            }
+                            let mut ordered_fields = indexmap::IndexMap::new();
+                            for f in &def_fields {
+                                if let Some(v) = provided_fields.shift_remove(f) {
+                                    ordered_fields.insert(f.clone(), v);
+                                }
+                            }
+                            self.stack.push(Value::StructInstance {
+                                name,
+                                fields: Arc::new(RwLock::new(ordered_fields)),
+                            });
+                        }
+                        other => {
+                            runtime_error!(
+                                self,
+                                format!("'{}' is not a struct.", other.type_name())
+                            );
+                        }
+                    }
+                }
+                OpCode::MatchEnum => {
+                    let field_count = self.read_byte() as usize;
+                    let variant_const = self.read_constant();
+                    let variant_name = match variant_const {
+                        Value::String(s) => s,
+                        other => other.to_string(),
+                    };
+                    let enum_const = self.read_constant();
+                    let enum_name_opt = match enum_const {
+                        Value::String(s) => Some(s),
+                        _ => None,
+                    };
+                    let target = self.stack.pop().unwrap();
+                    let matched = match target {
+                        Value::EnumInstance {
+                            enum_name: ref v_enum,
+                            variant_name: ref v_variant,
+                            ref values,
+                        } => {
+                            let name_ok = match &enum_name_opt {
+                                Some(e) => e == v_enum && &variant_name == v_variant,
+                                None => &variant_name == v_variant,
+                            };
+                            name_ok && values.len() == field_count
+                        }
+                        _ => false,
+                    };
+                    self.stack.push(Value::Bool(matched));
+                }
+                OpCode::MatchRange => {
+                    let inclusive = self.read_byte() != 0;
+                    let end = self.stack.pop().unwrap();
+                    let start = self.stack.pop().unwrap();
+                    let target = self.stack.pop().unwrap();
+                    let matched = match (&target, &start, &end) {
+                        (Value::Int(v), Value::Int(s), Value::Int(e)) => {
+                            if inclusive {
+                                *v >= *s && *v <= *e
+                            } else {
+                                *v >= *s && *v < *e
+                            }
+                        }
+                        (Value::String(v), Value::String(s), Value::String(e)) => {
+                            if inclusive {
+                                v >= s && v <= e
+                            } else {
+                                v >= s && v < e
+                            }
+                        }
+                        _ => {
+                            let v_num = to_f64_val(&target);
+                            let s_num = to_f64_val(&start);
+                            let e_num = to_f64_val(&end);
+                            if let (Some(v), Some(s), Some(e)) = (v_num, s_num, e_num) {
+                                if inclusive {
+                                    v >= s && v <= e
+                                } else {
+                                    v >= s && v < e
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                    };
+                    self.stack.push(Value::Bool(matched));
+                }
+                OpCode::MatchError => {
+                    runtime_error!(self, "Non-exhaustive match. No pattern matched the value.");
+                }
+                OpCode::PushTry => {
+                    let offset = self.read_short();
+                    let catch_ip = self.frames.last().unwrap().ip + offset as usize;
+                    let stack_len = self.stack.len();
+                    self.frames
+                        .last_mut()
+                        .unwrap()
+                        .try_handlers
+                        .push(TryHandler {
+                            catch_ip,
+                            stack_len,
+                        });
+                }
+                OpCode::PopTry => {
+                    self.frames.last_mut().unwrap().try_handlers.pop();
                 }
                 OpCode::ForIter => {
                     let seq_local = self.read_byte() as usize;
@@ -1131,18 +1342,19 @@ impl VM {
                         let seq = match self.stack.get(seq_slot) {
                             Some(s) => s,
                             None => {
-                                return InterpretResult::RuntimeError(format!(
-                                    "Invalid stack slot {} for ForIter sequence",
-                                    seq_local
-                                ));
+                                runtime_error!(
+                                    self,
+                                    format!(
+                                        "Invalid stack slot {} for ForIter sequence",
+                                        seq_local
+                                    )
+                                );
                             }
                         };
                         let iter_idx = match self.stack.get(iter_slot) {
                             Some(Value::Int(i)) => *i,
                             _ => {
-                                return InterpretResult::RuntimeError(
-                                    "Iterator index must be an integer.".into(),
-                                );
+                                runtime_error!(self, "Iterator index must be an integer.",);
                             }
                         };
                         match seq {
@@ -1163,10 +1375,10 @@ impl VM {
                                 }
                             }
                             other => {
-                                return InterpretResult::RuntimeError(format!(
-                                    "Cannot iterate over {}",
-                                    other.type_name()
-                                ));
+                                runtime_error!(
+                                    self,
+                                    format!("Cannot iterate over {}", other.type_name())
+                                );
                             }
                         }
                     };
@@ -1182,39 +1394,48 @@ impl VM {
                 OpCode::Call => {
                     let arg_count = self.read_byte() as usize;
                     if self.stack.len() < 1 + arg_count {
-                        return InterpretResult::RuntimeError("Stack underflow on Call".into());
+                        runtime_error!(self, "Stack underflow on Call");
                     }
                     let callee_slot = self.stack.len() - 1 - arg_count;
                     let callee = self.stack[callee_slot].clone();
                     match callee {
                         Value::Closure(closure) => {
                             if arg_count != closure.function.arity {
-                                return InterpretResult::RuntimeError(format!(
-                                    "Expected {} arguments but got {}.",
-                                    closure.function.arity, arg_count
-                                ));
+                                runtime_error!(
+                                    self,
+                                    format!(
+                                        "Expected {} arguments but got {}.",
+                                        closure.function.arity, arg_count
+                                    )
+                                );
                             }
                             if self.frames.len() >= 1024 {
-                                return InterpretResult::RuntimeError(
-                                    "Stack overflow: call stack exceeded maximum depth.".into(),
+                                runtime_error!(
+                                    self,
+                                    "Stack overflow: call stack exceeded maximum depth.",
                                 );
                             }
                             self.frames.push(CallFrame {
                                 closure,
                                 ip: 0,
                                 slots_offset: callee_slot,
+                                try_handlers: Vec::new(),
                             });
                         }
                         Value::CompiledFunction(func) => {
                             if arg_count != func.arity {
-                                return InterpretResult::RuntimeError(format!(
-                                    "Expected {} arguments but got {}.",
-                                    func.arity, arg_count
-                                ));
+                                runtime_error!(
+                                    self,
+                                    format!(
+                                        "Expected {} arguments but got {}.",
+                                        func.arity, arg_count
+                                    )
+                                );
                             }
                             if self.frames.len() >= 1024 {
-                                return InterpretResult::RuntimeError(
-                                    "Stack overflow: call stack exceeded maximum depth.".into(),
+                                runtime_error!(
+                                    self,
+                                    "Stack overflow: call stack exceeded maximum depth.",
                                 );
                             }
                             let closure = Arc::new(Closure {
@@ -1225,6 +1446,7 @@ impl VM {
                                 closure,
                                 ip: 0,
                                 slots_offset: callee_slot,
+                                try_handlers: Vec::new(),
                             });
                         }
                         Value::Builtin { name, func } => {
@@ -1255,7 +1477,7 @@ impl VM {
                             let mut evaluator = crate::eval::Evaluator::new();
                             match func(&mut evaluator, args, crate::ast::Span::new(1, 1)) {
                                 Ok(val) => self.stack.push(val),
-                                Err(e) => return InterpretResult::RuntimeError(e.message),
+                                Err(e) => runtime_error!(self, e.message),
                             }
                         }
                         Value::BoundMethod { .. } => {
@@ -1264,14 +1486,39 @@ impl VM {
                             let mut evaluator = crate::eval::Evaluator::new();
                             match evaluator.call_value(&callee, args, crate::ast::Span::new(1, 1)) {
                                 Ok(val) => self.stack.push(val),
-                                Err(e) => return InterpretResult::RuntimeError(e.message),
+                                Err(e) => runtime_error!(self, e.message),
                             }
                         }
+                        Value::EnumConstructor {
+                            enum_name,
+                            variant_name,
+                            params,
+                        } => {
+                            if arg_count != params.len() {
+                                runtime_error!(
+                                    self,
+                                    format!(
+                                        "Enum variant {}.{} expects {} arguments, got {}",
+                                        enum_name,
+                                        variant_name,
+                                        params.len(),
+                                        arg_count
+                                    )
+                                );
+                            }
+                            let args: Vec<Value> = self.stack.drain(callee_slot + 1..).collect();
+                            self.stack.pop(); // pop constructor
+                            self.stack.push(Value::EnumInstance {
+                                enum_name,
+                                variant_name,
+                                values: args,
+                            });
+                        }
                         other => {
-                            return InterpretResult::RuntimeError(format!(
-                                "Can only call functions, got {}.",
-                                other.type_name()
-                            ));
+                            runtime_error!(
+                                self,
+                                format!("Can only call functions, got {}.", other.type_name())
+                            );
                         }
                     }
                 }
@@ -1283,9 +1530,7 @@ impl VM {
                     {
                         Value::CompiledFunction(f) => f,
                         _ => {
-                            return InterpretResult::RuntimeError(
-                                "Expected compiled function for closure".into(),
-                            );
+                            runtime_error!(self, "Expected compiled function for closure",);
                         }
                     };
                     let mut upvalues = Vec::with_capacity(func.upvalues.len());
@@ -1321,9 +1566,7 @@ impl VM {
                     let val = match self.stack.last().cloned() {
                         Some(v) => v,
                         None => {
-                            return InterpretResult::RuntimeError(
-                                "Stack empty on SetUpvalue".into(),
-                            );
+                            runtime_error!(self, "Stack empty on SetUpvalue",);
                         }
                     };
                     let upvalue = self.frames.last().unwrap().closure.upvalues[slot].clone();
