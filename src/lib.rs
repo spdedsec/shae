@@ -19,6 +19,7 @@ pub mod suggest;
 pub mod token;
 pub mod value;
 pub mod vm;
+pub mod repl;
 
 use thiserror::Error;
 

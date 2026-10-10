@@ -1,11 +1,8 @@
 use shae::eval::Evaluator;
 use shae::lexer;
 use shae::parser;
-use shae::run_in_evaluator;
-use shae::value::Value;
 use std::env;
 use std::fs;
-use std::io::{self, Write};
 use std::path::Path;
 use std::process;
 
@@ -100,52 +97,8 @@ print(greet("World"))
     println!("   Run with: cd {} && shae main.shae", name);
 }
 
-fn run_repl() {
-    println!(
-        "Shae v{} - It runs, it does stuff, it leaves you alone.",
-        env!("CARGO_PKG_VERSION")
-    );
-    println!("Type 'exit' or press Ctrl+D to quit.\n");
-
-    let mut ev = Evaluator::new();
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-
-    loop {
-        print!("shae > ");
-        let _ = stdout.flush();
-
-        let mut line = String::new();
-        match stdin.read_line(&mut line) {
-            Ok(0) => {
-                println!();
-                break;
-            } // EOF
-            Ok(_) => {
-                let trimmed = line.trim();
-                if trimmed == "exit" || trimmed == "quit" {
-                    break;
-                }
-                if trimmed.is_empty() {
-                    continue;
-                }
-                match run_in_evaluator(trimmed, &mut ev) {
-                    Ok(val) => {
-                        if val != Value::Null {
-                            println!("{}", val.to_display());
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("{}", shae::render_error(&e, trimmed));
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("Error reading input: {}", e);
-                break;
-            }
-        }
-    }
+fn run_repl(use_vm: bool) {
+    shae::repl::run_interactive_repl(use_vm);
 }
 
 fn should_use_vm(args: &[String]) -> bool {
@@ -479,12 +432,16 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
-        run_repl();
+        let use_vm = should_use_vm(&args);
+        run_repl(use_vm);
         return;
     }
 
     match args[1].as_str() {
-        "repl" => run_repl(),
+        "repl" => {
+            let use_vm = should_use_vm(&args);
+            run_repl(use_vm);
+        }
         "--joke" => show_joke(),
         "--tip" => show_tip(),
         "--version" | "-V" => {

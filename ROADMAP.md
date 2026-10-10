@@ -96,3 +96,12 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 - [x] Bytecode module resolution and imports (`use { func } from "./module.shaec"`).
 - [x] Precompiled bytecode disassembler (`shae disasm file.shaec`).
 
+---
+
+### **Chunk 12: VM-Backed Interactive REPL (`shae repl`)** *(Completed)*
+- [x] Persistent VM runtime session maintaining globals, function definitions, and closures across input lines.
+- [x] Multi-line input accumulation with balance checking for unclosed delimiters (`{`, `(`, `[`).
+- [x] REPL meta-commands: `:help`, `:disasm <code>`, `:globals`, `:reset`, and live engine toggling `:engine [vm|ast]`.
+- [x] Dual-engine compatibility with seamless fallback to AST interpreter via `--engine=ast`.
+
+

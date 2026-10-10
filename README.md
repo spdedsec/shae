@@ -174,7 +174,7 @@ Shae ships with an all-in-one developer toolchain:
 | `shae bundle <file> -o <bin>` | Bundle an entire app and its dependencies into a standalone executable |
 | `shae lsp` | Run the Language Server Protocol daemon for editor integration |
 | `shae test [path]` | Run Shae tests (`*_test.shae`) (defaults to Bytecode VM; use `--engine=ast` for AST) |
-| `shae repl` | Start interactive REPL |
+| `shae repl` | Start interactive REPL (defaults to Bytecode VM; use `--engine=ast` for AST) |
 
 ---
 
