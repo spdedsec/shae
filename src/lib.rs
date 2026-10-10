@@ -130,7 +130,29 @@ pub fn run_file_vm<P: AsRef<std::path::Path>>(path: P) -> Result<value::Value, S
             e
         ))
     })?;
-    run_vm(&source)
+    let program = parse_source(&source)?;
+    let chunk = compiler::Compiler::new()
+        .compile_program(&program)
+        .map_err(eval::RuntimeError::new)?;
+    let mut vm = vm::VM::new();
+    vm.current_file = std::fs::canonicalize(path_ref)
+        .ok()
+        .or_else(|| Some(path_ref.to_path_buf()));
+    match vm.interpret(chunk) {
+        vm::InterpretResult::Ok(val) => Ok(val),
+        vm::InterpretResult::RuntimeError(msg) => Err(eval::RuntimeError::new(msg).into()),
+        vm::InterpretResult::CompileError => {
+            Err(eval::RuntimeError::new("VM compile error".into()).into())
+        }
+    }
+}
+
+pub fn disassemble_source(source: &str) -> Result<String, ShaeError> {
+    let program = parse_source(source)?;
+    let chunk = compiler::Compiler::new()
+        .compile_program(&program)
+        .map_err(eval::RuntimeError::new)?;
+    Ok(chunk.disassemble("main"))
 }
 
 pub fn run_in_evaluator(source: &str, ev: &mut eval::Evaluator) -> Result<value::Value, ShaeError> {

@@ -2,8 +2,8 @@ use crate::chunk::Chunk;
 use crate::gc::{GcHeap, GcStats};
 use crate::opcode::OpCode;
 use crate::value::{
-    resolve_index, resolve_int_index, Closure, CompiledFunction, IndexError, Upvalue,
-    UpvalueLocation, Value,
+    Closure, CompiledFunction, IndexError, Upvalue, UpvalueLocation, Value, resolve_index,
+    resolve_int_index,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -28,6 +28,7 @@ pub struct VM {
     pub globals: HashMap<String, Value>,
     pub open_upvalues: Vec<Arc<RwLock<Upvalue>>>,
     pub heap: GcHeap,
+    pub current_file: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -66,6 +67,7 @@ impl VM {
             globals,
             open_upvalues: Vec::new(),
             heap: GcHeap::new(),
+            current_file: None,
         }
     }
 
@@ -1416,6 +1418,7 @@ impl VM {
                         other => other.to_string(),
                     };
                     let mut evaluator = crate::eval::Evaluator::new();
+                    evaluator.current_file = self.current_file.clone();
                     match evaluator.load_module(&path_str, crate::ast::Span::new(1, 1)) {
                         Ok(mod_val) => self.stack.push(mod_val),
                         Err(e) => {
@@ -1587,10 +1590,11 @@ impl VM {
                                 Err(e) => runtime_error!(self, e.message),
                             }
                         }
-                        Value::BoundMethod { .. } => {
+                        Value::Function { .. } | Value::BoundMethod { .. } => {
                             let args: Vec<Value> = self.stack.drain(callee_slot + 1..).collect();
                             self.stack.pop(); // pop callee
                             let mut evaluator = crate::eval::Evaluator::new();
+                            evaluator.current_file = self.current_file.clone();
                             match evaluator.call_value(&callee, args, crate::ast::Span::new(1, 1)) {
                                 Ok(val) => self.stack.push(val),
                                 Err(e) => runtime_error!(self, e.message),

@@ -3,6 +3,7 @@ use shae::compiler::Compiler;
 use shae::parse_source;
 use shae::value::Value;
 use shae::vm::{InterpretResult, VM};
+use std::fs;
 
 #[test]
 fn test_compiler_basic_math() {
@@ -970,4 +971,111 @@ fn test_compiler_combined_large_pool_and_locals() {
     let val = shae::run_vm(&script).expect("VM run should succeed");
     // v10 = 20, v200 = 400, v299 = 598 => 20 + 400 + 598 = 1018
     assert_eq!(val, Value::Int(1018));
+}
+
+#[test]
+fn test_vm_disassembler_source() {
+    let script = r#"
+fn calc(x) {
+    return x * 2
+}
+let a = 10
+let b = 20
+if a < b {
+    calc(a) + b
+} else {
+    a - b
+}
+"#;
+    let disasm = shae::disassemble_source(script).expect("Disassembly should succeed");
+    assert!(disasm.contains("== main =="));
+    assert!(disasm.contains("Constants:"));
+    assert!(disasm.contains("Disassembly:"));
+    assert!(disasm.contains("Constant"));
+    assert!(disasm.contains("DefineGlobal"));
+    assert!(disasm.contains("GetLocal"));
+    assert!(disasm.contains("Less"));
+    assert!(disasm.contains("JumpIfFalse"));
+    assert!(disasm.contains("Return"));
+}
+
+#[test]
+fn test_vm_relative_module_import() {
+    let dir = "tests/temp_vm_relative";
+    let _ = fs::remove_dir_all(dir);
+    fs::create_dir_all(dir).unwrap();
+
+    let helper_path = format!("{}/helper.shae", dir);
+    fs::write(
+        &helper_path,
+        r#"
+fn double(x) {
+    return x * 2
+}
+let factor = 3
+"#,
+    )
+    .unwrap();
+
+    let main_path = format!("{}/main.shae", dir);
+    fs::write(
+        &main_path,
+        r#"
+let m = use "./helper.shae"
+m.double(10) + m.factor
+"#,
+    )
+    .unwrap();
+
+    let result =
+        shae::run_file_vm(&main_path).expect("VM run_file_vm should resolve relative import");
+    assert_eq!(result, Value::Int(23));
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_vm_nested_relative_module_import() {
+    let dir = "tests/temp_vm_nested";
+    let _ = fs::remove_dir_all(dir);
+    fs::create_dir_all(format!("{}/sub", dir)).unwrap();
+
+    let leaf_path = format!("{}/sub/leaf.shae", dir);
+    fs::write(
+        &leaf_path,
+        r#"
+fn triple(x) {
+    return x * 3
+}
+"#,
+    )
+    .unwrap();
+
+    let mid_path = format!("{}/sub/mid.shae", dir);
+    fs::write(
+        &mid_path,
+        r#"
+let leaf = use "./leaf.shae"
+fn compute(x) {
+    return leaf.triple(x) + 5
+}
+"#,
+    )
+    .unwrap();
+
+    let entry_path = format!("{}/entry.shae", dir);
+    fs::write(
+        &entry_path,
+        r#"
+let mid = use "./sub/mid.shae"
+mid.compute(10)
+"#,
+    )
+    .unwrap();
+
+    let result =
+        shae::run_file_vm(&entry_path).expect("Nested relative import should resolve in VM");
+    assert_eq!(result, Value::Int(35));
+
+    let _ = fs::remove_dir_all(dir);
 }

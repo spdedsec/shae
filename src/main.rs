@@ -17,12 +17,17 @@ fn show_help() {
     println!("Usage:");
     println!("  shae                       Start the interactive REPL");
     println!("  shae repl                  Start the interactive REPL");
-    println!("  shae <file.shae>           Run a Shae script");
     println!(
-        "  shae run [file.shae]       Run a Shae script (or package entrypoint from shae.toml)"
+        "  shae <file.shae>           Run a Shae script (options: --vm, --engine=vm|ast, --disasm)"
     );
+    println!(
+        "  shae run [file.shae]       Run a Shae script (or package entrypoint from shae.toml) (options: --vm, --engine=vm|ast, --disasm)"
+    );
+    println!("  shae disasm <file.shae>    Disassemble a Shae script to bytecode");
     println!("  shae check <file.shae>     Lint and check syntax/declarations of a Shae script");
-    println!("  shae test [path]           Run Shae tests (*_test.shae)");
+    println!(
+        "  shae test [path]           Run Shae tests (*_test.shae) (options: --vm, --engine=vm|ast)"
+    );
     println!("  shae fmt <file.shae>       Format a Shae script");
     println!("  shae new <project_name>    Create a new Shae project folder");
     println!("  shae init [name]           Initialize package manifest (shae.toml)");
@@ -140,6 +145,35 @@ fn run_repl() {
     }
 }
 
+fn should_use_vm(args: &[String]) -> bool {
+    if args.iter().any(|a| a == "--engine=vm" || a == "--vm") {
+        return true;
+    }
+    if args.iter().any(|a| a == "--engine=ast") {
+        return false;
+    }
+    std::env::var("SHAE_ENGINE")
+        .map(|v| v.to_lowercase() == "vm")
+        .unwrap_or(false)
+}
+
+fn disasm_file(filename: &str) {
+    let source = match fs::read_to_string(filename) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error reading file '{}': {}", filename, e);
+            process::exit(1);
+        }
+    };
+    match shae::disassemble_source(&source) {
+        Ok(disasm) => print!("{}", disasm),
+        Err(e) => {
+            eprintln!("{}", shae::render_error(&e, &source));
+            process::exit(1);
+        }
+    }
+}
+
 fn run_file(filename: &str, use_vm: bool) {
     let res = if use_vm {
         shae::run_file_vm(filename)
@@ -234,7 +268,7 @@ fn check_file(filename: &str) {
     }
 }
 
-fn run_tests(target: Option<&str>) {
+fn run_tests(target: Option<&str>, use_vm: bool) {
     let mut test_files = Vec::new();
     let root = target.unwrap_or("tests");
 
@@ -273,7 +307,12 @@ fn run_tests(target: Option<&str>) {
             }
         };
 
-        match shae::run_file(file) {
+        let res = if use_vm {
+            shae::run_file_vm(file)
+        } else {
+            shae::run_file(file)
+        };
+        match res {
             Ok(_) => {
                 println!("test {} ... ok", file);
                 passed += 1;
@@ -492,23 +531,37 @@ fn main() {
             }
         }
         "run" => {
-            let use_vm = args.iter().any(|a| a == "--vm")
-                || std::env::var("SHAE_ENGINE")
-                    .map(|v| v.to_lowercase() == "vm")
-                    .unwrap_or(false);
+            let use_vm = should_use_vm(&args);
+            let disasm = args.iter().any(|a| a == "--disasm");
             let file_target = args[2..].iter().find(|a| !a.starts_with('-'));
             if let Some(f) = file_target {
+                if disasm {
+                    disasm_file(f);
+                }
                 run_file(f, use_vm);
             } else if let Ok(manifest) = shae::pkg::PackageManifest::load_from_dir(Path::new(".")) {
                 let entry = Path::new(".").join(&manifest.package.entry);
                 if entry.exists() {
-                    run_file(&entry.to_string_lossy(), use_vm);
+                    let entry_str = entry.to_string_lossy().to_string();
+                    if disasm {
+                        disasm_file(&entry_str);
+                    }
+                    run_file(&entry_str, use_vm);
                 } else {
                     eprintln!("Error: Package entry '{}' not found.", entry.display());
                     process::exit(1);
                 }
             } else {
-                eprintln!("Usage: shae run <file.shae> [--vm]");
+                eprintln!("Usage: shae run <file.shae> [--vm] [--engine=vm|ast] [--disasm]");
+                process::exit(1);
+            }
+        }
+        "disasm" => {
+            let file_target = args[2..].iter().find(|a| !a.starts_with('-'));
+            if let Some(f) = file_target {
+                disasm_file(f);
+            } else {
+                eprintln!("Usage: shae disasm <file.shae>");
                 process::exit(1);
             }
         }
@@ -520,12 +573,12 @@ fn main() {
             check_file(&args[2]);
         }
         "test" => {
-            let target = if args.len() >= 3 {
-                Some(args[2].as_str())
-            } else {
-                None
-            };
-            run_tests(target);
+            let use_vm = should_use_vm(&args);
+            let target = args[2..]
+                .iter()
+                .find(|a| !a.starts_with('-'))
+                .map(|s| s.as_str());
+            run_tests(target, use_vm);
         }
         "fmt" => {
             let mut check_only = false;
@@ -587,14 +640,24 @@ fn main() {
         }
         filename => {
             if filename.starts_with('-') {
+                if let Some(actual_file) = args[1..].iter().find(|a| !a.starts_with('-')) {
+                    let disasm = args.iter().any(|a| a == "--disasm");
+                    if disasm {
+                        disasm_file(actual_file);
+                    }
+                    let use_vm = should_use_vm(&args);
+                    run_file(actual_file, use_vm);
+                    return;
+                }
                 eprintln!("Unknown flag: {}", filename);
                 show_help();
                 process::exit(1);
             }
-            let use_vm = args.iter().any(|a| a == "--vm")
-                || std::env::var("SHAE_ENGINE")
-                    .map(|v| v.to_lowercase() == "vm")
-                    .unwrap_or(false);
+            let disasm = args.iter().any(|a| a == "--disasm");
+            if disasm {
+                disasm_file(filename);
+            }
+            let use_vm = should_use_vm(&args);
             run_file(filename, use_vm);
         }
     }
