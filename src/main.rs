@@ -18,15 +18,15 @@ fn show_help() {
     println!("  shae                       Start the interactive REPL");
     println!("  shae repl                  Start the interactive REPL");
     println!(
-        "  shae <file.shae>           Run a Shae script (options: --vm, --engine=vm|ast, --disasm)"
+        "  shae <file.shae>           Run a Shae script (default: VM; use --engine=ast for AST, --disasm)"
     );
     println!(
-        "  shae run [file.shae]       Run a Shae script (or package entrypoint from shae.toml) (options: --vm, --engine=vm|ast, --disasm)"
+        "  shae run [file.shae]       Run a Shae script (or package entrypoint from shae.toml) (default: VM; use --engine=ast, --disasm)"
     );
     println!("  shae disasm <file.shae>    Disassemble a Shae script to bytecode");
     println!("  shae check <file.shae>     Lint and check syntax/declarations of a Shae script");
     println!(
-        "  shae test [path]           Run Shae tests (*_test.shae) (options: --vm, --engine=vm|ast)"
+        "  shae test [path]           Run Shae tests (*_test.shae) (default: VM; use --engine=ast)"
     );
     println!("  shae fmt <file.shae>       Format a Shae script");
     println!("  shae new <project_name>    Create a new Shae project folder");
@@ -146,15 +146,22 @@ fn run_repl() {
 }
 
 fn should_use_vm(args: &[String]) -> bool {
-    if args.iter().any(|a| a == "--engine=vm" || a == "--vm") {
-        return true;
-    }
     if args.iter().any(|a| a == "--engine=ast") {
         return false;
     }
-    std::env::var("SHAE_ENGINE")
-        .map(|v| v.to_lowercase() == "vm")
-        .unwrap_or(false)
+    if args.iter().any(|a| a == "--engine=vm" || a == "--vm") {
+        return true;
+    }
+    if let Ok(val) = std::env::var("SHAE_ENGINE") {
+        let val_lower = val.to_lowercase();
+        if val_lower == "ast" {
+            return false;
+        }
+        if val_lower == "vm" {
+            return true;
+        }
+    }
+    true
 }
 
 fn disasm_file(filename: &str) {

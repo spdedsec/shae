@@ -1079,3 +1079,33 @@ mid.compute(10)
 
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn test_vm_engine_dispatch_helpers() {
+    let script = "let x = 10; let y = 20; x * y";
+    let val_ast = shae::run_with_engine(script, false).expect("AST run should succeed");
+    let val_vm = shae::run_with_engine(script, true).expect("VM run should succeed");
+    assert_eq!(val_ast, val_vm);
+    assert_eq!(val_vm, Value::Int(200));
+
+    let math_file = "tests/shae/math_test.shae";
+    let res_ast = shae::run_file_with_engine(math_file, false);
+    let res_vm = shae::run_file_with_engine(math_file, true);
+    assert!(res_ast.is_ok());
+    assert!(res_vm.is_ok());
+}
+
+#[test]
+fn test_mega_test_on_vm() {
+    let val =
+        shae::run_file_vm("mega_test.shae").expect("mega_test.shae should execute cleanly on VM");
+    assert_eq!(val, Value::Null);
+    let _ = fs::remove_file("test_io.json");
+}
+
+#[test]
+fn test_showcase_microservice_on_vm() {
+    let val = shae::run_file_vm("examples/microservice/test_service.shae")
+        .expect("microservice test_service.shae should execute cleanly on VM");
+    assert_eq!(val, Value::Null);
+}

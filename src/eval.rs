@@ -1663,6 +1663,8 @@ impl Evaluator {
                             Value::Function { .. }
                                 | Value::Builtin { .. }
                                 | Value::BoundMethod { .. }
+                                | Value::Closure(_)
+                                | Value::CompiledFunction(_)
                         ) {
                             self.depth -= 1;
                             return Err(RuntimeError::new(
@@ -1694,6 +1696,8 @@ impl Evaluator {
                             Value::Function { .. }
                                 | Value::Builtin { .. }
                                 | Value::BoundMethod { .. }
+                                | Value::Closure(_)
+                                | Value::CompiledFunction(_)
                         ) {
                             self.depth -= 1;
                             return Err(RuntimeError::new(
@@ -1728,6 +1732,8 @@ impl Evaluator {
                             Value::Function { .. }
                                 | Value::Builtin { .. }
                                 | Value::BoundMethod { .. }
+                                | Value::Closure(_)
+                                | Value::CompiledFunction(_)
                         ) {
                             self.depth -= 1;
                             return Err(RuntimeError::new(
@@ -1820,6 +1826,8 @@ impl Evaluator {
                             Value::Function { .. }
                                 | Value::Builtin { .. }
                                 | Value::BoundMethod { .. }
+                                | Value::Closure(_)
+                                | Value::CompiledFunction(_)
                         ) {
                             self.depth -= 1;
                             return Err(RuntimeError::new(
@@ -1851,6 +1859,8 @@ impl Evaluator {
                             Value::Function { .. }
                                 | Value::Builtin { .. }
                                 | Value::BoundMethod { .. }
+                                | Value::Closure(_)
+                                | Value::CompiledFunction(_)
                         ) {
                             self.depth -= 1;
                             return Err(RuntimeError::new(
@@ -1880,6 +1890,8 @@ impl Evaluator {
                             Value::Function { .. }
                                 | Value::Builtin { .. }
                                 | Value::BoundMethod { .. }
+                                | Value::Closure(_)
+                                | Value::CompiledFunction(_)
                         ) {
                             self.depth -= 1;
                             return Err(RuntimeError::new(

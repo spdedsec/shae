@@ -162,7 +162,8 @@ Shae ships with an all-in-one developer toolchain:
 
 | Command | Description |
 |---|---|
-| `shae run <file.shae>` | Run a script with the Shae interpreter / VM |
+| `shae run <file.shae>` | Run a script (defaults to high-performance Bytecode VM; use `--engine=ast` for AST) |
+| `shae disasm <file.shae>` | Disassemble script into human-readable bytecode instructions and constant pool |
 | `shae fmt <file.shae>` | Format source files canonically (4-space indentation) |
 | `shae fmt --check <file>` | Verify formatting without modifying files |
 | `shae check <file.shae>` | Static linter checking for unused variables, dead code, and shadowing |
@@ -171,7 +172,7 @@ Shae ships with an all-in-one developer toolchain:
 | `shae pkg install` | Resolve and install dependencies into `.shae/packages` |
 | `shae bundle <file> -o <bin>` | Bundle an entire app and its dependencies into a standalone executable |
 | `shae lsp` | Run the Language Server Protocol daemon for editor integration |
-| `shae test` | Run internal Shae test suites |
+| `shae test [path]` | Run Shae tests (`*_test.shae`) (defaults to Bytecode VM; use `--engine=ast` for AST) |
 | `shae repl` | Start interactive REPL |
 
 ---

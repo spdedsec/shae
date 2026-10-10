@@ -147,6 +147,21 @@ pub fn run_file_vm<P: AsRef<std::path::Path>>(path: P) -> Result<value::Value, S
     }
 }
 
+pub fn run_with_engine(source: &str, use_vm: bool) -> Result<value::Value, ShaeError> {
+    if use_vm { run_vm(source) } else { run(source) }
+}
+
+pub fn run_file_with_engine<P: AsRef<std::path::Path>>(
+    path: P,
+    use_vm: bool,
+) -> Result<value::Value, ShaeError> {
+    if use_vm {
+        run_file_vm(path)
+    } else {
+        run_file(path)
+    }
+}
+
 pub fn disassemble_source(source: &str) -> Result<String, ShaeError> {
     let program = parse_source(source)?;
     let chunk = compiler::Compiler::new()
