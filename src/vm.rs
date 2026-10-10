@@ -79,7 +79,7 @@ impl VM {
             for val in stack {
                 heap.mark_value(val, gray_stack);
             }
-            for (_k, val) in globals {
+            for val in globals.values() {
                 heap.mark_value(val, gray_stack);
             }
             for uv in open_upvalues {
@@ -248,6 +248,10 @@ impl VM {
                     let constant = self.read_constant();
                     self.stack.push(constant);
                 }
+                OpCode::ConstantLong => {
+                    let constant = self.read_constant_long();
+                    self.stack.push(constant);
+                }
                 OpCode::Nil => {
                     self.stack.push(Value::Null);
                 }
@@ -269,6 +273,15 @@ impl VM {
                         runtime_error!(self, format!("Stack underflow on local slot {}", slot_idx));
                     }
                 }
+                OpCode::GetLocalLong => {
+                    let slot_idx = self.read_short() as usize;
+                    let slot = self.frames.last().unwrap().slots_offset + slot_idx;
+                    if slot < self.stack.len() {
+                        self.stack.push(self.stack[slot].clone());
+                    } else {
+                        runtime_error!(self, format!("Stack underflow on local slot {}", slot_idx));
+                    }
+                }
                 OpCode::SetLocal => {
                     let slot_idx = self.read_byte() as usize;
                     let slot = self.frames.last().unwrap().slots_offset + slot_idx;
@@ -283,6 +296,22 @@ impl VM {
                         }
                     } else {
                         runtime_error!(self, "Stack empty on SetLocal");
+                    }
+                }
+                OpCode::SetLocalLong => {
+                    let slot_idx = self.read_short() as usize;
+                    let slot = self.frames.last().unwrap().slots_offset + slot_idx;
+                    if let Some(val) = self.stack.last().cloned() {
+                        if slot < self.stack.len() {
+                            self.stack[slot] = val;
+                        } else {
+                            runtime_error!(
+                                self,
+                                format!("Invalid local slot {} for assignment", slot_idx)
+                            );
+                        }
+                    } else {
+                        runtime_error!(self, "Stack empty on SetLocalLong");
                     }
                 }
                 OpCode::DefineGlobal => {
@@ -1687,5 +1716,17 @@ impl VM {
         let idx = frame.closure.function.chunk.code[frame.ip] as usize;
         frame.ip += 1;
         frame.closure.function.chunk.constants[idx].clone()
+    }
+
+    fn read_constant_long(&mut self) -> Value {
+        let idx = self.read_short() as usize;
+        let frame = self.frames.last().unwrap();
+        frame.closure.function.chunk.constants[idx].clone()
+    }
+}
+
+impl Default for VM {
+    fn default() -> Self {
+        Self::new()
     }
 }

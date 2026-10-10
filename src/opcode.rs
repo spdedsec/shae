@@ -63,6 +63,9 @@ pub enum OpCode {
     Dup,
     ImportModule,
     ImportStar,
+    ConstantLong,
+    GetLocalLong,
+    SetLocalLong,
 }
 
 impl From<u8> for OpCode {

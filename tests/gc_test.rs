@@ -249,3 +249,45 @@ fn test_vm_gc_preserves_globals_and_stack() {
         panic!("my_global not found in globals");
     }
 }
+
+#[test]
+fn test_vm_gc_heavy_allocation_churn() {
+    let mut vm = shae::vm::VM::new();
+
+    vm.heap.stress_gc = true;
+
+    let root1 = vm
+        .heap
+        .alloc_array(vec![Value::Int(42), Value::String("persistent".into())]);
+    vm.globals
+        .insert("root1".to_string(), Value::GcArray(root1));
+
+    let root2 = vm.heap.alloc_string("stack_root".to_string());
+    vm.stack.push(Value::GcString(root2));
+
+    for _ in 0..10 {
+        for j in 0..100 {
+            let temp_arr = vm.heap.alloc_array(vec![Value::Int(j), Value::Int(j * 2)]);
+            let _temp_str = vm.heap.alloc_string(format!("churn_{}_{}", j, temp_arr.0));
+        }
+        let stats = vm.collect_garbage();
+        assert!(stats.freed_objects >= 200);
+        assert_eq!(vm.heap.live_objects_count(), 2);
+    }
+
+    if let Some(Value::GcArray(r)) = vm.globals.get("root1") {
+        assert_eq!(*r, root1);
+        let arr = vm.heap.as_array(*r).unwrap();
+        assert_eq!(arr[0], Value::Int(42));
+        assert_eq!(arr[1], Value::String("persistent".into()));
+    } else {
+        panic!("root1 missing from globals");
+    }
+
+    if let Some(Value::GcString(r)) = vm.stack.last() {
+        assert_eq!(*r, root2);
+        assert_eq!(vm.heap.as_string(*r).unwrap(), "stack_root");
+    } else {
+        panic!("root2 missing from stack");
+    }
+}

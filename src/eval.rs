@@ -1,6 +1,6 @@
 use crate::ast::{BinaryOp, Expr, InterpPart, Literal, Program, Span, Stmt, StmtKind, UnaryOp};
 use crate::env::Environment;
-use crate::value::{resolve_index, resolve_int_index, IndexError, Value};
+use crate::value::{IndexError, Value, resolve_index, resolve_int_index};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -223,11 +223,7 @@ impl Evaluator {
                 .or_else(|| {
                     archive.iter().find_map(
                         |(k, v)| {
-                            if k.ends_with(trimmed) {
-                                Some(v)
-                            } else {
-                                None
-                            }
+                            if k.ends_with(trimmed) { Some(v) } else { None }
                         },
                     )
                 })
@@ -2489,11 +2485,7 @@ impl Evaluator {
                     } else {
                         *v >= *s && *v < *e
                     };
-                    if in_range {
-                        Some(Vec::new())
-                    } else {
-                        None
-                    }
+                    if in_range { Some(Vec::new()) } else { None }
                 }
                 (Value::String(v), Literal::String(s), Literal::String(e)) => {
                     let in_range = if *inclusive {
@@ -2501,11 +2493,7 @@ impl Evaluator {
                     } else {
                         v >= s && v < e
                     };
-                    if in_range {
-                        Some(Vec::new())
-                    } else {
-                        None
-                    }
+                    if in_range { Some(Vec::new()) } else { None }
                 }
                 _ => {
                     let v_num = to_f64_val(val);
@@ -2525,11 +2513,7 @@ impl Evaluator {
                         } else {
                             v >= s && v < e
                         };
-                        if in_range {
-                            Some(Vec::new())
-                        } else {
-                            None
-                        }
+                        if in_range { Some(Vec::new()) } else { None }
                     } else {
                         None
                     }

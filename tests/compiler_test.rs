@@ -871,3 +871,103 @@ fn test_compiler_run_vm_api() {
     let val = shae::run_vm(source).unwrap();
     assert_eq!(val, Value::Int(32));
 }
+
+#[test]
+fn test_compiler_large_constant_pool() {
+    // Generate script with 320 unique integer constants
+    let mut script = String::new();
+    script.push_str("let total = 0\n");
+    for i in 1..=320 {
+        script.push_str(&format!("total = total + {}\n", i));
+    }
+    script.push_str("total\n");
+
+    let program = parse_source(&script).expect("Parsing should succeed");
+    let chunk = Compiler::new()
+        .compile_program(&program)
+        .expect("Compilation should succeed");
+
+    assert!(
+        chunk.constants.len() >= 320,
+        "Chunk should have at least 320 constants, got {}",
+        chunk.constants.len()
+    );
+
+    // Verify opcode stream includes OpCode::ConstantLong (discriminant 62)
+    let has_constant_long = chunk
+        .code
+        .contains(&(shae::opcode::OpCode::ConstantLong as u8));
+    assert!(
+        has_constant_long,
+        "Compiled chunk must emit OpCode::ConstantLong for constants exceeding index 255"
+    );
+
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+
+    // Sum 1..=320 = 320 * 321 / 2 = 51360
+    assert_eq!(result, InterpretResult::Ok(Value::Int(51360)));
+}
+
+#[test]
+fn test_compiler_large_local_scope() {
+    // Generate function with 320 local variables
+    let mut script = String::new();
+    script.push_str("fn run_large_locals() {\n");
+    for i in 0..320 {
+        script.push_str(&format!("    let x{} = 1\n", i));
+    }
+    // Mutate slot 300
+    script.push_str("    x300 = 100\n");
+    script.push_str("    return x0 + x300 + x319\n");
+    script.push_str("}\n");
+    script.push_str("run_large_locals()\n");
+
+    let program = parse_source(&script).expect("Parsing should succeed");
+    let chunk = Compiler::new()
+        .compile_program(&program)
+        .expect("Compilation should succeed");
+
+    // Check inner compiled function for GetLocalLong and SetLocalLong
+    let mut found_fn = false;
+    for c in &chunk.constants {
+        if let Value::CompiledFunction(f) = c {
+            found_fn = true;
+            let has_get_local_long = f
+                .chunk
+                .code
+                .contains(&(shae::opcode::OpCode::GetLocalLong as u8));
+            let has_set_local_long = f
+                .chunk
+                .code
+                .contains(&(shae::opcode::OpCode::SetLocalLong as u8));
+            assert!(
+                has_get_local_long,
+                "Inner function chunk must emit OpCode::GetLocalLong"
+            );
+            assert!(
+                has_set_local_long,
+                "Inner function chunk must emit OpCode::SetLocalLong"
+            );
+        }
+    }
+    assert!(found_fn, "Should have compiled function in constants");
+
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    // x0(1) + x300(100) + x319(1) = 102
+    assert_eq!(result, InterpretResult::Ok(Value::Int(102)));
+}
+
+#[test]
+fn test_compiler_combined_large_pool_and_locals() {
+    let mut script = String::new();
+    for i in 0..300 {
+        script.push_str(&format!("let v{} = {}\n", i, i * 2));
+    }
+    script.push_str("v10 + v200 + v299\n");
+
+    let val = shae::run_vm(&script).expect("VM run should succeed");
+    // v10 = 20, v200 = 400, v299 = 598 => 20 + 400 + 598 = 1018
+    assert_eq!(val, Value::Int(1018));
+}

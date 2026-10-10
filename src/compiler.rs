@@ -122,8 +122,8 @@ impl Compiler {
     fn resolve_upvalue(&mut self, name: &str) -> Option<u8> {
         if let Some(ref mut enclosing) = self.enclosing {
             if let Some(local_slot) = enclosing.resolve_local(name) {
-                enclosing.locals[local_slot as usize].is_captured = true;
-                return Some(self.add_upvalue(local_slot, true));
+                enclosing.locals[local_slot].is_captured = true;
+                return Some(self.add_upvalue(local_slot as u8, true));
             }
             if let Some(upvalue_idx) = enclosing.resolve_upvalue(name) {
                 return Some(self.add_upvalue(upvalue_idx, false));
@@ -171,13 +171,47 @@ impl Compiler {
         self.locals.len() - 1
     }
 
-    fn resolve_local(&self, name: &str) -> Option<u8> {
+    fn resolve_local(&self, name: &str) -> Option<usize> {
         for (i, local) in self.locals.iter().enumerate().rev() {
             if local.name == name {
-                return Some(i as u8);
+                return Some(i);
             }
         }
         None
+    }
+
+    fn emit_constant(&mut self, val: Value, line: usize) {
+        let idx = self.chunk.add_constant(val);
+        if idx <= 255 {
+            self.chunk.write_opcode(OpCode::Constant, line);
+            self.chunk.write(idx as u8, line);
+        } else {
+            self.chunk.write_opcode(OpCode::ConstantLong, line);
+            self.chunk.write(((idx >> 8) & 0xff) as u8, line);
+            self.chunk.write((idx & 0xff) as u8, line);
+        }
+    }
+
+    fn emit_get_local(&mut self, slot: usize, line: usize) {
+        if slot <= 255 {
+            self.chunk.write_opcode(OpCode::GetLocal, line);
+            self.chunk.write(slot as u8, line);
+        } else {
+            self.chunk.write_opcode(OpCode::GetLocalLong, line);
+            self.chunk.write(((slot >> 8) & 0xff) as u8, line);
+            self.chunk.write((slot & 0xff) as u8, line);
+        }
+    }
+
+    fn emit_set_local(&mut self, slot: usize, line: usize) {
+        if slot <= 255 {
+            self.chunk.write_opcode(OpCode::SetLocal, line);
+            self.chunk.write(slot as u8, line);
+        } else {
+            self.chunk.write_opcode(OpCode::SetLocalLong, line);
+            self.chunk.write(((slot >> 8) & 0xff) as u8, line);
+            self.chunk.write((slot & 0xff) as u8, line);
+        }
     }
 
     fn emit_jump(&mut self, op: OpCode, line: usize) -> usize {
@@ -240,8 +274,7 @@ impl Compiler {
                 Expr::Variable { name, span } => {
                     self.compile_expr(value)?;
                     if let Some(slot) = self.resolve_local(name) {
-                        self.chunk.write_opcode(OpCode::SetLocal, span.line);
-                        self.chunk.write(slot, span.line);
+                        self.emit_set_local(slot, span.line);
                     } else if let Some(upvalue_slot) = self.resolve_upvalue(name) {
                         self.chunk.write_opcode(OpCode::SetUpvalue, span.line);
                         self.chunk.write(upvalue_slot, span.line);
@@ -365,9 +398,7 @@ impl Compiler {
                 self.compile_expr(iterable)?;
                 let seq_slot = self.add_local("(seq)".to_string());
 
-                let const_zero = self.chunk.add_constant(Value::Int(0));
-                self.chunk.write_opcode(OpCode::Constant, stmt.span.line);
-                self.chunk.write(const_zero as u8, stmt.span.line);
+                self.emit_constant(Value::Int(0), stmt.span.line);
                 self.add_local("(iter)".to_string());
 
                 let loop_start = self.chunk.code.len();
@@ -464,12 +495,13 @@ impl Compiler {
                 Ok(())
             }
             StmtKind::StructDef { name, fields } => {
-                let const_idx = self.chunk.add_constant(Value::StructDef {
-                    name: name.clone(),
-                    fields: fields.clone(),
-                });
-                self.chunk.write_opcode(OpCode::Constant, stmt.span.line);
-                self.chunk.write(const_idx as u8, stmt.span.line);
+                self.emit_constant(
+                    Value::StructDef {
+                        name: name.clone(),
+                        fields: fields.clone(),
+                    },
+                    stmt.span.line,
+                );
                 if self.scope_depth > 0 {
                     self.add_local(name.clone());
                 } else {
@@ -488,12 +520,13 @@ impl Compiler {
                 for v in variants {
                     var_map.insert(v.name.clone(), v.fields.clone());
                 }
-                let const_idx = self.chunk.add_constant(Value::EnumDef {
-                    name: name.clone(),
-                    variants: Arc::new(var_map),
-                });
-                self.chunk.write_opcode(OpCode::Constant, stmt.span.line);
-                self.chunk.write(const_idx as u8, stmt.span.line);
+                self.emit_constant(
+                    Value::EnumDef {
+                        name: name.clone(),
+                        variants: Arc::new(var_map),
+                    },
+                    stmt.span.line,
+                );
                 if self.scope_depth > 0 {
                     self.add_local(name.clone());
                 } else {
@@ -540,20 +573,16 @@ impl Compiler {
                 Ok(())
             }
             StmtKind::Use { imports, path } => {
-                let const_idx = self.chunk.add_constant(Value::String(path.clone()));
-                self.chunk.write_opcode(OpCode::Constant, stmt.span.line);
-                self.chunk.write(const_idx as u8, stmt.span.line);
+                self.emit_constant(Value::String(path.clone()), stmt.span.line);
                 self.chunk
                     .write_opcode(OpCode::ImportModule, stmt.span.line);
                 let mod_slot = self.add_local("(import_mod)".to_string());
                 for item in imports {
                     if item.name == "*" {
-                        self.chunk.write_opcode(OpCode::GetLocal, stmt.span.line);
-                        self.chunk.write(mod_slot as u8, stmt.span.line);
+                        self.emit_get_local(mod_slot, stmt.span.line);
                         self.chunk.write_opcode(OpCode::ImportStar, stmt.span.line);
                     } else {
-                        self.chunk.write_opcode(OpCode::GetLocal, stmt.span.line);
-                        self.chunk.write(mod_slot as u8, stmt.span.line);
+                        self.emit_get_local(mod_slot, stmt.span.line);
                         let key_const = self.chunk.add_constant(Value::String(item.name.clone()));
                         self.chunk.write_opcode(OpCode::GetProperty, stmt.span.line);
                         self.chunk.write(key_const as u8, stmt.span.line);
@@ -579,20 +608,14 @@ impl Compiler {
             BindingPattern::Array { elements, rest } => {
                 let arr_slot = self.add_local("(destruct_arr)".to_string());
                 for (i, elem) in elements.iter().enumerate() {
-                    self.chunk.write_opcode(OpCode::GetLocal, 0);
-                    self.chunk.write(arr_slot as u8, 0);
-                    let const_idx = self.chunk.add_constant(Value::Int(i as i64));
-                    self.chunk.write_opcode(OpCode::Constant, 0);
-                    self.chunk.write(const_idx as u8, 0);
+                    self.emit_get_local(arr_slot, 0);
+                    self.emit_constant(Value::Int(i as i64), 0);
                     self.chunk.write_opcode(OpCode::IndexGetSafe, 0);
                     self.compile_binding_pattern(elem)?;
                 }
                 if let Some(rest_name) = rest {
-                    self.chunk.write_opcode(OpCode::GetLocal, 0);
-                    self.chunk.write(arr_slot as u8, 0);
-                    let const_idx = self.chunk.add_constant(Value::Int(elements.len() as i64));
-                    self.chunk.write_opcode(OpCode::Constant, 0);
-                    self.chunk.write(const_idx as u8, 0);
+                    self.emit_get_local(arr_slot, 0);
+                    self.emit_constant(Value::Int(elements.len() as i64), 0);
                     self.chunk.write_opcode(OpCode::ArraySlice, 0);
                     self.add_local(rest_name.clone());
                 }
@@ -601,8 +624,7 @@ impl Compiler {
             BindingPattern::Object { fields, rest } => {
                 let obj_slot = self.add_local("(destruct_obj)".to_string());
                 for (field_name, opt_sub) in fields {
-                    self.chunk.write_opcode(OpCode::GetLocal, 0);
-                    self.chunk.write(obj_slot as u8, 0);
+                    self.emit_get_local(obj_slot, 0);
                     let const_idx = self.chunk.add_constant(Value::String(field_name.clone()));
                     self.chunk.write_opcode(OpCode::GetProperty, 0);
                     self.chunk.write(const_idx as u8, 0);
@@ -614,12 +636,9 @@ impl Compiler {
                     }
                 }
                 if let Some(rest_name) = rest {
-                    self.chunk.write_opcode(OpCode::GetLocal, 0);
-                    self.chunk.write(obj_slot as u8, 0);
+                    self.emit_get_local(obj_slot, 0);
                     for (field_name, _) in fields {
-                        let const_idx = self.chunk.add_constant(Value::String(field_name.clone()));
-                        self.chunk.write_opcode(OpCode::Constant, 0);
-                        self.chunk.write(const_idx as u8, 0);
+                        self.emit_constant(Value::String(field_name.clone()), 0);
                     }
                     self.chunk.write_opcode(OpCode::MapRest, 0);
                     self.chunk.write(fields.len() as u8, 0);
@@ -634,19 +653,13 @@ impl Compiler {
         use crate::ast::Literal;
         match lit {
             Literal::Int(n) => {
-                let constant = self.chunk.add_constant(Value::Int(*n));
-                self.chunk.write_opcode(OpCode::Constant, line);
-                self.chunk.write(constant as u8, line);
+                self.emit_constant(Value::Int(*n), line);
             }
             Literal::Float(n) | Literal::Number(n) => {
-                let constant = self.chunk.add_constant(Value::Float(*n));
-                self.chunk.write_opcode(OpCode::Constant, line);
-                self.chunk.write(constant as u8, line);
+                self.emit_constant(Value::Float(*n), line);
             }
             Literal::String(s) => {
-                let constant = self.chunk.add_constant(Value::String(s.clone()));
-                self.chunk.write_opcode(OpCode::Constant, line);
-                self.chunk.write(constant as u8, line);
+                self.emit_constant(Value::String(s.clone()), line);
             }
             Literal::Bool(b) => {
                 if *b {
@@ -670,8 +683,7 @@ impl Compiler {
             }
             Expr::Variable { name, span } => {
                 if let Some(slot) = self.resolve_local(name) {
-                    self.chunk.write_opcode(OpCode::GetLocal, span.line);
-                    self.chunk.write(slot, span.line);
+                    self.emit_get_local(slot, span.line);
                 } else if let Some(upvalue_slot) = self.resolve_upvalue(name) {
                     self.chunk.write_opcode(OpCode::GetUpvalue, span.line);
                     self.chunk.write(upvalue_slot, span.line);
@@ -828,9 +840,7 @@ impl Compiler {
                     return Err("Map literal exceeds maximum 255 pairs in VM".into());
                 }
                 for (key, val) in pairs {
-                    let const_idx = self.chunk.add_constant(Value::String(key.clone()));
-                    self.chunk.write_opcode(OpCode::Constant, 0);
-                    self.chunk.write(const_idx as u8, 0);
+                    self.emit_constant(Value::String(key.clone()), 0);
                     self.compile_expr(val)?;
                 }
                 self.chunk.write_opcode(OpCode::BuildMap, 0);
@@ -878,9 +888,7 @@ impl Compiler {
                 for part in parts {
                     match part {
                         crate::ast::InterpPart::Text(s) => {
-                            let const_idx = self.chunk.add_constant(Value::String(s.clone()));
-                            self.chunk.write_opcode(OpCode::Constant, 0);
-                            self.chunk.write(const_idx as u8, 0);
+                            self.emit_constant(Value::String(s.clone()), 0);
                         }
                         crate::ast::InterpPart::Expr(e) => {
                             self.compile_expr(e)?;
@@ -893,8 +901,7 @@ impl Compiler {
             }
             Expr::StructInit { name, fields, span } => {
                 if let Some(slot) = self.resolve_local(name) {
-                    self.chunk.write_opcode(OpCode::GetLocal, span.line);
-                    self.chunk.write(slot, span.line);
+                    self.emit_get_local(slot, span.line);
                 } else if let Some(upvalue_slot) = self.resolve_upvalue(name) {
                     self.chunk.write_opcode(OpCode::GetUpvalue, span.line);
                     self.chunk.write(upvalue_slot, span.line);
@@ -904,9 +911,7 @@ impl Compiler {
                     self.chunk.write(const_idx as u8, span.line);
                 }
                 for (f_name, f_expr) in fields {
-                    let name_idx = self.chunk.add_constant(Value::String(f_name.clone()));
-                    self.chunk.write_opcode(OpCode::Constant, span.line);
-                    self.chunk.write(name_idx as u8, span.line);
+                    self.emit_constant(Value::String(f_name.clone()), span.line);
                     self.compile_expr(f_expr)?;
                 }
                 self.chunk.write_opcode(OpCode::BuildStruct, span.line);
@@ -941,8 +946,7 @@ impl Compiler {
                     }
 
                     self.compile_expr(&arm.body)?;
-                    self.chunk.write_opcode(OpCode::SetLocal, span.line);
-                    self.chunk.write(target_slot as u8, span.line);
+                    self.emit_set_local(target_slot, span.line);
                     self.chunk.write_opcode(OpCode::Pop, span.line);
 
                     let bound_count = self.locals.len() - arm_start_locals;
@@ -1010,14 +1014,12 @@ impl Compiler {
         match pattern {
             Pattern::Wildcard => Ok(()),
             Pattern::Variable(name) => {
-                self.chunk.write_opcode(OpCode::GetLocal, line);
-                self.chunk.write(target_slot as u8, line);
+                self.emit_get_local(target_slot, line);
                 self.add_local(name.clone());
                 Ok(())
             }
             Pattern::Literal(lit) => {
-                self.chunk.write_opcode(OpCode::GetLocal, line);
-                self.chunk.write(target_slot as u8, line);
+                self.emit_get_local(target_slot, line);
                 self.compile_literal(lit, line)?;
                 self.chunk.write_opcode(OpCode::Equal, line);
                 let fail_jump = self.emit_jump(OpCode::JumpIfFalse, line);
@@ -1030,8 +1032,7 @@ impl Compiler {
                 end,
                 inclusive,
             } => {
-                self.chunk.write_opcode(OpCode::GetLocal, line);
-                self.chunk.write(target_slot as u8, line);
+                self.emit_get_local(target_slot, line);
                 self.compile_literal(start, line)?;
                 self.compile_literal(end, line)?;
                 self.chunk.write_opcode(OpCode::MatchRange, line);
@@ -1046,8 +1047,7 @@ impl Compiler {
                 variant_name,
                 fields,
             } => {
-                self.chunk.write_opcode(OpCode::GetLocal, line);
-                self.chunk.write(target_slot as u8, line);
+                self.emit_get_local(target_slot, line);
                 let enum_const = match enum_name {
                     Some(e) => self.chunk.add_constant(Value::String(e.clone())),
                     None => self.chunk.add_constant(Value::Null),
@@ -1063,11 +1063,8 @@ impl Compiler {
                 self.chunk.write_opcode(OpCode::Pop, line);
 
                 for (i, f_pat) in fields.iter().enumerate() {
-                    self.chunk.write_opcode(OpCode::GetLocal, line);
-                    self.chunk.write(target_slot as u8, line);
-                    let const_i = self.chunk.add_constant(Value::Int(i as i64));
-                    self.chunk.write_opcode(OpCode::Constant, line);
-                    self.chunk.write(const_i as u8, line);
+                    self.emit_get_local(target_slot, line);
+                    self.emit_constant(Value::Int(i as i64), line);
                     self.chunk.write_opcode(OpCode::IndexGet, line);
 
                     match f_pat {
