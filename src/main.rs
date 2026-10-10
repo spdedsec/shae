@@ -140,8 +140,13 @@ fn run_repl() {
     }
 }
 
-fn run_file(filename: &str) {
-    if let Err(e) = shae::run_file(filename) {
+fn run_file(filename: &str, use_vm: bool) {
+    let res = if use_vm {
+        shae::run_file_vm(filename)
+    } else {
+        shae::run_file(filename)
+    };
+    if let Err(e) = res {
         let source = fs::read_to_string(filename).unwrap_or_default();
         eprintln!("{}", shae::render_error(&e, &source));
         process::exit(1);
@@ -299,11 +304,12 @@ fn find_test_files(dir: &Path, out: &mut Vec<String>) {
                 if name != "target" && name != ".git" && name != "node_modules" {
                     find_test_files(&path, out);
                 }
-            } else if let Some(file_name) = path.file_name().and_then(|n| n.to_str())
-                && file_name.ends_with(".shae")
-                && (file_name.ends_with("_test.shae") || file_name.starts_with("test_"))
-            {
-                out.push(path.to_string_lossy().to_string());
+            } else if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                if file_name.ends_with(".shae")
+                    && (file_name.ends_with("_test.shae") || file_name.starts_with("test_"))
+                {
+                    out.push(path.to_string_lossy().to_string());
+                }
             }
         }
     }
@@ -343,11 +349,11 @@ fn run_bundled_archive(archive: shae::bundle::BundleArchive) {
 }
 
 fn main() {
-    if let Ok(exe_path) = std::env::current_exe()
-        && let Ok(Some(archive)) = shae::bundle::read_embedded_bundle(&exe_path)
-    {
-        run_bundled_archive(archive);
-        return;
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Ok(Some(archive)) = shae::bundle::read_embedded_bundle(&exe_path) {
+            run_bundled_archive(archive);
+            return;
+        }
     }
 
     let args: Vec<String> = env::args().collect();
@@ -486,18 +492,23 @@ fn main() {
             }
         }
         "run" => {
-            if args.len() >= 3 {
-                run_file(&args[2]);
+            let use_vm = args.iter().any(|a| a == "--vm")
+                || std::env::var("SHAE_ENGINE")
+                    .map(|v| v.to_lowercase() == "vm")
+                    .unwrap_or(false);
+            let file_target = args[2..].iter().find(|a| !a.starts_with('-'));
+            if let Some(f) = file_target {
+                run_file(f, use_vm);
             } else if let Ok(manifest) = shae::pkg::PackageManifest::load_from_dir(Path::new(".")) {
                 let entry = Path::new(".").join(&manifest.package.entry);
                 if entry.exists() {
-                    run_file(&entry.to_string_lossy());
+                    run_file(&entry.to_string_lossy(), use_vm);
                 } else {
                     eprintln!("Error: Package entry '{}' not found.", entry.display());
                     process::exit(1);
                 }
             } else {
-                eprintln!("Usage: shae run <file.shae>");
+                eprintln!("Usage: shae run <file.shae> [--vm]");
                 process::exit(1);
             }
         }
@@ -580,7 +591,11 @@ fn main() {
                 show_help();
                 process::exit(1);
             }
-            run_file(filename);
+            let use_vm = args.iter().any(|a| a == "--vm")
+                || std::env::var("SHAE_ENGINE")
+                    .map(|v| v.to_lowercase() == "vm")
+                    .unwrap_or(false);
+            run_file(filename, use_vm);
         }
     }
 }
@@ -594,10 +609,10 @@ fn find_shae_files(dir: &Path, out: &mut Vec<String>) {
                 if name != "target" && name != ".git" && name != "node_modules" {
                     find_shae_files(&path, out);
                 }
-            } else if let Some(file_name) = path.file_name().and_then(|n| n.to_str())
-                && file_name.ends_with(".shae")
-            {
-                out.push(path.to_string_lossy().to_string());
+            } else if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                if file_name.ends_with(".shae") {
+                    out.push(path.to_string_lossy().to_string());
+                }
             }
         }
     }

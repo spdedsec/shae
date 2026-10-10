@@ -2,8 +2,8 @@ use crate::chunk::Chunk;
 use crate::gc::{GcHeap, GcStats};
 use crate::opcode::OpCode;
 use crate::value::{
-    Closure, CompiledFunction, IndexError, Upvalue, UpvalueLocation, Value, resolve_index,
-    resolve_int_index,
+    resolve_index, resolve_int_index, Closure, CompiledFunction, IndexError, Upvalue,
+    UpvalueLocation, Value,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -114,6 +114,30 @@ impl VM {
         self.open_upvalues.clear();
         self.frames.push(CallFrame {
             closure: top_closure,
+            ip: 0,
+            slots_offset: 0,
+            try_handlers: Vec::new(),
+        });
+        self.run()
+    }
+
+    pub fn execute_closure(&mut self, closure: Arc<Closure>, args: Vec<Value>) -> InterpretResult {
+        if args.len() != closure.function.arity {
+            return InterpretResult::RuntimeError(format!(
+                "Expected {} arguments but got {}.",
+                closure.function.arity,
+                args.len()
+            ));
+        }
+        self.stack.clear();
+        self.frames.clear();
+        self.open_upvalues.clear();
+        self.stack.push(Value::Closure(closure.clone()));
+        for arg in args {
+            self.stack.push(arg);
+        }
+        self.frames.push(CallFrame {
+            closure,
             ip: 0,
             slots_offset: 0,
             try_handlers: Vec::new(),
@@ -821,6 +845,16 @@ impl VM {
                             let map = m.read().unwrap();
                             if let Some(v) = map.get(&property) {
                                 self.stack.push(v.clone());
+                            } else if property == "len" {
+                                self.stack.push(Value::Int(map.len() as i64));
+                            } else if matches!(
+                                property.as_str(),
+                                "keys" | "values" | "has" | "contains" | "get" | "delete"
+                            ) {
+                                self.stack.push(Value::BoundMethod {
+                                    object: Box::new(target.clone()),
+                                    method: property,
+                                });
                             } else if is_safe {
                                 self.stack.push(Value::Null);
                             } else {
@@ -1331,6 +1365,50 @@ impl VM {
                 }
                 OpCode::PopTry => {
                     self.frames.last_mut().unwrap().try_handlers.pop();
+                }
+                OpCode::Dup => {
+                    let top = match self.stack.last().cloned() {
+                        Some(v) => v,
+                        None => {
+                            runtime_error!(self, "Stack underflow on Dup".to_string());
+                        }
+                    };
+                    self.stack.push(top);
+                }
+                OpCode::ImportModule => {
+                    let path_val = match self.stack.pop() {
+                        Some(v) => v,
+                        None => {
+                            runtime_error!(self, "Stack underflow on ImportModule".to_string());
+                        }
+                    };
+                    let path_str = match path_val {
+                        Value::String(s) => s,
+                        other => other.to_string(),
+                    };
+                    let mut evaluator = crate::eval::Evaluator::new();
+                    match evaluator.load_module(&path_str, crate::ast::Span::new(1, 1)) {
+                        Ok(mod_val) => self.stack.push(mod_val),
+                        Err(e) => {
+                            runtime_error!(self, e.message);
+                        }
+                    }
+                }
+                OpCode::ImportStar => {
+                    let mod_val = match self.stack.pop() {
+                        Some(v) => v,
+                        None => {
+                            runtime_error!(self, "Stack underflow on ImportStar".to_string());
+                        }
+                    };
+                    if let Value::Map(m) = mod_val {
+                        let map = m.read().unwrap();
+                        for (k, v) in map.iter() {
+                            self.globals.insert(k.clone(), v.clone());
+                        }
+                    } else {
+                        runtime_error!(self, "Import star requires a module map".to_string());
+                    }
                 }
                 OpCode::ForIter => {
                     let seq_local = self.read_byte() as usize;

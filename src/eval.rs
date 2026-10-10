@@ -1,6 +1,6 @@
 use crate::ast::{BinaryOp, Expr, InterpPart, Literal, Program, Span, Stmt, StmtKind, UnaryOp};
 use crate::env::Environment;
-use crate::value::{IndexError, Value, resolve_index, resolve_int_index};
+use crate::value::{resolve_index, resolve_int_index, IndexError, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -223,7 +223,11 @@ impl Evaluator {
                 .or_else(|| {
                     archive.iter().find_map(
                         |(k, v)| {
-                            if k.ends_with(trimmed) { Some(v) } else { None }
+                            if k.ends_with(trimmed) {
+                                Some(v)
+                            } else {
+                                None
+                            }
                         },
                     )
                 })
@@ -1184,6 +1188,16 @@ impl Evaluator {
                         let map = m.read().unwrap();
                         if let Some(v) = map.get(property) {
                             Ok(Some(v.clone()))
+                        } else if property == "len" {
+                            Ok(Some(Value::Int(map.len() as i64)))
+                        } else if matches!(
+                            property.as_str(),
+                            "keys" | "values" | "has" | "contains" | "get" | "delete"
+                        ) {
+                            Ok(Some(Value::BoundMethod {
+                                object: Box::new(Value::Map(m.clone())),
+                                method: property.clone(),
+                            }))
                         } else {
                             if *safe || lenient {
                                 Ok(None)
@@ -1543,6 +1557,49 @@ impl Evaluator {
                     Ok(Signal::Value(v)) => Ok(v),
                     Ok(_) => Ok(Value::Null),
                     Err(e) => Err(e),
+                }
+            }
+            Value::Closure(closure) => {
+                if args.len() != closure.function.arity {
+                    self.depth -= 1;
+                    return Err(RuntimeError::new(format!(
+                        "Expected {} arguments but got {}.",
+                        closure.function.arity,
+                        args.len()
+                    ))
+                    .at(span));
+                }
+                let mut vm = crate::vm::VM::new();
+                for (k, v) in self.global_env.read().unwrap().export_map() {
+                    vm.globals.insert(k, v);
+                }
+                match vm.execute_closure(closure.clone(), args) {
+                    crate::vm::InterpretResult::Ok(val) => Ok(val),
+                    crate::vm::InterpretResult::RuntimeError(msg) => {
+                        Err(RuntimeError::new(msg).at(span))
+                    }
+                    crate::vm::InterpretResult::CompileError => {
+                        Err(RuntimeError::new("Compile error in VM".into()).at(span))
+                    }
+                }
+            }
+            Value::CompiledFunction(func) => {
+                let closure = Arc::new(crate::value::Closure {
+                    function: func.clone(),
+                    upvalues: Vec::new(),
+                });
+                let mut vm = crate::vm::VM::new();
+                for (k, v) in self.global_env.read().unwrap().export_map() {
+                    vm.globals.insert(k, v);
+                }
+                match vm.execute_closure(closure, args) {
+                    crate::vm::InterpretResult::Ok(val) => Ok(val),
+                    crate::vm::InterpretResult::RuntimeError(msg) => {
+                        Err(RuntimeError::new(msg).at(span))
+                    }
+                    crate::vm::InterpretResult::CompileError => {
+                        Err(RuntimeError::new("Compile error in VM".into()).at(span))
+                    }
                 }
             }
             Value::EnumConstructor {
@@ -2292,6 +2349,83 @@ impl Evaluator {
                             Ok(Value::Null)
                         }
                     }
+                    (Value::Map(m), "keys") => {
+                        if !args.is_empty() {
+                            self.depth -= 1;
+                            return Err(
+                                RuntimeError::new("keys() expects 0 arguments".into()).at(span)
+                            );
+                        }
+                        let keys: Vec<Value> = m
+                            .read()
+                            .unwrap()
+                            .keys()
+                            .map(|k| Value::String(k.clone()))
+                            .collect();
+                        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
+                            keys,
+                        ))))
+                    }
+                    (Value::Map(m), "values") => {
+                        if !args.is_empty() {
+                            self.depth -= 1;
+                            return Err(
+                                RuntimeError::new("values() expects 0 arguments".into()).at(span)
+                            );
+                        }
+                        let values: Vec<Value> = m.read().unwrap().values().cloned().collect();
+                        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
+                            values,
+                        ))))
+                    }
+                    (Value::Map(m), "has" | "contains") => {
+                        if args.len() != 1 {
+                            self.depth -= 1;
+                            return Err(
+                                RuntimeError::new("has() expects 1 argument (key)".into()).at(span)
+                            );
+                        }
+                        let key = match &args[0] {
+                            Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        Ok(Value::Bool(m.read().unwrap().contains_key(&key)))
+                    }
+                    (Value::Map(m), "get") => {
+                        if args.is_empty() || args.len() > 2 {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new(
+                                "get() expects 1 or 2 arguments (key, [default])".into(),
+                            )
+                            .at(span));
+                        }
+                        let key = match &args[0] {
+                            Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        let default_val = if args.len() == 2 {
+                            args[1].clone()
+                        } else {
+                            Value::Null
+                        };
+                        let val = m.read().unwrap().get(&key).cloned().unwrap_or(default_val);
+                        Ok(val)
+                    }
+                    (Value::Map(m), "delete") => {
+                        if args.len() != 1 {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new(
+                                "delete() expects 1 argument (key)".into(),
+                            )
+                            .at(span));
+                        }
+                        let key = match &args[0] {
+                            Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        let prev = m.write().unwrap().shift_remove(&key).unwrap_or(Value::Null);
+                        Ok(prev)
+                    }
                     _ => {
                         self.depth -= 1;
                         Err(RuntimeError::new(format!("Method {} not found", method)).at(span))
@@ -2355,7 +2489,11 @@ impl Evaluator {
                     } else {
                         *v >= *s && *v < *e
                     };
-                    if in_range { Some(Vec::new()) } else { None }
+                    if in_range {
+                        Some(Vec::new())
+                    } else {
+                        None
+                    }
                 }
                 (Value::String(v), Literal::String(s), Literal::String(e)) => {
                     let in_range = if *inclusive {
@@ -2363,7 +2501,11 @@ impl Evaluator {
                     } else {
                         v >= s && v < e
                     };
-                    if in_range { Some(Vec::new()) } else { None }
+                    if in_range {
+                        Some(Vec::new())
+                    } else {
+                        None
+                    }
                 }
                 _ => {
                     let v_num = to_f64_val(val);
@@ -2383,7 +2525,11 @@ impl Evaluator {
                         } else {
                             v >= s && v < e
                         };
-                        if in_range { Some(Vec::new()) } else { None }
+                        if in_range {
+                            Some(Vec::new())
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }

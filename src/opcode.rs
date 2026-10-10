@@ -60,6 +60,9 @@ pub enum OpCode {
     MatchError,
     PushTry,
     PopTry,
+    Dup,
+    ImportModule,
+    ImportStar,
 }
 
 impl From<u8> for OpCode {

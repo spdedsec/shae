@@ -539,10 +539,34 @@ impl Compiler {
                 }
                 Ok(())
             }
-            _ => Err(format!(
-                "Statement kind not yet supported in VM compiler: {:?}",
-                stmt.kind
-            )),
+            StmtKind::Use { imports, path } => {
+                let const_idx = self.chunk.add_constant(Value::String(path.clone()));
+                self.chunk.write_opcode(OpCode::Constant, stmt.span.line);
+                self.chunk.write(const_idx as u8, stmt.span.line);
+                self.chunk
+                    .write_opcode(OpCode::ImportModule, stmt.span.line);
+                let mod_slot = self.add_local("(import_mod)".to_string());
+                for item in imports {
+                    if item.name == "*" {
+                        self.chunk.write_opcode(OpCode::GetLocal, stmt.span.line);
+                        self.chunk.write(mod_slot as u8, stmt.span.line);
+                        self.chunk.write_opcode(OpCode::ImportStar, stmt.span.line);
+                    } else {
+                        self.chunk.write_opcode(OpCode::GetLocal, stmt.span.line);
+                        self.chunk.write(mod_slot as u8, stmt.span.line);
+                        let key_const = self.chunk.add_constant(Value::String(item.name.clone()));
+                        self.chunk.write_opcode(OpCode::GetProperty, stmt.span.line);
+                        self.chunk.write(key_const as u8, stmt.span.line);
+                        self.chunk.write(0, stmt.span.line); // not safe
+                        let bind_name = item.alias.as_ref().unwrap_or(&item.name);
+                        self.add_local(bind_name.clone());
+                    }
+                }
+                if is_last {
+                    self.chunk.write_opcode(OpCode::Nil, stmt.span.line);
+                }
+                Ok(())
+            }
         }
     }
 
@@ -680,6 +704,50 @@ impl Compiler {
                     self.chunk.write_opcode(OpCode::Pop, span.line);
                     self.compile_expr(right)?;
                     self.patch_jump(end_jump)?;
+                    Ok(())
+                }
+                BinaryOp::Coalesce => {
+                    self.compile_expr(left)?;
+                    self.chunk.write_opcode(OpCode::Dup, span.line);
+                    self.chunk.write_opcode(OpCode::Nil, span.line);
+                    self.chunk.write_opcode(OpCode::Equal, span.line);
+                    let not_null_jump = self.emit_jump(OpCode::JumpIfFalse, span.line);
+                    // Left was null:
+                    self.chunk.write_opcode(OpCode::Pop, span.line);
+                    self.chunk.write_opcode(OpCode::Pop, span.line);
+                    self.compile_expr(right)?;
+                    let end_jump = self.emit_jump(OpCode::Jump, span.line);
+                    // Left was not null:
+                    self.patch_jump(not_null_jump)?;
+                    self.chunk.write_opcode(OpCode::Pop, span.line);
+                    self.patch_jump(end_jump)?;
+                    Ok(())
+                }
+                BinaryOp::Pipe => {
+                    match &**right {
+                        Expr::Call {
+                            callee,
+                            args,
+                            span: call_span,
+                        } => {
+                            if args.len() + 1 > 255 {
+                                return Err("Argument count exceeds 255 in pipeline call".into());
+                            }
+                            self.compile_expr(callee)?;
+                            self.compile_expr(left)?;
+                            for arg in args {
+                                self.compile_expr(arg)?;
+                            }
+                            self.chunk.write_opcode(OpCode::Call, call_span.line);
+                            self.chunk.write((args.len() + 1) as u8, call_span.line);
+                        }
+                        _ => {
+                            self.compile_expr(right)?;
+                            self.compile_expr(left)?;
+                            self.chunk.write_opcode(OpCode::Call, span.line);
+                            self.chunk.write(1, span.line);
+                        }
+                    }
                     Ok(())
                 }
                 _ => {
@@ -921,7 +989,11 @@ impl Compiler {
                 self.locals.pop();
                 Ok(())
             }
-            _ => Err(format!("Unsupported expression in VM compiler: {:?}", expr)),
+            Expr::Use { path, span } => {
+                self.compile_expr(path)?;
+                self.chunk.write_opcode(OpCode::ImportModule, span.line);
+                Ok(())
+            }
         }
     }
 

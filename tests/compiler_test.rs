@@ -797,3 +797,77 @@ caught
     let result = vm.interpret(chunk);
     assert_eq!(result, InterpretResult::Ok(Value::Bool(true)));
 }
+
+#[test]
+fn test_compiler_pipeline_operator() {
+    let script = r#"
+fn double(x) { return x * 2 }
+fn add(x, y) { return x + y }
+
+let val = 5 |> double |> add(10)
+val
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, InterpretResult::Ok(Value::Int(20)));
+}
+
+#[test]
+fn test_compiler_null_coalescing() {
+    let script = r#"
+let a = null ?? "default"
+let b = "actual" ?? "fallback"
+let c = null ?? null ?? 42
+[a, b, c]
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    match result {
+        InterpretResult::Ok(Value::Array(arr)) => {
+            let b = arr.read().unwrap();
+            assert_eq!(b[0], Value::String("default".into()));
+            assert_eq!(b[1], Value::String("actual".into()));
+            assert_eq!(b[2], Value::Int(42));
+        }
+        other => panic!("Expected array result, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_compiler_map_properties_and_methods() {
+    let script = r#"
+let m = { a: 1, b: 2 }
+let l = m.len
+let has_a = m.has("a")
+let has_z = m.has("z")
+let val_b = m.get("b")
+let val_d = m.get("d", 99)
+[l, has_a, has_z, val_b, val_d]
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let result = vm.interpret(chunk);
+    match result {
+        InterpretResult::Ok(Value::Array(arr)) => {
+            let b = arr.read().unwrap();
+            assert_eq!(b[0], Value::Int(2));
+            assert_eq!(b[1], Value::Bool(true));
+            assert_eq!(b[2], Value::Bool(false));
+            assert_eq!(b[3], Value::Int(2));
+            assert_eq!(b[4], Value::Int(99));
+        }
+        other => panic!("Expected array result, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_compiler_run_vm_api() {
+    let source = "let count = 10\ncount * 3 + 2";
+    let val = shae::run_vm(source).unwrap();
+    assert_eq!(val, Value::Int(32));
+}
