@@ -36,8 +36,9 @@ fn show_help() {
         "  shae install               Install dependencies into .shae/packages and update shae.lock"
     );
     println!("  shae pkg <cmd>             Package manager subcommands (init, add, install)");
-    println!("  shae lsp                   Start the Language Server Protocol daemon (stdio)");
-    println!("  shae bundle <entry.shae>   Bundle application into a standalone executable");
+    println!(
+        "  shae bundle <entry.shae>   Bundle application into a standalone binary (--strip, --no-bytecode)"
+    );
     println!("  shae --joke                Print a programming joke");
     println!("  shae --tip                 Print a Shae tip");
     println!("  shae --version, -V         Show version information");
@@ -388,7 +389,55 @@ fn find_test_files(dir: &Path, out: &mut Vec<String>) {
     }
 }
 
-fn run_bundled_archive(archive: shae::bundle::BundleArchive) {
+fn run_bundled_archive(archive: shae::bundle::BundleArchive, args: &[String]) {
+    let use_vm = should_use_vm(args);
+
+    if use_vm && !archive.bytecode.is_empty() {
+        let entry_bc = archive
+            .bytecode
+            .get(&archive.entry_path)
+            .or_else(|| {
+                let p = Path::new(&archive.entry_path);
+                let name = p.file_name()?.to_str()?;
+                archive.bytecode.get(name)
+            })
+            .or_else(|| {
+                let p = Path::new(&archive.entry_path);
+                let name = p.file_name()?.to_str()?;
+                archive.bytecode.get(&format!("./{}", name))
+            })
+            .cloned();
+
+        if let Some(bc_bytes) = entry_bc {
+            match shae::chunk::Chunk::from_bytes(&bc_bytes) {
+                Ok(chunk) => {
+                    if args.iter().any(|a| a == "--disasm") {
+                        println!("{}", chunk.disassemble(&archive.entry_path));
+                    }
+                    let mut vm = shae::vm::VM::new();
+                    vm.current_file = Some(std::path::PathBuf::from(&archive.entry_path));
+                    vm.embedded_archive = Some(std::sync::Arc::new(archive.files.clone()));
+                    vm.embedded_bytecode = Some(std::sync::Arc::new(archive.bytecode.clone()));
+                    match vm.interpret(chunk) {
+                        shae::vm::InterpretResult::Ok(_) => return,
+                        shae::vm::InterpretResult::RuntimeError(msg) => {
+                            eprintln!("Runtime error: {}", msg);
+                            process::exit(1);
+                        }
+                        shae::vm::InterpretResult::CompileError => {
+                            eprintln!("VM compile error");
+                            process::exit(1);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error deserializing embedded bytecode: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
+    }
+
     let entry_source = archive
         .files
         .get(&archive.entry_path)
@@ -408,15 +457,22 @@ fn run_bundled_archive(archive: shae::bundle::BundleArchive) {
         let mut ev = Evaluator::new();
         ev.current_file = Some(std::path::PathBuf::from(&archive.entry_path));
         ev.embedded_archive = Some(std::sync::Arc::new(archive.files));
+        ev.embedded_bytecode = Some(std::sync::Arc::new(archive.bytecode));
         if let Err(e) = shae::run_in_evaluator(&entry_source, &mut ev) {
             eprintln!("{}", shae::render_error(&e, &entry_source));
             process::exit(1);
         }
     } else {
-        eprintln!(
-            "Error: Bundled entry point '{}' not found in archive",
-            archive.entry_path
-        );
+        if !archive.bytecode.is_empty() {
+            eprintln!(
+                "Error: Source code was stripped from this bundle (--strip). Cannot execute with --engine=ast."
+            );
+        } else {
+            eprintln!(
+                "Error: Bundled entry point '{}' not found in archive",
+                archive.entry_path
+            );
+        }
         process::exit(1);
     }
 }
@@ -424,7 +480,8 @@ fn run_bundled_archive(archive: shae::bundle::BundleArchive) {
 fn main() {
     if let Ok(exe_path) = std::env::current_exe() {
         if let Ok(Some(archive)) = shae::bundle::read_embedded_bundle(&exe_path) {
-            run_bundled_archive(archive);
+            let args: Vec<String> = env::args().collect();
+            run_bundled_archive(archive, &args);
             return;
         }
     }
@@ -681,19 +738,33 @@ fn main() {
         }
         "bundle" => {
             if args.len() < 3 {
-                eprintln!("Usage: shae bundle <entry.shae> [-o <output_binary>]");
+                eprintln!(
+                    "Usage: shae bundle <entry.shae> [-o <output_binary>] [--strip] [--no-bytecode]"
+                );
                 process::exit(1);
             }
             let entry = Path::new(&args[2]);
             let mut output = None;
+            let mut strip_source = false;
+            let mut compile_bytecode = true;
             let mut i = 3;
             while i < args.len() {
                 if (args[i] == "-o" || args[i] == "--output") && i + 1 < args.len() {
                     output = Some(args[i + 1].clone());
                     i += 2;
+                } else if args[i] == "--strip" {
+                    strip_source = true;
+                    i += 1;
+                } else if args[i] == "--no-bytecode" {
+                    compile_bytecode = false;
+                    i += 1;
                 } else {
                     i += 1;
                 }
+            }
+            if strip_source && !compile_bytecode {
+                eprintln!("Error: Cannot specify both --strip and --no-bytecode");
+                process::exit(1);
             }
             let out_path = output.unwrap_or_else(|| {
                 let stem = entry
@@ -702,8 +773,24 @@ fn main() {
                     .unwrap_or("bundle");
                 format!("{}.bin", stem)
             });
-            match shae::bundle::create_standalone_binary(entry, Path::new(&out_path)) {
-                Ok(_) => println!("✨ Successfully created standalone bundle: {}", out_path),
+            match shae::bundle::create_standalone_binary_opts(
+                entry,
+                Path::new(&out_path),
+                compile_bytecode,
+                strip_source,
+            ) {
+                Ok(_) => {
+                    let mode_desc = match (compile_bytecode, strip_source) {
+                        (true, true) => " (bytecode only, source stripped)",
+                        (true, false) => " (bytecode + AST fallback)",
+                        (false, false) => " (source AST only)",
+                        _ => "",
+                    };
+                    println!(
+                        "✨ Successfully created standalone bundle: {}{}",
+                        out_path, mode_desc
+                    );
+                }
                 Err(e) => {
                     eprintln!("Error bundling application: {}", e);
                     process::exit(1);

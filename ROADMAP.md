@@ -104,4 +104,15 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 - [x] REPL meta-commands: `:help`, `:disasm <code>`, `:globals`, `:reset`, and live engine toggling `:engine [vm|ast]`.
 - [x] Dual-engine compatibility with seamless fallback to AST interpreter via `--engine=ast`.
 
+---
+
+### **Chunk 13: Standalone Bundler Bytecode Integration (`shae bundle`)** *(Completed)*
+- [x] Precompiled bytecode packaging: `shae bundle` compiles entrypoint and all dependency modules into ahead-of-time `.shaec` bytecode chunks.
+- [x] Zero-overhead execution: Standalone executables run on the Bytecode VM by default with zero lexing or parsing overhead.
+- [x] Source protection (`--strip`): Omit plaintext source code from bundled binaries to distribute pure bytecode executables.
+- [x] AST-only mode (`--no-bytecode`): Flag to bundle raw source code without AOT compilation.
+- [x] Dual-engine compatibility: Bundled executables support `--engine=ast` fallback when source is retained, and disassembling embedded chunks via `--disasm`.
+- [x] 100% backward compatibility with legacy bundle archive JSON schemas.
+
+
 

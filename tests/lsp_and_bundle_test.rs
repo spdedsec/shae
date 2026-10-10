@@ -311,3 +311,120 @@ fn test_standalone_bundle_executes_after_source_removal() {
         .expect("execution should succeed without source files");
     assert_eq!(val, shae::value::Value::Int(42));
 }
+
+#[test]
+fn test_bundle_bytecode_execution() {
+    let temp = TempDir::new("bundle_bc");
+    let main_file = temp.path.join("main.shae");
+    let helper_file = temp.path.join("helper.shae");
+
+    fs::write(&helper_file, "fn add(a, b) { a + b }\n").unwrap();
+    fs::write(
+        &main_file,
+        "use { add } from \"./helper.shae\"\nlet res = add(10, 32)\nres\n",
+    )
+    .unwrap();
+
+    let archive = bundle::collect_bundle(&main_file).expect("collect_bundle failed");
+    assert!(archive.is_bytecode);
+    assert!(!archive.bytecode.is_empty());
+    assert!(!archive.files.is_empty());
+
+    // Verify bytecode payload has magic header
+    let entry_bc = archive.bytecode.get(&archive.entry_path).unwrap();
+    assert!(entry_bc.starts_with(shae::chunk::BYTECODE_MAGIC));
+
+    // Remove source files from disk
+    fs::remove_file(&main_file).unwrap();
+    fs::remove_file(&helper_file).unwrap();
+
+    // Execute directly in Bytecode VM with embedded archive and bytecode maps
+    let chunk = shae::chunk::Chunk::from_bytes(entry_bc).expect("valid chunk");
+    let mut vm = shae::vm::VM::new();
+    vm.current_file = Some(std::path::PathBuf::from(&archive.entry_path));
+    vm.embedded_archive = Some(std::sync::Arc::new(archive.files.clone()));
+    vm.embedded_bytecode = Some(std::sync::Arc::new(archive.bytecode.clone()));
+
+    let res = vm.interpret(chunk);
+    assert_eq!(res, shae::vm::InterpretResult::Ok(shae::value::Value::Int(42)));
+}
+
+#[test]
+fn test_bundle_strip_source() {
+    let temp = TempDir::new("bundle_strip");
+    let main_file = temp.path.join("main.shae");
+    let helper_file = temp.path.join("helper.shae");
+
+    fs::write(&helper_file, "fn compute() { 100 * 2 }\n").unwrap();
+    fs::write(
+        &main_file,
+        "use { compute } from \"./helper.shae\"\ncompute()\n",
+    )
+    .unwrap();
+
+    // Bundle with strip_source = true
+    let archive = bundle::collect_bundle_opts(&main_file, true, true)
+        .expect("collect_bundle_opts with strip should succeed");
+
+    assert!(archive.is_bytecode);
+    assert!(archive.files.is_empty(), "Source code must be stripped");
+    assert!(!archive.bytecode.is_empty(), "Bytecode must be present");
+
+    // Remove source files
+    fs::remove_file(&main_file).unwrap();
+    fs::remove_file(&helper_file).unwrap();
+
+    // Execute purely from embedded bytecode
+    let entry_bc = archive.bytecode.get(&archive.entry_path).unwrap();
+    let chunk = shae::chunk::Chunk::from_bytes(entry_bc).expect("valid chunk");
+    let mut vm = shae::vm::VM::new();
+    vm.current_file = Some(std::path::PathBuf::from(&archive.entry_path));
+    vm.embedded_bytecode = Some(std::sync::Arc::new(archive.bytecode.clone()));
+
+    let res = vm.interpret(chunk);
+    assert_eq!(res, shae::vm::InterpretResult::Ok(shae::value::Value::Int(200)));
+}
+
+#[test]
+fn test_bundle_no_bytecode() {
+    let temp = TempDir::new("bundle_no_bc");
+    let main_file = temp.path.join("main.shae");
+
+    fs::write(&main_file, "let x = 7 * 6\nx\n").unwrap();
+
+    let archive = bundle::collect_bundle_opts(&main_file, false, false)
+        .expect("collect_bundle_opts with no-bytecode should succeed");
+
+    assert!(!archive.is_bytecode);
+    assert!(archive.bytecode.is_empty());
+    assert!(!archive.files.is_empty());
+
+    let entry_source = archive.files.get(&archive.entry_path).unwrap();
+    let mut ev = shae::eval::Evaluator::new();
+    let val = shae::run_in_evaluator(entry_source, &mut ev).unwrap();
+    assert_eq!(val, shae::value::Value::Int(42));
+}
+
+#[test]
+fn test_bundle_backward_compatibility_deserialization() {
+    // Older bundle archives lack the "bytecode" and "is_bytecode" fields in JSON
+    let legacy_json = r#"{
+        "entry_path": "/app/main.shae",
+        "files": {
+            "/app/main.shae": "let val = 123\nval\n"
+        }
+    }"#;
+
+    let archive: bundle::BundleArchive = serde_json::from_str(legacy_json).unwrap();
+    assert_eq!(archive.entry_path, "/app/main.shae");
+    assert_eq!(archive.files.len(), 1);
+    assert!(archive.bytecode.is_empty());
+    assert!(!archive.is_bytecode);
+
+    let mut ev = shae::eval::Evaluator::new();
+    ev.embedded_archive = Some(std::sync::Arc::new(archive.files.clone()));
+    let src = archive.files.get(&archive.entry_path).unwrap();
+    let val = shae::run_in_evaluator(src, &mut ev).unwrap();
+    assert_eq!(val, shae::value::Value::Int(123));
+}
+

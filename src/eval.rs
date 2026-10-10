@@ -102,6 +102,7 @@ pub struct Evaluator {
     pub current_file: Option<PathBuf>,
     pub module_cache: Arc<RwLock<HashMap<String, Value>>>,
     pub embedded_archive: Option<Arc<HashMap<String, String>>>,
+    pub embedded_bytecode: Option<Arc<HashMap<String, Vec<u8>>>>,
 }
 
 impl Evaluator {
@@ -115,6 +116,7 @@ impl Evaluator {
             current_file: None,
             module_cache: Arc::new(RwLock::new(HashMap::new())),
             embedded_archive: None,
+            embedded_bytecode: None,
         }
     }
 
@@ -130,6 +132,7 @@ impl Evaluator {
             current_file: None,
             module_cache: Arc::new(RwLock::new(HashMap::new())),
             embedded_archive: None,
+            embedded_bytecode: None,
         }
     }
 
@@ -145,6 +148,7 @@ impl Evaluator {
             current_file,
             module_cache,
             embedded_archive: None,
+            embedded_bytecode: None,
         }
     }
 
@@ -222,6 +226,31 @@ impl Evaluator {
             return Ok(cached.clone());
         }
 
+        // Check embedded bytecode for standalone bundles
+        let maybe_archive_bytecode = if let Some(bc_map) = &self.embedded_bytecode {
+            let norm_str = norm_resolved.to_string_lossy().to_string();
+            let raw_str = resolved_path.to_string_lossy().to_string();
+            let trimmed = path_str.strip_prefix("./").unwrap_or(path_str);
+            bc_map
+                .get(&norm_str)
+                .or_else(|| bc_map.get(&raw_str))
+                .or_else(|| bc_map.get(&canonical_key))
+                .or_else(|| bc_map.get(path_str))
+                .or_else(|| bc_map.get(trimmed))
+                .or_else(|| {
+                    bc_map.iter().find_map(|(k, v)| {
+                        if k.ends_with(trimmed) {
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .cloned()
+        } else {
+            None
+        };
+
         // Check embedded archive for standalone bundles
         let maybe_archive_source = if let Some(archive) = &self.embedded_archive {
             let norm_str = norm_resolved.to_string_lossy().to_string();
@@ -258,7 +287,9 @@ impl Evaluator {
             Err(_) => Some(norm_resolved),
         };
 
-        let file_bytes = if let Some(s) = maybe_archive_source {
+        let file_bytes = if let Some(bc) = maybe_archive_bytecode {
+            bc
+        } else if let Some(s) = maybe_archive_source {
             s.into_bytes()
         } else {
             match std::fs::read(&resolved_path) {
@@ -292,6 +323,8 @@ impl Evaluator {
             };
             let mut vm = crate::vm::VM::new();
             vm.current_file = child_file;
+            vm.embedded_archive = self.embedded_archive.clone();
+            vm.embedded_bytecode = self.embedded_bytecode.clone();
             match vm.interpret(chunk) {
                 crate::vm::InterpretResult::Ok(_) => {
                     let mut guard = export_map.write().unwrap();
@@ -349,6 +382,7 @@ impl Evaluator {
             child_file,
         );
         ev.embedded_archive = self.embedded_archive.clone();
+        ev.embedded_bytecode = self.embedded_bytecode.clone();
 
         let tokens = match crate::lexer::tokenize(&source) {
             Ok(t) => t,

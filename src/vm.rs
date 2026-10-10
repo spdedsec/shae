@@ -29,6 +29,8 @@ pub struct VM {
     pub open_upvalues: Vec<Arc<RwLock<Upvalue>>>,
     pub heap: GcHeap,
     pub current_file: Option<std::path::PathBuf>,
+    pub embedded_archive: Option<Arc<HashMap<String, String>>>,
+    pub embedded_bytecode: Option<Arc<HashMap<String, Vec<u8>>>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -68,6 +70,8 @@ impl VM {
             open_upvalues: Vec::new(),
             heap: GcHeap::new(),
             current_file: None,
+            embedded_archive: None,
+            embedded_bytecode: None,
         }
     }
 
@@ -1419,6 +1423,8 @@ impl VM {
                     };
                     let mut evaluator = crate::eval::Evaluator::new();
                     evaluator.current_file = self.current_file.clone();
+                    evaluator.embedded_archive = self.embedded_archive.clone();
+                    evaluator.embedded_bytecode = self.embedded_bytecode.clone();
                     match evaluator.load_module(&path_str, crate::ast::Span::new(1, 1)) {
                         Ok(mod_val) => self.stack.push(mod_val),
                         Err(e) => {

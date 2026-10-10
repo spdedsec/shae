@@ -171,7 +171,7 @@ Shae ships with an all-in-one developer toolchain:
 | `shae pkg init [name]` | Initialize a new package with `shae.toml` manifest |
 | `shae pkg add <dep>` | Add a dependency (path or Git repository) |
 | `shae pkg install` | Resolve and install dependencies into `.shae/packages` |
-| `shae bundle <file> -o <bin>` | Bundle an entire app and its dependencies into a standalone executable |
+| `shae bundle <file> [-o <bin>] [--strip] [--no-bytecode]` | Bundle app and its dependencies into a standalone binary with embedded precompiled bytecode |
 | `shae lsp` | Run the Language Server Protocol daemon for editor integration |
 | `shae test [path]` | Run Shae tests (`*_test.shae`) (defaults to Bytecode VM; use `--engine=ast` for AST) |
 | `shae repl` | Start interactive REPL (defaults to Bytecode VM; use `--engine=ast` for AST) |
