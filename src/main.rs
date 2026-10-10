@@ -23,7 +23,10 @@ fn show_help() {
     println!(
         "  shae run [file.shae]       Run a Shae script (or package entrypoint from shae.toml) (default: VM; use --engine=ast, --disasm)"
     );
-    println!("  shae disasm <file.shae>    Disassemble a Shae script to bytecode");
+    println!(
+        "  shae compile <file.shae>   Compile a Shae script to bytecode (.shaec) (options: -o, --disasm)"
+    );
+    println!("  shae disasm <file>         Disassemble a Shae script or .shaec to bytecode");
     println!("  shae check <file.shae>     Lint and check syntax/declarations of a Shae script");
     println!(
         "  shae test [path]           Run Shae tests (*_test.shae) (default: VM; use --engine=ast)"
@@ -164,32 +167,103 @@ fn should_use_vm(args: &[String]) -> bool {
     true
 }
 
-fn disasm_file(filename: &str) {
-    let source = match fs::read_to_string(filename) {
+fn compile_file(source_file: &str, output_file: Option<&str>, disasm: bool) {
+    let source = match fs::read_to_string(source_file) {
         Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error reading file '{}': {}", source_file, e);
+            process::exit(1);
+        }
+    };
+    let bytecode = match shae::compile_source_to_bytecode(&source) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("{}", shae::render_error(&e, &source));
+            process::exit(1);
+        }
+    };
+    let default_out = {
+        let path = Path::new(source_file);
+        let mut out = path.to_path_buf();
+        out.set_extension("shaec");
+        out.to_string_lossy().to_string()
+    };
+    let target_out = output_file.unwrap_or(&default_out);
+    if let Err(e) = fs::write(target_out, &bytecode) {
+        eprintln!("Error writing bytecode to '{}': {}", target_out, e);
+        process::exit(1);
+    }
+    println!(
+        "✨ Compiled '{}' -> '{}' ({} bytes)",
+        source_file,
+        target_out,
+        bytecode.len()
+    );
+    if disasm {
+        match shae::disassemble_bytecode(&bytecode, target_out) {
+            Ok(d) => println!("\n{}", d),
+            Err(e) => eprintln!("Disassembly error: {}", e),
+        }
+    }
+}
+
+fn disasm_file(filename: &str) {
+    let bytes = match fs::read(filename) {
+        Ok(b) => b,
         Err(e) => {
             eprintln!("Error reading file '{}': {}", filename, e);
             process::exit(1);
         }
     };
-    match shae::disassemble_source(&source) {
-        Ok(disasm) => print!("{}", disasm),
-        Err(e) => {
-            eprintln!("{}", shae::render_error(&e, &source));
-            process::exit(1);
+    if bytes.starts_with(shae::chunk::BYTECODE_MAGIC) || filename.ends_with(".shaec") {
+        match shae::disassemble_bytecode(&bytes, filename) {
+            Ok(disasm) => print!("{}", disasm),
+            Err(e) => {
+                eprintln!("Error disassembling bytecode '{}': {}", filename, e);
+                process::exit(1);
+            }
+        }
+    } else {
+        let source = match String::from_utf8(bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error: File '{}' is not valid UTF-8: {}", filename, e);
+                process::exit(1);
+            }
+        };
+        match shae::disassemble_source(&source) {
+            Ok(disasm) => print!("{}", disasm),
+            Err(e) => {
+                eprintln!("{}", shae::render_error(&e, &source));
+                process::exit(1);
+            }
         }
     }
 }
 
 fn run_file(filename: &str, use_vm: bool) {
+    let is_bytecode = filename.ends_with(".shaec")
+        || fs::read(filename)
+            .map(|b| b.starts_with(shae::chunk::BYTECODE_MAGIC))
+            .unwrap_or(false);
+    if is_bytecode && !use_vm {
+        eprintln!(
+            "Error: Cannot run precompiled bytecode with AST interpreter (--engine=ast). Use the VM."
+        );
+        process::exit(1);
+    }
     let res = if use_vm {
         shae::run_file_vm(filename)
     } else {
         shae::run_file(filename)
     };
     if let Err(e) = res {
-        let source = fs::read_to_string(filename).unwrap_or_default();
-        eprintln!("{}", shae::render_error(&e, &source));
+        if is_bytecode {
+            eprintln!("{}", e);
+        } else {
+            let source = fs::read_to_string(filename).unwrap_or_default();
+            eprintln!("{}", shae::render_error(&e, &source));
+        }
         process::exit(1);
     }
 }
@@ -563,12 +637,46 @@ fn main() {
                 process::exit(1);
             }
         }
+        "compile" => {
+            if args.len() < 3 {
+                eprintln!("Usage: shae compile <file.shae> [-o <output.shaec>] [--disasm]");
+                process::exit(1);
+            }
+            let mut source_file = None;
+            let mut output_file = None;
+            let disasm = args.iter().any(|a| a == "--disasm");
+            let mut i = 2;
+            while i < args.len() {
+                if args[i] == "-o" || args[i] == "--output" {
+                    if i + 1 < args.len() {
+                        output_file = Some(args[i + 1].clone());
+                        i += 2;
+                    } else {
+                        eprintln!("Error: -o requires an output path");
+                        process::exit(1);
+                    }
+                } else if args[i] == "--disasm" {
+                    i += 1;
+                } else if !args[i].starts_with('-') && source_file.is_none() {
+                    source_file = Some(args[i].clone());
+                    i += 1;
+                } else {
+                    i += 1;
+                }
+            }
+            if let Some(src) = source_file {
+                compile_file(&src, output_file.as_deref(), disasm);
+            } else {
+                eprintln!("Usage: shae compile <file.shae> [-o <output.shaec>] [--disasm]");
+                process::exit(1);
+            }
+        }
         "disasm" => {
             let file_target = args[2..].iter().find(|a| !a.starts_with('-'));
             if let Some(f) = file_target {
                 disasm_file(f);
             } else {
-                eprintln!("Usage: shae disasm <file.shae>");
+                eprintln!("Usage: shae disasm <file.shae|file.shaec>");
                 process::exit(1);
             }
         }

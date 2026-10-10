@@ -162,8 +162,9 @@ Shae ships with an all-in-one developer toolchain:
 
 | Command | Description |
 |---|---|
-| `shae run <file.shae>` | Run a script (defaults to high-performance Bytecode VM; use `--engine=ast` for AST) |
-| `shae disasm <file.shae>` | Disassemble script into human-readable bytecode instructions and constant pool |
+| `shae run <file.shae\|file.shaec>` | Run a script or precompiled bytecode (defaults to Bytecode VM; use `--engine=ast` for AST) |
+| `shae compile <file.shae>` | Compile source script into ahead-of-time bytecode binary (`.shaec`) |
+| `shae disasm <file.shae\|file.shaec>` | Disassemble script or compiled bytecode into human-readable instructions and constant pool |
 | `shae fmt <file.shae>` | Format source files canonically (4-space indentation) |
 | `shae fmt --check <file>` | Verify formatting without modifying files |
 | `shae check <file.shae>` | Static linter checking for unused variables, dead code, and shadowing |

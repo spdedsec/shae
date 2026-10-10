@@ -1,5 +1,11 @@
 use crate::opcode::OpCode;
-use crate::value::Value;
+use crate::value::{CompiledFunction, UpvalueDesc, Value};
+use indexmap::IndexMap;
+use std::io::{self, Read, Write};
+use std::sync::{Arc, RwLock};
+
+pub const BYTECODE_MAGIC: &[u8; 5] = b"\x7fSHAE";
+pub const BYTECODE_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chunk {
@@ -408,4 +414,320 @@ impl Chunk {
             }
         }
     }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        self.serialize(&mut buf).expect("in-memory write cannot fail");
+        buf
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        let mut cursor = io::Cursor::new(bytes);
+        Self::deserialize(&mut cursor)
+    }
+
+    pub fn serialize<W: Write>(&self, w: &mut W) -> io::Result<()> {
+        w.write_all(BYTECODE_MAGIC)?;
+        w.write_all(&BYTECODE_VERSION.to_le_bytes())?;
+        w.write_all(&0u16.to_le_bytes())?; // flags / reserved
+        self.serialize_inner(w)
+    }
+
+    pub fn deserialize<R: Read>(r: &mut R) -> Result<Self, String> {
+        let mut magic = [0u8; 5];
+        r.read_exact(&mut magic)
+            .map_err(|e| format!("Failed to read bytecode magic: {}", e))?;
+        if &magic != BYTECODE_MAGIC {
+            return Err("Invalid bytecode file: magic header mismatch (expected \\x7fSHAE)".to_string());
+        }
+
+        let mut ver_bytes = [0u8; 2];
+        r.read_exact(&mut ver_bytes)
+            .map_err(|e| format!("Failed to read bytecode version: {}", e))?;
+        let version = u16::from_le_bytes(ver_bytes);
+        if version != BYTECODE_VERSION {
+            return Err(format!(
+                "Unsupported bytecode version {} (supported: {})",
+                version, BYTECODE_VERSION
+            ));
+        }
+
+        let mut flags = [0u8; 2];
+        r.read_exact(&mut flags)
+            .map_err(|e| format!("Failed to read bytecode flags: {}", e))?;
+
+        Self::deserialize_inner(r)
+    }
+
+    pub fn serialize_inner<W: Write>(&self, w: &mut W) -> io::Result<()> {
+        // 1. Code
+        w.write_all(&(self.code.len() as u32).to_le_bytes())?;
+        w.write_all(&self.code)?;
+
+        // 2. Lines
+        w.write_all(&(self.lines.len() as u32).to_le_bytes())?;
+        for &line in &self.lines {
+            w.write_all(&(line as u32).to_le_bytes())?;
+        }
+
+        // 3. Constants
+        w.write_all(&(self.constants.len() as u32).to_le_bytes())?;
+        for c in &self.constants {
+            Self::serialize_value(c, w)?;
+        }
+        Ok(())
+    }
+
+    pub fn deserialize_inner<R: Read>(r: &mut R) -> Result<Self, String> {
+        // 1. Code
+        let code_len = read_u32(r)? as usize;
+        if code_len > 100_000_000 {
+            return Err("Bytecode code segment exceeds 100MB limit".to_string());
+        }
+        let mut code = vec![0u8; code_len];
+        r.read_exact(&mut code)
+            .map_err(|e| format!("Failed to read bytecode instructions: {}", e))?;
+
+        // 2. Lines
+        let lines_len = read_u32(r)? as usize;
+        if lines_len > 100_000_000 {
+            return Err("Bytecode line numbers segment exceeds limit".to_string());
+        }
+        let mut lines = Vec::with_capacity(lines_len);
+        for _ in 0..lines_len {
+            lines.push(read_u32(r)? as usize);
+        }
+
+        // 3. Constants
+        let const_len = read_u32(r)? as usize;
+        if const_len > 10_000_000 {
+            return Err("Bytecode constants pool exceeds limit".to_string());
+        }
+        let mut constants = Vec::with_capacity(const_len);
+        for _ in 0..const_len {
+            constants.push(Self::deserialize_value(r)?);
+        }
+
+        Ok(Chunk {
+            code,
+            constants,
+            lines,
+        })
+    }
+
+    fn serialize_value<W: Write>(val: &Value, w: &mut W) -> io::Result<()> {
+        match val {
+            Value::Null => {
+                w.write_all(&[0u8])?;
+            }
+            Value::Bool(b) => {
+                w.write_all(&[1u8, if *b { 1 } else { 0 }])?;
+            }
+            Value::Int(n) => {
+                w.write_all(&[2u8])?;
+                w.write_all(&n.to_le_bytes())?;
+            }
+            Value::Float(n) | Value::Number(n) => {
+                w.write_all(&[3u8])?;
+                w.write_all(&n.to_bits().to_le_bytes())?;
+            }
+            Value::String(s) => {
+                w.write_all(&[4u8])?;
+                let bytes = s.as_bytes();
+                w.write_all(&(bytes.len() as u32).to_le_bytes())?;
+                w.write_all(bytes)?;
+            }
+            Value::CompiledFunction(func) => {
+                w.write_all(&[5u8])?;
+                w.write_all(&(func.arity as u32).to_le_bytes())?;
+                if let Some(name) = &func.name {
+                    w.write_all(&[1u8])?;
+                    let bytes = name.as_bytes();
+                    w.write_all(&(bytes.len() as u32).to_le_bytes())?;
+                    w.write_all(bytes)?;
+                } else {
+                    w.write_all(&[0u8])?;
+                }
+                w.write_all(&(func.upvalues.len() as u32).to_le_bytes())?;
+                for uv in &func.upvalues {
+                    w.write_all(&[uv.index, if uv.is_local { 1 } else { 0 }])?;
+                }
+                func.chunk.serialize_inner(w)?;
+            }
+            Value::StructDef { name, fields } => {
+                w.write_all(&[6u8])?;
+                let n_bytes = name.as_bytes();
+                w.write_all(&(n_bytes.len() as u32).to_le_bytes())?;
+                w.write_all(n_bytes)?;
+                w.write_all(&(fields.len() as u32).to_le_bytes())?;
+                for f in fields {
+                    let f_bytes = f.as_bytes();
+                    w.write_all(&(f_bytes.len() as u32).to_le_bytes())?;
+                    w.write_all(f_bytes)?;
+                }
+            }
+            Value::EnumDef { name, variants } => {
+                w.write_all(&[7u8])?;
+                let n_bytes = name.as_bytes();
+                w.write_all(&(n_bytes.len() as u32).to_le_bytes())?;
+                w.write_all(n_bytes)?;
+                w.write_all(&(variants.len() as u32).to_le_bytes())?;
+                for (vname, f_list) in variants.iter() {
+                    let v_bytes = vname.as_bytes();
+                    w.write_all(&(v_bytes.len() as u32).to_le_bytes())?;
+                    w.write_all(v_bytes)?;
+                    w.write_all(&(f_list.len() as u32).to_le_bytes())?;
+                    for f in f_list {
+                        let f_bytes = f.as_bytes();
+                        w.write_all(&(f_bytes.len() as u32).to_le_bytes())?;
+                        w.write_all(f_bytes)?;
+                    }
+                }
+            }
+            Value::Array(arr) => {
+                w.write_all(&[8u8])?;
+                let guard = arr.read().unwrap();
+                w.write_all(&(guard.len() as u32).to_le_bytes())?;
+                for elem in guard.iter() {
+                    Self::serialize_value(elem, w)?;
+                }
+            }
+            Value::Map(map) => {
+                w.write_all(&[9u8])?;
+                let guard = map.read().unwrap();
+                w.write_all(&(guard.len() as u32).to_le_bytes())?;
+                for (k, v) in guard.iter() {
+                    let k_bytes = k.as_bytes();
+                    w.write_all(&(k_bytes.len() as u32).to_le_bytes())?;
+                    w.write_all(k_bytes)?;
+                    Self::serialize_value(v, w)?;
+                }
+            }
+            other => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Cannot serialize non-constant value: {}", other.type_name()),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn deserialize_value<R: Read>(r: &mut R) -> Result<Value, String> {
+        let tag = read_u8(r)?;
+        match tag {
+            0 => Ok(Value::Null),
+            1 => {
+                let b = read_u8(r)? != 0;
+                Ok(Value::Bool(b))
+            }
+            2 => {
+                let mut b = [0u8; 8];
+                r.read_exact(&mut b)
+                    .map_err(|e| format!("Failed to read int: {}", e))?;
+                Ok(Value::Int(i64::from_le_bytes(b)))
+            }
+            3 => {
+                let mut b = [0u8; 8];
+                r.read_exact(&mut b)
+                    .map_err(|e| format!("Failed to read float: {}", e))?;
+                Ok(Value::Float(f64::from_bits(u64::from_le_bytes(b))))
+            }
+            4 => {
+                let s = read_string(r)?;
+                Ok(Value::String(s))
+            }
+            5 => {
+                let arity = read_u32(r)? as usize;
+                let has_name = read_u8(r)? != 0;
+                let name = if has_name {
+                    Some(read_string(r)?)
+                } else {
+                    None
+                };
+                let uv_len = read_u32(r)? as usize;
+                let mut upvalues = Vec::with_capacity(uv_len);
+                for _ in 0..uv_len {
+                    let index = read_u8(r)?;
+                    let is_local = read_u8(r)? != 0;
+                    upvalues.push(UpvalueDesc { index, is_local });
+                }
+                let chunk = Self::deserialize_inner(r)?;
+                Ok(Value::CompiledFunction(Arc::new(CompiledFunction {
+                    arity,
+                    chunk,
+                    name,
+                    upvalues,
+                })))
+            }
+            6 => {
+                let name = read_string(r)?;
+                let fields_len = read_u32(r)? as usize;
+                let mut fields = Vec::with_capacity(fields_len);
+                for _ in 0..fields_len {
+                    fields.push(read_string(r)?);
+                }
+                Ok(Value::StructDef { name, fields })
+            }
+            7 => {
+                let name = read_string(r)?;
+                let var_len = read_u32(r)? as usize;
+                let mut variants = IndexMap::new();
+                for _ in 0..var_len {
+                    let vname = read_string(r)?;
+                    let f_len = read_u32(r)? as usize;
+                    let mut f_list = Vec::with_capacity(f_len);
+                    for _ in 0..f_len {
+                        f_list.push(read_string(r)?);
+                    }
+                    variants.insert(vname, f_list);
+                }
+                Ok(Value::EnumDef {
+                    name,
+                    variants: Arc::new(variants),
+                })
+            }
+            8 => {
+                let arr_len = read_u32(r)? as usize;
+                let mut items = Vec::with_capacity(arr_len);
+                for _ in 0..arr_len {
+                    items.push(Self::deserialize_value(r)?);
+                }
+                Ok(Value::Array(Arc::new(RwLock::new(items))))
+            }
+            9 => {
+                let map_len = read_u32(r)? as usize;
+                let mut map = IndexMap::new();
+                for _ in 0..map_len {
+                    let key = read_string(r)?;
+                    let val = Self::deserialize_value(r)?;
+                    map.insert(key, val);
+                }
+                Ok(Value::Map(Arc::new(RwLock::new(map))))
+            }
+            other => Err(format!("Corrupt bytecode: unrecognized constant tag {}", other)),
+        }
+    }
+}
+
+fn read_u8<R: Read>(r: &mut R) -> Result<u8, String> {
+    let mut b = [0u8; 1];
+    r.read_exact(&mut b).map_err(|e| format!("Unexpected EOF or read error: {}", e))?;
+    Ok(b[0])
+}
+
+fn read_u32<R: Read>(r: &mut R) -> Result<u32, String> {
+    let mut b = [0u8; 4];
+    r.read_exact(&mut b).map_err(|e| format!("Unexpected EOF or read error: {}", e))?;
+    Ok(u32::from_le_bytes(b))
+}
+
+fn read_string<R: Read>(r: &mut R) -> Result<String, String> {
+    let len = read_u32(r)? as usize;
+    if len > 50_000_000 {
+        return Err("String in bytecode exceeds 50MB limit".to_string());
+    }
+    let mut buf = vec![0u8; len];
+    r.read_exact(&mut buf).map_err(|e| format!("Failed to read string data: {}", e))?;
+    String::from_utf8(buf).map_err(|e| format!("Invalid UTF-8 in bytecode string: {}", e))
 }

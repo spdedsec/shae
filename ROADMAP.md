@@ -86,3 +86,13 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 - [x] Language Server Protocol daemon (`shae lsp`) with diagnostics and auto-completion.
 - [x] Single-binary standalone application bundler (`shae bundle`).
 
+---
+
+### **Chunk 11: Bytecode Compilation & Serialization (`shae compile` / `.shaec`)** *(Completed)*
+- [x] Compact binary bytecode serialization format with magic header (`\x7fSHAE`) and versioning.
+- [x] Constant pool serialization supporting primitive types, strings, structs, enums, arrays, and compiled functions.
+- [x] CLI compiler: `shae compile <file.shae> [-o <out.shaec>] [--disasm]`.
+- [x] Direct bytecode execution (`shae run file.shaec` and `shae file.shaec`).
+- [x] Bytecode module resolution and imports (`use { func } from "./module.shaec"`).
+- [x] Precompiled bytecode disassembler (`shae disasm file.shaec`).
+

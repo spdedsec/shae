@@ -424,6 +424,26 @@ impl PartialEq for Value {
                     values: vals2,
                 },
             ) => e1 == e2 && v1 == v2 && vals1 == vals2,
+            (
+                Value::StructDef {
+                    name: n1,
+                    fields: f1,
+                },
+                Value::StructDef {
+                    name: n2,
+                    fields: f2,
+                },
+            ) => n1 == n2 && f1 == f2,
+            (
+                Value::EnumDef {
+                    name: n1,
+                    variants: v1,
+                },
+                Value::EnumDef {
+                    name: n2,
+                    variants: v2,
+                },
+            ) => n1 == n2 && v1 == v2,
             (Value::Task(a), Value::Task(b)) => Arc::ptr_eq(a, b),
             (Value::Channel(a), Value::Channel(b)) => Arc::ptr_eq(a, b),
             (Value::CompiledFunction(a), Value::CompiledFunction(b)) => Arc::ptr_eq(a, b) || a == b,

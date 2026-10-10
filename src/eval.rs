@@ -166,7 +166,16 @@ impl Evaluator {
         let resolved_path = if path_str.starts_with("./") || path_str.starts_with("../") {
             if let Some(cur) = &self.current_file {
                 if let Some(parent) = cur.parent() {
-                    parent.join(path_str)
+                    let candidate = parent.join(path_str);
+                    if candidate.exists() {
+                        candidate
+                    } else if candidate.with_extension("shaec").exists() {
+                        candidate.with_extension("shaec")
+                    } else if candidate.with_extension("shae").exists() {
+                        candidate.with_extension("shae")
+                    } else {
+                        candidate
+                    }
                 } else {
                     PathBuf::from(path_str)
                 }
@@ -178,6 +187,10 @@ impl Evaluator {
                 let candidate = parent.join(path_str);
                 if candidate.exists() {
                     candidate
+                } else if candidate.with_extension("shaec").exists() {
+                    candidate.with_extension("shaec")
+                } else if candidate.with_extension("shae").exists() {
+                    candidate.with_extension("shae")
                 } else if let Some(pkg_file) = crate::pkg::resolve_package_file(parent, path_str) {
                     pkg_file
                 } else {
@@ -240,11 +253,16 @@ impl Evaluator {
             .unwrap()
             .insert(canonical_key.clone(), module_val.clone());
 
-        let source = if let Some(s) = maybe_archive_source {
-            s
+        let child_file = match std::fs::canonicalize(&resolved_path) {
+            Ok(p) => Some(p),
+            Err(_) => Some(norm_resolved),
+        };
+
+        let file_bytes = if let Some(s) = maybe_archive_source {
+            s.into_bytes()
         } else {
-            match std::fs::read_to_string(&resolved_path) {
-                Ok(s) => s,
+            match std::fs::read(&resolved_path) {
+                Ok(b) => b,
                 Err(e) => {
                     self.module_cache.write().unwrap().remove(&canonical_key);
                     return Err(RuntimeError::new(format!(
@@ -256,15 +274,74 @@ impl Evaluator {
             }
         };
 
+        if file_bytes.starts_with(crate::chunk::BYTECODE_MAGIC)
+            || resolved_path
+                .extension()
+                .map_or(false, |ext| ext == "shaec")
+        {
+            let chunk = match crate::chunk::Chunk::from_bytes(&file_bytes) {
+                Ok(c) => c,
+                Err(e) => {
+                    self.module_cache.write().unwrap().remove(&canonical_key);
+                    return Err(RuntimeError::new(format!(
+                        "Failed to load bytecode module '{}': {}",
+                        path_str, e
+                    ))
+                    .at(span));
+                }
+            };
+            let mut vm = crate::vm::VM::new();
+            vm.current_file = child_file;
+            match vm.interpret(chunk) {
+                crate::vm::InterpretResult::Ok(_) => {
+                    let mut guard = export_map.write().unwrap();
+                    let dummy_env = {
+                        let mut env = Environment::new();
+                        crate::builtins::register(&mut env);
+                        env.export_map()
+                    };
+                    for (k, v) in vm.globals {
+                        if k != "gc" && !dummy_env.contains_key(&k) {
+                            guard.insert(k, v);
+                        }
+                    }
+                    return Ok(module_val);
+                }
+                crate::vm::InterpretResult::RuntimeError(msg) => {
+                    self.module_cache.write().unwrap().remove(&canonical_key);
+                    return Err(RuntimeError::new(format!(
+                        "Runtime error in bytecode module '{}': {}",
+                        path_str, msg
+                    ))
+                    .at(span));
+                }
+                crate::vm::InterpretResult::CompileError => {
+                    self.module_cache.write().unwrap().remove(&canonical_key);
+                    return Err(RuntimeError::new(format!(
+                        "Compile error in bytecode module '{}'",
+                        path_str
+                    ))
+                    .at(span));
+                }
+            }
+        }
+
+        let source = match String::from_utf8(file_bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                self.module_cache.write().unwrap().remove(&canonical_key);
+                return Err(RuntimeError::new(format!(
+                    "Module '{}' is not valid UTF-8: {}",
+                    path_str, e
+                ))
+                .at(span));
+            }
+        };
+
         let mut builtin_env = Environment::new();
         crate::builtins::register(&mut builtin_env);
         let builtin_env_rc = Arc::new(RwLock::new(builtin_env));
         let module_env = Arc::new(RwLock::new(Environment::new_with_parent(builtin_env_rc)));
-
-        let child_file = match std::fs::canonicalize(&resolved_path) {
-            Ok(p) => Some(p),
-            Err(_) => Some(norm_resolved),
-        };
 
         let mut ev = Evaluator::with_env_cache_file(
             module_env.clone(),

@@ -275,6 +275,11 @@ impl Compiler {
                     self.compile_expr(value)?;
                     if let Some(slot) = self.resolve_local(name) {
                         self.emit_set_local(slot, span.line);
+                        if self.scope_depth == 0 {
+                            let const_idx = self.chunk.add_constant(Value::String(name.clone()));
+                            self.chunk.write_opcode(OpCode::SetGlobal, span.line);
+                            self.chunk.write(const_idx as u8, span.line);
+                        }
                     } else if let Some(upvalue_slot) = self.resolve_upvalue(name) {
                         self.chunk.write_opcode(OpCode::SetUpvalue, span.line);
                         self.chunk.write(upvalue_slot, span.line);
@@ -602,7 +607,13 @@ impl Compiler {
     fn compile_binding_pattern(&mut self, pattern: &BindingPattern) -> Result<(), String> {
         match pattern {
             BindingPattern::Ident(name) => {
-                self.add_local(name.clone());
+                let slot = self.add_local(name.clone());
+                if self.scope_depth == 0 {
+                    self.emit_get_local(slot, 0);
+                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                    self.chunk.write_opcode(OpCode::DefineGlobal, 0);
+                    self.chunk.write(name_idx as u8, 0);
+                }
                 Ok(())
             }
             BindingPattern::Array { elements, rest } => {

@@ -1109,3 +1109,108 @@ fn test_showcase_microservice_on_vm() {
         .expect("microservice test_service.shae should execute cleanly on VM");
     assert_eq!(val, Value::Null);
 }
+
+#[test]
+fn test_bytecode_serialization_roundtrip() {
+    let script = r#"
+struct Point { x, y }
+enum Status { Pending, Active(id), Done }
+
+fn add(a, b) {
+    a + b
+}
+
+let pt = Point { x: 10, y: 20 }
+let st = Status.Active(42)
+let sum = add(pt.x, pt.y)
+let msg = "Result: {sum}"
+msg
+"#;
+    let program = shae::parse_source(script).expect("parse should succeed");
+    let original_chunk = shae::compiler::Compiler::new()
+        .compile_program(&program)
+        .expect("compile should succeed");
+
+    let bytes = original_chunk.to_bytes();
+    assert!(bytes.starts_with(shae::chunk::BYTECODE_MAGIC));
+
+    let deserialized_chunk =
+        shae::chunk::Chunk::from_bytes(&bytes).expect("deserialization should succeed");
+    assert_eq!(original_chunk, deserialized_chunk);
+
+    let val_original = shae::run_vm(script).expect("VM run should succeed");
+    let val_bytecode = shae::run_bytecode(&bytes).expect("bytecode run should succeed");
+    assert_eq!(val_original, val_bytecode);
+    assert_eq!(val_bytecode, Value::String("Result: 30".to_string()));
+}
+
+#[test]
+fn test_bytecode_file_compile_and_run() {
+    let dir = std::env::temp_dir().join(format!("shae_bc_test_{}", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    let src_path = dir.join("calc.shae");
+    let bc_path = dir.join("calc.shaec");
+
+    let src = "let numbers = [1, 2, 3, 4, 5]; numbers.map(fn(x) { x * 10 }).reduce(fn(acc, n) { acc + n }, 0)";
+    fs::write(&src_path, src).expect("write src");
+
+    shae::compile_file_to_bytecode(&src_path, &bc_path).expect("compilation should succeed");
+    assert!(bc_path.exists());
+
+    // Run via run_bytecode_file
+    let val1 = shae::run_bytecode_file(&bc_path).expect("run_bytecode_file should succeed");
+    assert_eq!(val1, Value::Int(150));
+
+    // Run via run_file_vm (which auto-detects .shaec)
+    let val2 = shae::run_file_vm(&bc_path).expect("run_file_vm should succeed on .shaec");
+    assert_eq!(val2, Value::Int(150));
+
+    // Disassemble compiled file
+    let bc_bytes = fs::read(&bc_path).expect("read bytecode");
+    let disasm = shae::disassemble_bytecode(&bc_bytes, "calc.shaec").expect("disassemble should succeed");
+    assert!(disasm.contains("Constants:"));
+    assert!(disasm.contains("Disassembly:"));
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_bytecode_module_import() {
+    let dir = std::env::temp_dir().join(format!("shae_bc_mod_test_{}", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+
+    let mod_src_path = dir.join("math_lib.shae");
+    let mod_bc_path = dir.join("math_lib.shaec");
+    let main_src_path = dir.join("app.shae");
+
+    let mod_src = "fn square(n) { n * n }\nlet factor = 10;\n";
+    fs::write(&mod_src_path, mod_src).expect("write module src");
+    shae::compile_file_to_bytecode(&mod_src_path, &mod_bc_path).expect("compile module to bytecode");
+
+    // Remove source file to prove we are importing directly from .shaec!
+    let _ = fs::remove_file(&mod_src_path);
+    assert!(!mod_src_path.exists());
+    assert!(mod_bc_path.exists());
+
+    let main_src = "use { square, factor } from \"./math_lib.shaec\"; square(6) + factor";
+    fs::write(&main_src_path, main_src).expect("write main src");
+
+    let result = shae::run_file_vm(&main_src_path).expect("VM should import from .shaec module");
+    assert_eq!(result, Value::Int(46));
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_bytecode_error_handling() {
+    // Bad magic
+    let bad_magic = b"NOT_SHAE\x01\x00";
+    let res = shae::chunk::Chunk::from_bytes(bad_magic);
+    assert!(res.is_err());
+    assert!(res.unwrap_err().contains("magic header mismatch"));
+
+    // Truncated data
+    let truncated = shae::chunk::BYTECODE_MAGIC;
+    let res2 = shae::chunk::Chunk::from_bytes(truncated);
+    assert!(res2.is_err());
+}

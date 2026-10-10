@@ -123,17 +123,33 @@ pub fn run_file<P: AsRef<std::path::Path>>(path: P) -> Result<value::Value, Shae
 
 pub fn run_file_vm<P: AsRef<std::path::Path>>(path: P) -> Result<value::Value, ShaeError> {
     let path_ref = path.as_ref();
-    let source = std::fs::read_to_string(path_ref).map_err(|e| {
+    let bytes = std::fs::read(path_ref).map_err(|e| {
         eval::RuntimeError::new(format!(
             "Failed to read file '{}': {}",
             path_ref.display(),
             e
         ))
     })?;
-    let program = parse_source(&source)?;
-    let chunk = compiler::Compiler::new()
-        .compile_program(&program)
-        .map_err(eval::RuntimeError::new)?;
+
+    let chunk = if bytes.starts_with(crate::chunk::BYTECODE_MAGIC)
+        || path_ref.extension().map_or(false, |ext| ext == "shaec")
+    {
+        chunk::Chunk::from_bytes(&bytes)
+            .map_err(|e| eval::RuntimeError::new(format!("Bytecode load error in '{}': {}", path_ref.display(), e)))?
+    } else {
+        let source = String::from_utf8(bytes).map_err(|e| {
+            eval::RuntimeError::new(format!(
+                "File '{}' is not valid UTF-8: {}",
+                path_ref.display(),
+                e
+            ))
+        })?;
+        let program = parse_source(&source)?;
+        compiler::Compiler::new()
+            .compile_program(&program)
+            .map_err(eval::RuntimeError::new)?
+    };
+
     let mut vm = vm::VM::new();
     vm.current_file = std::fs::canonicalize(path_ref)
         .ok()
@@ -145,6 +161,77 @@ pub fn run_file_vm<P: AsRef<std::path::Path>>(path: P) -> Result<value::Value, S
             Err(eval::RuntimeError::new("VM compile error".into()).into())
         }
     }
+}
+
+pub fn compile_source_to_bytecode(source: &str) -> Result<Vec<u8>, ShaeError> {
+    let program = parse_source(source)?;
+    let chunk = compiler::Compiler::new()
+        .compile_program(&program)
+        .map_err(eval::RuntimeError::new)?;
+    Ok(chunk.to_bytes())
+}
+
+pub fn compile_file_to_bytecode<P: AsRef<std::path::Path>, Q: AsRef<std::path::Path>>(
+    src: P,
+    out: Q,
+) -> Result<(), ShaeError> {
+    let src_ref = src.as_ref();
+    let source = std::fs::read_to_string(src_ref).map_err(|e| {
+        eval::RuntimeError::new(format!(
+            "Failed to read file '{}': {}",
+            src_ref.display(),
+            e
+        ))
+    })?;
+    let bytes = compile_source_to_bytecode(&source)?;
+    std::fs::write(out.as_ref(), bytes).map_err(|e| {
+        eval::RuntimeError::new(format!(
+            "Failed to write bytecode file '{}': {}",
+            out.as_ref().display(),
+            e
+        ))
+    })?;
+    Ok(())
+}
+
+pub fn run_bytecode(bytes: &[u8]) -> Result<value::Value, ShaeError> {
+    let chunk = chunk::Chunk::from_bytes(bytes).map_err(eval::RuntimeError::new)?;
+    let mut vm = vm::VM::new();
+    match vm.interpret(chunk) {
+        vm::InterpretResult::Ok(val) => Ok(val),
+        vm::InterpretResult::RuntimeError(msg) => Err(eval::RuntimeError::new(msg).into()),
+        vm::InterpretResult::CompileError => {
+            Err(eval::RuntimeError::new("VM compile error".into()).into())
+        }
+    }
+}
+
+pub fn run_bytecode_file<P: AsRef<std::path::Path>>(path: P) -> Result<value::Value, ShaeError> {
+    let path_ref = path.as_ref();
+    let bytes = std::fs::read(path_ref).map_err(|e| {
+        eval::RuntimeError::new(format!(
+            "Failed to read bytecode file '{}': {}",
+            path_ref.display(),
+            e
+        ))
+    })?;
+    let chunk = chunk::Chunk::from_bytes(&bytes).map_err(eval::RuntimeError::new)?;
+    let mut vm = vm::VM::new();
+    vm.current_file = std::fs::canonicalize(path_ref)
+        .ok()
+        .or_else(|| Some(path_ref.to_path_buf()));
+    match vm.interpret(chunk) {
+        vm::InterpretResult::Ok(val) => Ok(val),
+        vm::InterpretResult::RuntimeError(msg) => Err(eval::RuntimeError::new(msg).into()),
+        vm::InterpretResult::CompileError => {
+            Err(eval::RuntimeError::new("VM compile error".into()).into())
+        }
+    }
+}
+
+pub fn disassemble_bytecode(bytes: &[u8], name: &str) -> Result<String, ShaeError> {
+    let chunk = chunk::Chunk::from_bytes(bytes).map_err(eval::RuntimeError::new)?;
+    Ok(chunk.disassemble(name))
 }
 
 pub fn run_with_engine(source: &str, use_vm: bool) -> Result<value::Value, ShaeError> {
