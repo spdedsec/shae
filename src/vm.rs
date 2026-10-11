@@ -6,7 +6,7 @@ use crate::value::{
     resolve_int_index,
 };
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 #[derive(Debug, Clone)]
 pub struct TryHandler {
@@ -40,6 +40,8 @@ pub struct VM {
     pub embedded_bytecode: Option<Arc<HashMap<String, Vec<u8>>>>,
     pub prop_get_ic: HashMap<(usize, usize), InlineCacheEntry>,
     pub prop_set_ic: HashMap<(usize, usize), InlineCacheEntry>,
+    pub profiler: Option<crate::profiler::Profiler>,
+    pub debug_session: Option<Arc<Mutex<crate::debugger::DebugSession>>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -84,6 +86,8 @@ impl VM {
             embedded_bytecode: None,
             prop_get_ic: HashMap::new(),
             prop_set_ic: HashMap::new(),
+            profiler: None,
+            debug_session: None,
         }
     }
 
@@ -150,6 +154,9 @@ impl VM {
             slots_offset: 0,
             try_handlers: Vec::new(),
         });
+        if let Some(prof) = &mut self.profiler {
+            prof.enter_function("<main>");
+        }
         self.run()
     }
 
@@ -168,6 +175,10 @@ impl VM {
         self.stack.push(Value::Closure(closure.clone()));
         for arg in args {
             self.stack.push(arg);
+        }
+        if let Some(prof) = &mut self.profiler {
+            let name = closure.function.name.as_deref().unwrap_or("<anonymous>");
+            prof.enter_function(name);
         }
         self.frames.push(CallFrame {
             closure,
@@ -308,6 +319,15 @@ impl VM {
                     .len()
             {
                 let frame = self.frames.pop().unwrap();
+                if let Some(prof) = &mut self.profiler {
+                    let name = frame
+                        .closure
+                        .function
+                        .name
+                        .as_deref()
+                        .unwrap_or("<anonymous>");
+                    prof.exit_function(name);
+                }
                 self.close_upvalues(frame.slots_offset);
                 if self.frames.is_empty() {
                     let val = self.stack.pop().unwrap_or(Value::Null);
@@ -319,11 +339,48 @@ impl VM {
                 continue;
             }
 
+            let frame = self.frames.last().unwrap();
+            let current_ip = frame.ip;
+            let current_line = if current_ip < frame.closure.function.chunk.lines.len() {
+                frame.closure.function.chunk.lines[current_ip]
+            } else {
+                0
+            };
+
+            if let Some(dbg) = &self.debug_session {
+                let file_str = self
+                    .current_file
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "<script>".to_string());
+                let should_pause = {
+                    let mut session = dbg.lock().unwrap();
+                    session.should_stop(&file_str, current_line, self.frames.len())
+                };
+                if let Some(reason) = should_pause {
+                    let _ = reason;
+                }
+            }
+
             let instruction: OpCode = self.read_byte().into();
+
+            if let Some(prof) = &mut self.profiler {
+                prof.on_opcode(instruction);
+            }
+
             match instruction {
                 OpCode::Return => {
                     let val = self.stack.pop().unwrap_or(Value::Null);
                     let frame = self.frames.pop().unwrap();
+                    if let Some(prof) = &mut self.profiler {
+                        let name = frame
+                            .closure
+                            .function
+                            .name
+                            .as_deref()
+                            .unwrap_or("<anonymous>");
+                        prof.exit_function(name);
+                    }
                     self.close_upvalues(frame.slots_offset);
                     if self.frames.is_empty() {
                         return InterpretResult::Ok(val);
@@ -1738,6 +1795,11 @@ impl VM {
                                     "Stack overflow: call stack exceeded maximum depth.",
                                 );
                             }
+                            if let Some(prof) = &mut self.profiler {
+                                let name =
+                                    closure.function.name.as_deref().unwrap_or("<anonymous>");
+                                prof.enter_function(name);
+                            }
                             self.frames.push(CallFrame {
                                 closure,
                                 ip: 0,
@@ -1771,6 +1833,11 @@ impl VM {
                                 upvalues: Vec::new(),
                                 module_globals: mod_globals,
                             });
+                            if let Some(prof) = &mut self.profiler {
+                                let name =
+                                    closure.function.name.as_deref().unwrap_or("<anonymous>");
+                                prof.enter_function(name);
+                            }
                             self.frames.push(CallFrame {
                                 closure,
                                 ip: 0,

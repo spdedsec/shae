@@ -171,6 +171,16 @@ export async function activate(context: vscode.ExtensionContext) {
             terminal.sendText(`"${binPath}" "${filePath}"`);
         })
     );
+
+    // Register DAP Debug Adapter Factory
+    context.subscriptions.push(
+        vscode.debug.registerDebugAdapterDescriptorFactory('shae', {
+            createDebugAdapterDescriptor(_session: vscode.DebugSession): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
+                const binPath = resolveShaeBinary() || 'shae';
+                return new vscode.DebugAdapterExecutable(binPath, ['dap']);
+            }
+        })
+    );
 }
 
 export async function deactivate(): Promise<void> {

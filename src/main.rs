@@ -39,6 +39,10 @@ fn show_help() {
     println!(
         "  shae bundle <entry.shae>   Bundle application into a standalone binary (--strip, --no-bytecode)"
     );
+    println!("  shae lsp                   Start Language Server Protocol (LSP) server");
+    println!("  shae dap                   Start Debug Adapter Protocol (DAP) server");
+    println!("  shae debug <file.shae>     Start interactive step debugger");
+    println!("  shae profile <file.shae>   Profile CPU execution time and opcodes (--folded)");
     println!("  shae --joke                Print a programming joke");
     println!("  shae --tip                 Print a Shae tip");
     println!("  shae --version, -V         Show version information");
@@ -628,8 +632,17 @@ fn main() {
         "run" => {
             let use_vm = should_use_vm(&args);
             let disasm = args.iter().any(|a| a == "--disasm");
+            let profile = args.iter().any(|a| a == "--profile");
             let file_target = args[2..].iter().find(|a| !a.starts_with('-'));
             if let Some(f) = file_target {
+                if profile {
+                    let folded = args.iter().any(|a| a == "--folded");
+                    if let Err(e) = shae::profiler::profile_file(f, folded) {
+                        eprintln!("Profile error: {}", e);
+                        process::exit(1);
+                    }
+                    return;
+                }
                 if disasm {
                     disasm_file(f);
                 }
@@ -638,6 +651,14 @@ fn main() {
                 let entry = Path::new(".").join(&manifest.package.entry);
                 if entry.exists() {
                     let entry_str = entry.to_string_lossy().to_string();
+                    if profile {
+                        let folded = args.iter().any(|a| a == "--folded");
+                        if let Err(e) = shae::profiler::profile_file(&entry_str, folded) {
+                            eprintln!("Profile error: {}", e);
+                            process::exit(1);
+                        }
+                        return;
+                    }
                     if disasm {
                         disasm_file(&entry_str);
                     }
@@ -647,7 +668,9 @@ fn main() {
                     process::exit(1);
                 }
             } else {
-                eprintln!("Usage: shae run <file.shae> [--vm] [--engine=vm|ast] [--disasm]");
+                eprintln!(
+                    "Usage: shae run <file.shae> [--vm] [--engine=vm|ast] [--disasm] [--profile]"
+                );
                 process::exit(1);
             }
         }
@@ -733,6 +756,35 @@ fn main() {
         "lsp" => {
             if let Err(e) = shae::lsp::start_lsp_server() {
                 eprintln!("Shae LSP server error: {}", e);
+                process::exit(1);
+            }
+        }
+        "dap" => {
+            if let Err(e) = shae::dap::start_dap_server() {
+                eprintln!("Shae DAP server error: {}", e);
+                process::exit(1);
+            }
+        }
+        "debug" => {
+            if args.len() < 3 {
+                eprintln!("Usage: shae debug <file.shae>");
+                process::exit(1);
+            }
+            let file = &args[2];
+            if let Err(e) = shae::debugger::run_interactive_debugger(file) {
+                eprintln!("Debugger error: {}", e);
+                process::exit(1);
+            }
+        }
+        "profile" => {
+            if args.len() < 3 {
+                eprintln!("Usage: shae profile <file.shae> [--folded]");
+                process::exit(1);
+            }
+            let file = &args[2];
+            let folded = args.iter().any(|a| a == "--folded");
+            if let Err(e) = shae::profiler::profile_file(file, folded) {
+                eprintln!("Profile error: {}", e);
                 process::exit(1);
             }
         }

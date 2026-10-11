@@ -66,6 +66,39 @@
         "category": "Shae"
       }
     ],
+    "breakpoints": [
+      {
+        "language": "shae"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "shae",
+        "label": "Shae Debugger",
+        "languages": [
+          "shae"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to the Shae script to debug.",
+                "default": "${file}"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Automatically pause execution on entry.",
+                "default": false
+              }
+            }
+          }
+        }
+      }
+    ],
     "configuration": {
       "type": "object",
       "title": "Shae",
