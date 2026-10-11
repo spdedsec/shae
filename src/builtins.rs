@@ -64,6 +64,7 @@ pub fn register(env: &mut Environment) {
         ("route_match", builtin_route_match),
         ("assert", builtin_assert),
         ("assert_eq", builtin_assert_eq),
+        ("gc", builtin_gc),
     ];
     for (name, func) in builtins {
         env.define(
@@ -74,6 +75,14 @@ pub fn register(env: &mut Environment) {
             },
         );
     }
+}
+
+fn builtin_gc(
+    _ev: &mut Evaluator,
+    _args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
+    Ok(Value::Int(0))
 }
 
 fn builtin_print(

@@ -135,7 +135,7 @@ let url = "https://example.com/search?q=" + url_encode("shae lang")
 // Regular Expressions
 use { is_match, captures, replace_all } from "std:regex"
 let valid_email = is_match(r"^[\w\.-]+@[\w\.-]+\.\w+$", "user@shae.dev")
-let cleaned = replace_all(r"\s+", "multiple   spaces", " ")
+let cleaned = replace_all(r"\s+", " ", "multiple   spaces")
 ```
 
 ### 4. Pattern Matching & Destructuring

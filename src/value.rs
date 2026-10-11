@@ -5,6 +5,7 @@ use crate::eval::{Evaluator, RuntimeError};
 use crate::gc::GcRef;
 use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -50,6 +51,7 @@ impl Upvalue {
 pub struct Closure {
     pub function: Arc<CompiledFunction>,
     pub upvalues: Vec<Arc<RwLock<Upvalue>>>,
+    pub module_globals: Option<Arc<RwLock<HashMap<String, Value>>>>,
 }
 
 impl PartialEq for Closure {
@@ -133,7 +135,7 @@ impl Value {
             Value::Builtin { .. } => "builtin_function",
             Value::BoundMethod { .. } => "bound_method",
             Value::StructDef { .. } => "struct_def",
-            Value::StructInstance { name: _, .. } => "struct_instance",
+            Value::StructInstance { .. } => "struct_instance",
             Value::EnumDef { .. } => "enum_def",
             Value::EnumConstructor { .. } => "enum_constructor",
             Value::EnumInstance { .. } => "enum_instance",

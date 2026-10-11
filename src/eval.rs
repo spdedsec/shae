@@ -338,6 +338,13 @@ impl Evaluator {
                             guard.insert(k, v);
                         }
                     }
+                    if let Some(mg) = &vm.module_globals {
+                        for (k, v) in mg.read().unwrap().iter() {
+                            if k != "gc" && !dummy_env.contains_key(k) {
+                                guard.insert(k.clone(), v.clone());
+                            }
+                        }
+                    }
                     return Ok(module_val);
                 }
                 crate::vm::InterpretResult::RuntimeError(msg) => {
@@ -1677,6 +1684,7 @@ impl Evaluator {
                     .at(span));
                 }
                 let mut vm = crate::vm::VM::new();
+                vm.current_file = self.current_file.clone();
                 for (k, v) in self.global_env.read().unwrap().export_map() {
                     vm.globals.insert(k, v);
                 }
@@ -1694,8 +1702,10 @@ impl Evaluator {
                 let closure = Arc::new(crate::value::Closure {
                     function: func.clone(),
                     upvalues: Vec::new(),
+                    module_globals: None,
                 });
                 let mut vm = crate::vm::VM::new();
+                vm.current_file = self.current_file.clone();
                 for (k, v) in self.global_env.read().unwrap().export_map() {
                     vm.globals.insert(k, v);
                 }

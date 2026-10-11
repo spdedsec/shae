@@ -26,6 +26,7 @@ pub struct VM {
     pub frames: Vec<CallFrame>,
     pub stack: Vec<Value>,
     pub globals: HashMap<String, Value>,
+    pub module_globals: Option<Arc<RwLock<HashMap<String, Value>>>>,
     pub open_upvalues: Vec<Arc<RwLock<Upvalue>>>,
     pub heap: GcHeap,
     pub current_file: Option<std::path::PathBuf>,
@@ -60,13 +61,14 @@ impl VM {
             "gc".to_string(),
             Value::Builtin {
                 name: "gc".to_string(),
-                func: |_ev, _args, _span| Ok(Value::Null),
+                func: |_ev, _args, _span| Ok(Value::Int(0)),
             },
         );
         VM {
             frames: Vec::with_capacity(64),
             stack: Vec::with_capacity(256),
             globals,
+            module_globals: None,
             open_upvalues: Vec::new(),
             heap: GcHeap::new(),
             current_file: None,
@@ -88,6 +90,11 @@ impl VM {
             for val in globals.values() {
                 heap.mark_value(val, gray_stack);
             }
+            if let Some(mg) = &self.module_globals {
+                for val in mg.read().unwrap().values() {
+                    heap.mark_value(val, gray_stack);
+                }
+            }
             for uv in open_upvalues {
                 let guard = uv.read().unwrap();
                 if let UpvalueLocation::Closed(ref val) = guard.location {
@@ -95,6 +102,11 @@ impl VM {
                 }
             }
             for frame in frames {
+                if let Some(mg) = &frame.closure.module_globals {
+                    for val in mg.read().unwrap().values() {
+                        heap.mark_value(val, gray_stack);
+                    }
+                }
                 for uv in &frame.closure.upvalues {
                     let guard = uv.read().unwrap();
                     if let UpvalueLocation::Closed(ref val) = guard.location {
@@ -106,6 +118,9 @@ impl VM {
     }
 
     pub fn interpret(&mut self, chunk: Chunk) -> InterpretResult {
+        if self.module_globals.is_none() {
+            self.module_globals = Some(Arc::new(RwLock::new(HashMap::new())));
+        }
         let top_fn = Arc::new(CompiledFunction {
             arity: 0,
             chunk,
@@ -115,6 +130,7 @@ impl VM {
         let top_closure = Arc::new(Closure {
             function: top_fn,
             upvalues: Vec::new(),
+            module_globals: self.module_globals.clone(),
         });
         self.frames.clear();
         self.open_upvalues.clear();
@@ -138,6 +154,7 @@ impl VM {
         self.stack.clear();
         self.frames.clear();
         self.open_upvalues.clear();
+        self.module_globals = closure.module_globals.clone();
         self.stack.push(Value::Closure(closure.clone()));
         for arg in args {
             self.stack.push(arg);
@@ -175,6 +192,60 @@ impl VM {
         }
         self.open_upvalues
             .retain(|uv| matches!(uv.read().unwrap().location, UpvalueLocation::Open(_)));
+    }
+
+    fn close_upvalues_in_value(&mut self, val: &Value) {
+        match val {
+            Value::Closure(c) => {
+                for uv in &c.upvalues {
+                    let mut guard = uv.write().unwrap();
+                    let captured = if let UpvalueLocation::Open(slot) = guard.location {
+                        if slot < self.stack.len() {
+                            let v = self.stack[slot].clone();
+                            guard.location = UpvalueLocation::Closed(v.clone());
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    drop(guard);
+                    if let Some(v) = captured {
+                        self.close_upvalues_in_value(&v);
+                    }
+                }
+            }
+            Value::Array(arr) => {
+                let items = arr.read().unwrap().clone();
+                for item in &items {
+                    self.close_upvalues_in_value(item);
+                }
+            }
+            Value::Map(map) => {
+                let values: Vec<Value> = map.read().unwrap().values().cloned().collect();
+                for item in &values {
+                    self.close_upvalues_in_value(item);
+                }
+            }
+            Value::StructInstance { fields, .. } => {
+                let values: Vec<Value> = fields.read().unwrap().values().cloned().collect();
+                for item in &values {
+                    self.close_upvalues_in_value(item);
+                }
+            }
+            Value::BoundMethod { object, .. } => {
+                let rec = object.as_ref().clone();
+                self.close_upvalues_in_value(&rec);
+            }
+            Value::EnumInstance { values, .. } => {
+                let vals = values.clone();
+                for item in &vals {
+                    self.close_upvalues_in_value(item);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn handle_runtime_error(&mut self, msg: String) -> Option<InterpretResult> {
@@ -326,6 +397,13 @@ impl VM {
                         other => other.to_string(),
                     };
                     let val = self.stack.pop().unwrap_or(Value::Null);
+                    if let Some(frame) = self.frames.last() {
+                        if let Some(mg) = &frame.closure.module_globals {
+                            mg.write().unwrap().insert(name.clone(), val.clone());
+                        }
+                    } else if let Some(mg) = &self.module_globals {
+                        mg.write().unwrap().insert(name.clone(), val.clone());
+                    }
                     self.globals.insert(name, val);
                 }
                 OpCode::GetGlobal => {
@@ -333,8 +411,15 @@ impl VM {
                         Value::String(s) => s,
                         other => other.to_string(),
                     };
-                    if let Some(val) = self.globals.get(&name) {
-                        self.stack.push(val.clone());
+                    let val_opt = self
+                        .frames
+                        .last()
+                        .and_then(|f| f.closure.module_globals.as_ref())
+                        .and_then(|mg| mg.read().unwrap().get(&name).cloned())
+                        .or_else(|| self.globals.get(&name).cloned());
+
+                    if let Some(val) = val_opt {
+                        self.stack.push(val);
                     } else {
                         runtime_error!(self, format!("Undefined variable '{}'.", name));
                     }
@@ -345,9 +430,20 @@ impl VM {
                         other => other.to_string(),
                     };
                     if let Some(val) = self.stack.last().cloned() {
+                        let mut found = false;
+                        if let Some(frame) = self.frames.last() {
+                            if let Some(mg) = &frame.closure.module_globals {
+                                if mg.read().unwrap().contains_key(&name) {
+                                    mg.write().unwrap().insert(name.clone(), val.clone());
+                                    found = true;
+                                }
+                            }
+                        }
                         if self.globals.contains_key(&name) {
-                            self.globals.insert(name, val);
-                        } else {
+                            self.globals.insert(name.clone(), val);
+                            found = true;
+                        }
+                        if !found {
                             runtime_error!(self, format!("Undefined variable '{}'.", name));
                         }
                     } else {
@@ -1554,9 +1650,15 @@ impl VM {
                                     "Stack overflow: call stack exceeded maximum depth.",
                                 );
                             }
+                            let mod_globals = self
+                                .frames
+                                .last()
+                                .and_then(|f| f.closure.module_globals.clone())
+                                .or_else(|| self.module_globals.clone());
                             let closure = Arc::new(Closure {
                                 function: func,
                                 upvalues: Vec::new(),
+                                module_globals: mod_globals,
                             });
                             self.frames.push(CallFrame {
                                 closure,
@@ -1568,6 +1670,11 @@ impl VM {
                         Value::Builtin { name, func } => {
                             let args: Vec<Value> = self.stack.drain(callee_slot + 1..).collect();
                             self.stack.pop(); // pop callee
+                            for arg in &args {
+                                self.close_upvalues_in_value(arg);
+                            }
+                            self.open_upvalues
+                                .retain(|uv| matches!(uv.read().unwrap().location, UpvalueLocation::Open(_)));
                             if name == "gc" {
                                 let stats = self.collect_garbage();
                                 self.stack.push(Value::Int(stats.freed_objects as i64));
@@ -1591,6 +1698,10 @@ impl VM {
                                 }
                             }
                             let mut evaluator = crate::eval::Evaluator::new();
+                            evaluator.current_file = self.current_file.clone();
+                            for (k, v) in &self.globals {
+                                evaluator.global_env.write().unwrap().define(k.clone(), v.clone());
+                            }
                             match func(&mut evaluator, args, crate::ast::Span::new(1, 1)) {
                                 Ok(val) => self.stack.push(val),
                                 Err(e) => runtime_error!(self, e.message),
@@ -1599,8 +1710,17 @@ impl VM {
                         Value::Function { .. } | Value::BoundMethod { .. } => {
                             let args: Vec<Value> = self.stack.drain(callee_slot + 1..).collect();
                             self.stack.pop(); // pop callee
+                            self.close_upvalues_in_value(&callee);
+                            for arg in &args {
+                                self.close_upvalues_in_value(arg);
+                            }
+                            self.open_upvalues
+                                .retain(|uv| matches!(uv.read().unwrap().location, UpvalueLocation::Open(_)));
                             let mut evaluator = crate::eval::Evaluator::new();
                             evaluator.current_file = self.current_file.clone();
+                            for (k, v) in &self.globals {
+                                evaluator.global_env.write().unwrap().define(k.clone(), v.clone());
+                            }
                             match evaluator.call_value(&callee, args, crate::ast::Span::new(1, 1)) {
                                 Ok(val) => self.stack.push(val),
                                 Err(e) => runtime_error!(self, e.message),
@@ -1663,9 +1783,15 @@ impl VM {
                             upvalues.push(parent_upvalue);
                         }
                     }
+                    let mod_globals = self
+                        .frames
+                        .last()
+                        .and_then(|f| f.closure.module_globals.clone())
+                        .or_else(|| self.module_globals.clone());
                     let closure = Arc::new(Closure {
                         function: func,
                         upvalues,
+                        module_globals: mod_globals,
                     });
                     self.stack.push(Value::Closure(closure));
                 }
@@ -1673,7 +1799,13 @@ impl VM {
                     let slot = self.read_byte() as usize;
                     let upvalue = self.frames.last().unwrap().closure.upvalues[slot].clone();
                     let val = match &upvalue.read().unwrap().location {
-                        UpvalueLocation::Open(stack_idx) => self.stack[*stack_idx].clone(),
+                        UpvalueLocation::Open(stack_idx) => {
+                            if *stack_idx < self.stack.len() {
+                                self.stack[*stack_idx].clone()
+                            } else {
+                                runtime_error!(self, format!("Invalid upvalue stack index {}", stack_idx));
+                            }
+                        }
                         UpvalueLocation::Closed(v) => v.clone(),
                     };
                     self.stack.push(val);
@@ -1690,7 +1822,11 @@ impl VM {
                     let mut uv = upvalue.write().unwrap();
                     match &mut uv.location {
                         UpvalueLocation::Open(stack_idx) => {
-                            self.stack[*stack_idx] = val;
+                            if *stack_idx < self.stack.len() {
+                                self.stack[*stack_idx] = val;
+                            } else {
+                                runtime_error!(self, format!("Invalid upvalue stack index {}", stack_idx));
+                            }
                         }
                         UpvalueLocation::Closed(v) => {
                             *v = val;
