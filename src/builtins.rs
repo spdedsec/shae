@@ -1229,8 +1229,14 @@ fn builtin_write(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
 }
 
 fn builtin_fetch(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
-    expect_args("fetch", 1, &args, span)?;
-    if let Value::String(url) = &args[0] {
+    if args.is_empty() {
+        return Err(RuntimeError::new("fetch expects a string url".into()).at(span));
+    }
+    let url = match &args[0] {
+        Value::String(u) => u.as_str(),
+        _ => return Err(RuntimeError::new("fetch expects a string url".into()).at(span)),
+    };
+    if args.len() == 1 {
         match reqwest::blocking::get(url) {
             Ok(response) => match response.text() {
                 Ok(text) => Ok(Value::String(text)),
@@ -1243,7 +1249,38 @@ fn builtin_fetch(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
             Err(e) => Err(RuntimeError::new(format!("Failed to fetch '{}': {}", url, e)).at(span)),
         }
     } else {
-        Err(RuntimeError::new("fetch expects a string url".into()).at(span))
+        let (method, headers_opt, body_opt, timeout_ms) = match &args[1] {
+            Value::Map(m) => {
+                let guard = m.read().unwrap();
+                let method = guard
+                    .get("method")
+                    .and_then(|v| match v {
+                        Value::String(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "GET".to_string());
+                let headers_opt = guard.get("headers").and_then(|v| match v {
+                    Value::Map(hm) => Some(hm.read().unwrap().clone()),
+                    _ => None,
+                });
+                let body_opt = guard.get("body").cloned();
+                let timeout_ms = guard.get("timeout_ms").and_then(|v| match v {
+                    Value::Int(n) if *n > 0 => Some(*n as u64),
+                    Value::Number(n) if *n > 0.0 => Some(*n as u64),
+                    _ => None,
+                });
+                (method, headers_opt, body_opt, timeout_ms)
+            }
+            _ => ("GET".to_string(), None, None, None),
+        };
+        crate::stdlib::execute_http_request(
+            &method,
+            url,
+            headers_opt.as_ref(),
+            body_opt.as_ref(),
+            timeout_ms,
+            span,
+        )
     }
 }
 
@@ -1260,12 +1297,19 @@ fn builtin_time(
 }
 
 fn builtin_env(_eval: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
-    expect_args("env", 1, &args, span)?;
+    if args.is_empty() {
+        return Err(RuntimeError::new("env() key must be a string.".to_string()).at(span));
+    }
     if let Value::String(k) = &args[0] {
+        let default = if args.len() > 1 {
+            args[1].clone()
+        } else {
+            Value::Null
+        };
         if let Ok(val) = std::env::var(k) {
             Ok(Value::String(val))
         } else {
-            Ok(Value::Null)
+            Ok(default)
         }
     } else {
         Err(RuntimeError::new("env() key must be a string.".to_string()).at(span))

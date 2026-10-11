@@ -25,8 +25,12 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "crypto" => Ok(build_crypto_module()),
         "codec" => Ok(build_codec_module()),
         "regex" => Ok(build_regex_module()),
+        "http" => Ok(build_http_module()),
+        "env" => Ok(build_env_module()),
+        "cli" | "args" => Ok(build_cli_module()),
+        "collections" | "set" => Ok(build_collections_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections",
             clean_name
         ))
         .at(span)),
@@ -952,4 +956,688 @@ fn regex_captures(
                 .at(span),
         )
     }
+}
+
+// -------------------------------------------------------------
+// std:http
+// -------------------------------------------------------------
+pub(crate) fn execute_http_request(
+    method: &str,
+    url: &str,
+    headers_opt: Option<&IndexMap<String, Value>>,
+    body_opt: Option<&Value>,
+    timeout_ms: Option<u64>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    let client_builder = reqwest::blocking::Client::builder();
+    let client = if let Some(ms) = timeout_ms {
+        client_builder.timeout(std::time::Duration::from_millis(ms))
+    } else {
+        client_builder.timeout(std::time::Duration::from_secs(30))
+    }
+    .build()
+    .map_err(|e| RuntimeError::new(format!("http: client initialization error: {}", e)).at(span))?;
+
+    let method_upper = method.to_uppercase();
+    let req_method = match method_upper.as_str() {
+        "POST" => reqwest::Method::POST,
+        "PUT" => reqwest::Method::PUT,
+        "DELETE" => reqwest::Method::DELETE,
+        "PATCH" => reqwest::Method::PATCH,
+        "HEAD" => reqwest::Method::HEAD,
+        _ => reqwest::Method::GET,
+    };
+
+    let mut req = client.request(req_method, url);
+
+    if let Some(headers) = headers_opt {
+        for (k, v) in headers {
+            let val_str = match v {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            req = req.header(k.as_str(), val_str);
+        }
+    }
+
+    if let Some(b) = body_opt {
+        let body_str = match b {
+            Value::String(s) => s.clone(),
+            Value::Map(_) | Value::Array(_) => b.to_json().to_string(),
+            other => other.to_string(),
+        };
+        req = req.body(body_str);
+    }
+
+    let response = req.send().map_err(|e| {
+        RuntimeError::new(format!("http: request to '{}' failed: {}", url, e)).at(span)
+    })?;
+
+    let status = response.status().as_u16() as i64;
+    let status_text = response
+        .status()
+        .canonical_reason()
+        .unwrap_or("")
+        .to_string();
+    let is_ok = response.status().is_success();
+
+    let mut resp_headers = IndexMap::new();
+    for (k, v) in response.headers() {
+        if let Ok(v_str) = v.to_str() {
+            resp_headers.insert(k.as_str().to_string(), Value::String(v_str.to_string()));
+        }
+    }
+
+    let body_text = response.text().unwrap_or_default();
+
+    let mut out = IndexMap::new();
+    out.insert("status".to_string(), Value::Int(status));
+    out.insert("status_text".to_string(), Value::String(status_text));
+    out.insert("ok".to_string(), Value::Bool(is_ok));
+    out.insert(
+        "headers".to_string(),
+        Value::Map(Arc::new(RwLock::new(resp_headers))),
+    );
+    out.insert("body".to_string(), Value::String(body_text));
+
+    Ok(Value::Map(Arc::new(RwLock::new(out))))
+}
+
+fn http_get(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(RuntimeError::new("http.get expects (url, [opts])".into()).at(span));
+    }
+    let url = match &args[0] {
+        Value::String(u) => u.as_str(),
+        _ => return Err(RuntimeError::new("http.get expects a string url".into()).at(span)),
+    };
+    let (headers_opt, timeout_ms) = if args.len() > 1 {
+        match &args[1] {
+            Value::Map(m) => {
+                let guard = m.read().unwrap();
+                let headers = guard.get("headers").and_then(|v| match v {
+                    Value::Map(hm) => Some(hm.read().unwrap().clone()),
+                    _ => None,
+                });
+                let timeout = guard.get("timeout_ms").and_then(|v| match v {
+                    Value::Int(n) if *n > 0 => Some(*n as u64),
+                    Value::Number(n) if *n > 0.0 => Some(*n as u64),
+                    _ => None,
+                });
+                (headers, timeout)
+            }
+            _ => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+    execute_http_request("GET", url, headers_opt.as_ref(), None, timeout_ms, span)
+}
+
+fn http_post(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() < 2 {
+        return Err(RuntimeError::new("http.post expects (url, body, [opts])".into()).at(span));
+    }
+    let url = match &args[0] {
+        Value::String(u) => u.as_str(),
+        _ => return Err(RuntimeError::new("http.post expects a string url".into()).at(span)),
+    };
+    let body = &args[1];
+    let (headers_opt, timeout_ms) = if args.len() > 2 {
+        match &args[2] {
+            Value::Map(m) => {
+                let guard = m.read().unwrap();
+                let headers = guard.get("headers").and_then(|v| match v {
+                    Value::Map(hm) => Some(hm.read().unwrap().clone()),
+                    _ => None,
+                });
+                let timeout = guard.get("timeout_ms").and_then(|v| match v {
+                    Value::Int(n) if *n > 0 => Some(*n as u64),
+                    Value::Number(n) if *n > 0.0 => Some(*n as u64),
+                    _ => None,
+                });
+                (headers, timeout)
+            }
+            _ => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+    execute_http_request(
+        "POST",
+        url,
+        headers_opt.as_ref(),
+        Some(body),
+        timeout_ms,
+        span,
+    )
+}
+
+fn http_put(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() < 2 {
+        return Err(RuntimeError::new("http.put expects (url, body, [opts])".into()).at(span));
+    }
+    let url = match &args[0] {
+        Value::String(u) => u.as_str(),
+        _ => return Err(RuntimeError::new("http.put expects a string url".into()).at(span)),
+    };
+    let body = &args[1];
+    let (headers_opt, timeout_ms) = if args.len() > 2 {
+        match &args[2] {
+            Value::Map(m) => {
+                let guard = m.read().unwrap();
+                let headers = guard.get("headers").and_then(|v| match v {
+                    Value::Map(hm) => Some(hm.read().unwrap().clone()),
+                    _ => None,
+                });
+                let timeout = guard.get("timeout_ms").and_then(|v| match v {
+                    Value::Int(n) if *n > 0 => Some(*n as u64),
+                    Value::Number(n) if *n > 0.0 => Some(*n as u64),
+                    _ => None,
+                });
+                (headers, timeout)
+            }
+            _ => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+    execute_http_request(
+        "PUT",
+        url,
+        headers_opt.as_ref(),
+        Some(body),
+        timeout_ms,
+        span,
+    )
+}
+
+fn http_delete(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(RuntimeError::new("http.delete expects (url, [opts])".into()).at(span));
+    }
+    let url = match &args[0] {
+        Value::String(u) => u.as_str(),
+        _ => return Err(RuntimeError::new("http.delete expects a string url".into()).at(span)),
+    };
+    let (headers_opt, timeout_ms) = if args.len() > 1 {
+        match &args[1] {
+            Value::Map(m) => {
+                let guard = m.read().unwrap();
+                let headers = guard.get("headers").and_then(|v| match v {
+                    Value::Map(hm) => Some(hm.read().unwrap().clone()),
+                    _ => None,
+                });
+                let timeout = guard.get("timeout_ms").and_then(|v| match v {
+                    Value::Int(n) if *n > 0 => Some(*n as u64),
+                    Value::Number(n) if *n > 0.0 => Some(*n as u64),
+                    _ => None,
+                });
+                (headers, timeout)
+            }
+            _ => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+    execute_http_request("DELETE", url, headers_opt.as_ref(), None, timeout_ms, span)
+}
+
+fn http_patch(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() < 2 {
+        return Err(RuntimeError::new("http.patch expects (url, body, [opts])".into()).at(span));
+    }
+    let url = match &args[0] {
+        Value::String(u) => u.as_str(),
+        _ => return Err(RuntimeError::new("http.patch expects a string url".into()).at(span)),
+    };
+    let body = &args[1];
+    let (headers_opt, timeout_ms) = if args.len() > 2 {
+        match &args[2] {
+            Value::Map(m) => {
+                let guard = m.read().unwrap();
+                let headers = guard.get("headers").and_then(|v| match v {
+                    Value::Map(hm) => Some(hm.read().unwrap().clone()),
+                    _ => None,
+                });
+                let timeout = guard.get("timeout_ms").and_then(|v| match v {
+                    Value::Int(n) if *n > 0 => Some(*n as u64),
+                    Value::Number(n) if *n > 0.0 => Some(*n as u64),
+                    _ => None,
+                });
+                (headers, timeout)
+            }
+            _ => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+    execute_http_request(
+        "PATCH",
+        url,
+        headers_opt.as_ref(),
+        Some(body),
+        timeout_ms,
+        span,
+    )
+}
+
+fn http_request(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("http.request", 1, &args, span)?;
+    match &args[0] {
+        Value::Map(m) => {
+            let guard = m.read().unwrap();
+            let url = guard
+                .get("url")
+                .and_then(|v| match v {
+                    Value::String(s) => Some(s.as_str()),
+                    _ => None,
+                })
+                .ok_or_else(|| {
+                    RuntimeError::new("http.request expects 'url' string property".into()).at(span)
+                })?;
+            let method = guard
+                .get("method")
+                .and_then(|v| match v {
+                    Value::String(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "GET".to_string());
+            let headers_opt = guard.get("headers").and_then(|v| match v {
+                Value::Map(hm) => Some(hm.read().unwrap().clone()),
+                _ => None,
+            });
+            let body_opt = guard.get("body");
+            let timeout_ms = guard.get("timeout_ms").and_then(|v| match v {
+                Value::Int(n) if *n > 0 => Some(*n as u64),
+                Value::Number(n) if *n > 0.0 => Some(*n as u64),
+                _ => None,
+            });
+            execute_http_request(
+                &method,
+                url,
+                headers_opt.as_ref(),
+                body_opt,
+                timeout_ms,
+                span,
+            )
+        }
+        _ => Err(RuntimeError::new("http.request expects an options map".into()).at(span)),
+    }
+}
+
+fn build_http_module() -> Value {
+    make_map(vec![
+        ("get", http_get),
+        ("post", http_post),
+        ("put", http_put),
+        ("delete", http_delete),
+        ("patch", http_patch),
+        ("request", http_request),
+        ("fetch", http_get),
+    ])
+}
+
+// -------------------------------------------------------------
+// std:env
+// -------------------------------------------------------------
+fn env_get(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(RuntimeError::new("env.get expects at least 1 argument".into()).at(span));
+    }
+    if let Value::String(key) = &args[0] {
+        let default = if args.len() > 1 {
+            args[1].clone()
+        } else {
+            Value::Null
+        };
+        match std::env::var(key) {
+            Ok(v) => Ok(Value::String(v)),
+            Err(_) => Ok(default),
+        }
+    } else {
+        Err(RuntimeError::new("env.get expects string key".into()).at(span))
+    }
+}
+
+fn env_set(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("env.set", 2, &args, span)?;
+    if let (Value::String(k), Value::String(v)) = (&args[0], &args[1]) {
+        unsafe {
+            std::env::set_var(k, v);
+        }
+        Ok(Value::Bool(true))
+    } else {
+        Err(RuntimeError::new("env.set expects (string key, string value)".into()).at(span))
+    }
+}
+
+fn env_has(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("env.has", 1, &args, span)?;
+    if let Value::String(k) = &args[0] {
+        Ok(Value::Bool(std::env::var(k).is_ok()))
+    } else {
+        Err(RuntimeError::new("env.has expects string key".into()).at(span))
+    }
+}
+
+fn env_remove(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("env.remove", 1, &args, span)?;
+    if let Value::String(k) = &args[0] {
+        unsafe {
+            std::env::remove_var(k);
+        }
+        Ok(Value::Bool(true))
+    } else {
+        Err(RuntimeError::new("env.remove expects string key".into()).at(span))
+    }
+}
+
+fn env_all(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+    let mut map = IndexMap::new();
+    for (k, v) in std::env::vars() {
+        map.insert(k, Value::String(v));
+    }
+    Ok(Value::Map(Arc::new(RwLock::new(map))))
+}
+
+fn parse_dotenv_content(content: &str) -> IndexMap<String, Value> {
+    let mut map = IndexMap::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let clean = if let Some(stripped) = trimmed.strip_prefix("export ") {
+            stripped.trim()
+        } else {
+            trimmed
+        };
+        if let Some((k, v)) = clean.split_once('=') {
+            let key = k.trim().to_string();
+            let mut val = v.trim();
+            if (val.starts_with('"') && val.ends_with('"'))
+                || (val.starts_with('\'') && val.ends_with('\''))
+            {
+                if val.len() >= 2 {
+                    val = &val[1..val.len() - 1];
+                }
+            }
+            map.insert(key, Value::String(val.to_string()));
+        }
+    }
+    map
+}
+
+fn env_parse_dotenv(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("env.parse_dotenv", 1, &args, span)?;
+    if let Value::String(content) = &args[0] {
+        let map = parse_dotenv_content(content);
+        Ok(Value::Map(Arc::new(RwLock::new(map))))
+    } else {
+        Err(RuntimeError::new("env.parse_dotenv expects string content".into()).at(span))
+    }
+}
+
+fn env_load_dotenv(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
+    let path = if !args.is_empty() {
+        match &args[0] {
+            Value::String(p) => p.clone(),
+            _ => ".env".to_string(),
+        }
+    } else {
+        ".env".to_string()
+    };
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        let map = parse_dotenv_content(&content);
+        for (k, v) in &map {
+            if let Value::String(val_str) = v {
+                unsafe {
+                    std::env::set_var(k, val_str);
+                }
+            }
+        }
+        Ok(Value::Map(Arc::new(RwLock::new(map))))
+    } else {
+        Ok(Value::Map(Arc::new(RwLock::new(IndexMap::new()))))
+    }
+}
+
+fn build_env_module() -> Value {
+    make_map(vec![
+        ("get", env_get),
+        ("set", env_set),
+        ("has", env_has),
+        ("remove", env_remove),
+        ("all", env_all),
+        ("parse_dotenv", env_parse_dotenv),
+        ("load_dotenv", env_load_dotenv),
+    ])
+}
+
+// -------------------------------------------------------------
+// std:cli / std:args
+// -------------------------------------------------------------
+fn cli_args(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+    let args: Vec<Value> = std::env::args().map(Value::String).collect();
+    Ok(Value::Array(Arc::new(RwLock::new(args))))
+}
+
+fn cli_parse(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(RuntimeError::new("cli.parse expects an array of arguments".into()).at(span));
+    }
+    let items: Vec<String> = match &args[0] {
+        Value::Array(arr) => {
+            let guard = arr.read().unwrap();
+            guard
+                .iter()
+                .map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .collect()
+        }
+        _ => {
+            return Err(RuntimeError::new("cli.parse expects an array of strings".into()).at(span));
+        }
+    };
+
+    let mut options = IndexMap::new();
+    let mut flags = IndexMap::new();
+    let mut positional = Vec::new();
+
+    let mut i = 0;
+    while i < items.len() {
+        let arg = &items[i];
+        if let Some(rest) = arg.strip_prefix("--") {
+            if let Some((key, val)) = rest.split_once('=') {
+                options.insert(key.to_string(), Value::String(val.to_string()));
+            } else if i + 1 < items.len() && !items[i + 1].starts_with('-') {
+                options.insert(rest.to_string(), Value::String(items[i + 1].clone()));
+                i += 1;
+            } else {
+                flags.insert(rest.to_string(), Value::Bool(true));
+            }
+        } else if let Some(rest) = arg.strip_prefix('-') {
+            if rest.len() == 1 {
+                if i + 1 < items.len() && !items[i + 1].starts_with('-') {
+                    options.insert(rest.to_string(), Value::String(items[i + 1].clone()));
+                    i += 1;
+                } else {
+                    flags.insert(rest.to_string(), Value::Bool(true));
+                }
+            } else {
+                for ch in rest.chars() {
+                    flags.insert(ch.to_string(), Value::Bool(true));
+                }
+            }
+        } else {
+            positional.push(Value::String(arg.clone()));
+        }
+        i += 1;
+    }
+
+    let mut res = IndexMap::new();
+    res.insert(
+        "options".to_string(),
+        Value::Map(Arc::new(RwLock::new(options))),
+    );
+    res.insert(
+        "flags".to_string(),
+        Value::Map(Arc::new(RwLock::new(flags))),
+    );
+    res.insert(
+        "positional".to_string(),
+        Value::Array(Arc::new(RwLock::new(positional.clone()))),
+    );
+    let sub = if !positional.is_empty() {
+        positional[0].clone()
+    } else {
+        Value::Null
+    };
+    res.insert("subcommand".to_string(), sub);
+
+    Ok(Value::Map(Arc::new(RwLock::new(res))))
+}
+
+fn build_cli_module() -> Value {
+    make_map(vec![("args", cli_args), ("parse", cli_parse)])
+}
+
+// -------------------------------------------------------------
+// std:collections / std:set
+// -------------------------------------------------------------
+fn col_unique(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("collections.unique", 1, &args, span)?;
+    if let Value::Array(arr) = &args[0] {
+        let guard = arr.read().unwrap();
+        let mut unique_items = Vec::new();
+        for item in guard.iter() {
+            if !unique_items.contains(item) {
+                unique_items.push(item.clone());
+            }
+        }
+        Ok(Value::Array(Arc::new(RwLock::new(unique_items))))
+    } else {
+        Err(RuntimeError::new("collections.unique expects array".into()).at(span))
+    }
+}
+
+fn col_union(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("collections.union", 2, &args, span)?;
+    if let (Value::Array(a), Value::Array(b)) = (&args[0], &args[1]) {
+        let a_guard = a.read().unwrap();
+        let b_guard = b.read().unwrap();
+        let mut out = Vec::new();
+        for item in a_guard.iter().chain(b_guard.iter()) {
+            if !out.contains(item) {
+                out.push(item.clone());
+            }
+        }
+        Ok(Value::Array(Arc::new(RwLock::new(out))))
+    } else {
+        Err(RuntimeError::new("collections.union expects (array, array)".into()).at(span))
+    }
+}
+
+fn col_intersect(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("collections.intersect", 2, &args, span)?;
+    if let (Value::Array(a), Value::Array(b)) = (&args[0], &args[1]) {
+        let a_guard = a.read().unwrap();
+        let b_guard = b.read().unwrap();
+        let mut out = Vec::new();
+        for item in a_guard.iter() {
+            if b_guard.contains(item) && !out.contains(item) {
+                out.push(item.clone());
+            }
+        }
+        Ok(Value::Array(Arc::new(RwLock::new(out))))
+    } else {
+        Err(RuntimeError::new("collections.intersect expects (array, array)".into()).at(span))
+    }
+}
+
+fn col_difference(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("collections.difference", 2, &args, span)?;
+    if let (Value::Array(a), Value::Array(b)) = (&args[0], &args[1]) {
+        let a_guard = a.read().unwrap();
+        let b_guard = b.read().unwrap();
+        let mut out = Vec::new();
+        for item in a_guard.iter() {
+            if !b_guard.contains(item) && !out.contains(item) {
+                out.push(item.clone());
+            }
+        }
+        Ok(Value::Array(Arc::new(RwLock::new(out))))
+    } else {
+        Err(RuntimeError::new("collections.difference expects (array, array)".into()).at(span))
+    }
+}
+
+fn col_chunk(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("collections.chunk", 2, &args, span)?;
+    let size = match &args[1] {
+        Value::Int(n) if *n > 0 => *n as usize,
+        Value::Number(n) if *n > 0.0 => *n as usize,
+        _ => {
+            return Err(RuntimeError::new(
+                "collections.chunk size must be a positive integer".into(),
+            )
+            .at(span));
+        }
+    };
+    if let Value::Array(arr) = &args[0] {
+        let guard = arr.read().unwrap();
+        let chunks: Vec<Value> = guard
+            .chunks(size)
+            .map(|c| Value::Array(Arc::new(RwLock::new(c.to_vec()))))
+            .collect();
+        Ok(Value::Array(Arc::new(RwLock::new(chunks))))
+    } else {
+        Err(RuntimeError::new("collections.chunk expects array".into()).at(span))
+    }
+}
+
+fn col_zip(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("collections.zip", 2, &args, span)?;
+    if let (Value::Array(a), Value::Array(b)) = (&args[0], &args[1]) {
+        let a_guard = a.read().unwrap();
+        let b_guard = b.read().unwrap();
+        let zipped: Vec<Value> = a_guard
+            .iter()
+            .zip(b_guard.iter())
+            .map(|(x, y)| Value::Array(Arc::new(RwLock::new(vec![x.clone(), y.clone()]))))
+            .collect();
+        Ok(Value::Array(Arc::new(RwLock::new(zipped))))
+    } else {
+        Err(RuntimeError::new("collections.zip expects (array, array)".into()).at(span))
+    }
+}
+
+fn build_collections_module() -> Value {
+    make_map(vec![
+        ("unique", col_unique),
+        ("union", col_union),
+        ("intersect", col_intersect),
+        ("difference", col_difference),
+        ("chunk", col_chunk),
+        ("zip", col_zip),
+        ("set_from_array", col_unique),
+        ("set_union", col_union),
+        ("set_intersect", col_intersect),
+        ("set_difference", col_difference),
+    ])
 }
