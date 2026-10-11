@@ -1673,8 +1673,9 @@ impl VM {
                             for arg in &args {
                                 self.close_upvalues_in_value(arg);
                             }
-                            self.open_upvalues
-                                .retain(|uv| matches!(uv.read().unwrap().location, UpvalueLocation::Open(_)));
+                            self.open_upvalues.retain(|uv| {
+                                matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
+                            });
                             if name == "gc" {
                                 let stats = self.collect_garbage();
                                 self.stack.push(Value::Int(stats.freed_objects as i64));
@@ -1700,7 +1701,11 @@ impl VM {
                             let mut evaluator = crate::eval::Evaluator::new();
                             evaluator.current_file = self.current_file.clone();
                             for (k, v) in &self.globals {
-                                evaluator.global_env.write().unwrap().define(k.clone(), v.clone());
+                                evaluator
+                                    .global_env
+                                    .write()
+                                    .unwrap()
+                                    .define(k.clone(), v.clone());
                             }
                             match func(&mut evaluator, args, crate::ast::Span::new(1, 1)) {
                                 Ok(val) => self.stack.push(val),
@@ -1714,12 +1719,17 @@ impl VM {
                             for arg in &args {
                                 self.close_upvalues_in_value(arg);
                             }
-                            self.open_upvalues
-                                .retain(|uv| matches!(uv.read().unwrap().location, UpvalueLocation::Open(_)));
+                            self.open_upvalues.retain(|uv| {
+                                matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
+                            });
                             let mut evaluator = crate::eval::Evaluator::new();
                             evaluator.current_file = self.current_file.clone();
                             for (k, v) in &self.globals {
-                                evaluator.global_env.write().unwrap().define(k.clone(), v.clone());
+                                evaluator
+                                    .global_env
+                                    .write()
+                                    .unwrap()
+                                    .define(k.clone(), v.clone());
                             }
                             match evaluator.call_value(&callee, args, crate::ast::Span::new(1, 1)) {
                                 Ok(val) => self.stack.push(val),
@@ -1803,7 +1813,10 @@ impl VM {
                             if *stack_idx < self.stack.len() {
                                 self.stack[*stack_idx].clone()
                             } else {
-                                runtime_error!(self, format!("Invalid upvalue stack index {}", stack_idx));
+                                runtime_error!(
+                                    self,
+                                    format!("Invalid upvalue stack index {}", stack_idx)
+                                );
                             }
                         }
                         UpvalueLocation::Closed(v) => v.clone(),
@@ -1825,7 +1838,10 @@ impl VM {
                             if *stack_idx < self.stack.len() {
                                 self.stack[*stack_idx] = val;
                             } else {
-                                runtime_error!(self, format!("Invalid upvalue stack index {}", stack_idx));
+                                runtime_error!(
+                                    self,
+                                    format!("Invalid upvalue stack index {}", stack_idx)
+                                );
                             }
                         }
                         UpvalueLocation::Closed(v) => {

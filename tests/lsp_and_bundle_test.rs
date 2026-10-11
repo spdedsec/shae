@@ -346,7 +346,10 @@ fn test_bundle_bytecode_execution() {
     vm.embedded_bytecode = Some(std::sync::Arc::new(archive.bytecode.clone()));
 
     let res = vm.interpret(chunk);
-    assert_eq!(res, shae::vm::InterpretResult::Ok(shae::value::Value::Int(42)));
+    assert_eq!(
+        res,
+        shae::vm::InterpretResult::Ok(shae::value::Value::Int(42))
+    );
 }
 
 #[test]
@@ -382,7 +385,10 @@ fn test_bundle_strip_source() {
     vm.embedded_bytecode = Some(std::sync::Arc::new(archive.bytecode.clone()));
 
     let res = vm.interpret(chunk);
-    assert_eq!(res, shae::vm::InterpretResult::Ok(shae::value::Value::Int(200)));
+    assert_eq!(
+        res,
+        shae::vm::InterpretResult::Ok(shae::value::Value::Int(200))
+    );
 }
 
 #[test]
@@ -427,4 +433,3 @@ fn test_bundle_backward_compatibility_deserialization() {
     let val = shae::run_in_evaluator(src, &mut ev).unwrap();
     assert_eq!(val, shae::value::Value::Int(123));
 }
-

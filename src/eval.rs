@@ -238,13 +238,11 @@ impl Evaluator {
                 .or_else(|| bc_map.get(path_str))
                 .or_else(|| bc_map.get(trimmed))
                 .or_else(|| {
-                    bc_map.iter().find_map(|(k, v)| {
-                        if k.ends_with(trimmed) {
-                            Some(v)
-                        } else {
-                            None
-                        }
-                    })
+                    bc_map.iter().find_map(
+                        |(k, v)| {
+                            if k.ends_with(trimmed) { Some(v) } else { None }
+                        },
+                    )
                 })
                 .cloned()
         } else {

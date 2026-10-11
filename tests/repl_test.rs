@@ -1,4 +1,4 @@
-use shae::repl::{is_input_complete, ReplState};
+use shae::repl::{ReplState, is_input_complete};
 use shae::value::Value;
 
 #[test]
@@ -10,7 +10,9 @@ fn test_repl_vm_state_persistence() {
     assert_eq!(res1, Some(Value::Null));
 
     // 2. Declare function using global/top-level variable
-    let res2 = repl.eval_line("fn add(a, b) { a + b }").expect("fn should succeed");
+    let res2 = repl
+        .eval_line("fn add(a, b) { a + b }")
+        .expect("fn should succeed");
     assert_eq!(res2, Some(Value::Null));
 
     // 3. Call function using previously declared variable and function
@@ -39,7 +41,8 @@ fn test_repl_ast_mode() {
     let mut repl = ReplState::new(false);
     assert!(!repl.use_vm);
 
-    repl.eval_line("let msg = \"  Hello Shae  \"").expect("eval let in AST");
+    repl.eval_line("let msg = \"  Hello Shae  \"")
+        .expect("eval let in AST");
     let res = repl.eval_line("msg.trim()").expect("eval expr in AST");
     assert_eq!(res, Some(Value::String("Hello Shae".to_string())));
 }
@@ -78,7 +81,8 @@ fn fib(n) {
 }
 "#;
     assert!(is_input_complete(block));
-    repl.eval_line(block).expect("multi-line function definition should compile");
+    repl.eval_line(block)
+        .expect("multi-line function definition should compile");
 
     let res = repl.eval_line("fib(10)").expect("fib(10) should evaluate");
     assert_eq!(res, Some(Value::Int(55)));

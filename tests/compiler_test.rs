@@ -1167,7 +1167,8 @@ fn test_bytecode_file_compile_and_run() {
 
     // Disassemble compiled file
     let bc_bytes = fs::read(&bc_path).expect("read bytecode");
-    let disasm = shae::disassemble_bytecode(&bc_bytes, "calc.shaec").expect("disassemble should succeed");
+    let disasm =
+        shae::disassemble_bytecode(&bc_bytes, "calc.shaec").expect("disassemble should succeed");
     assert!(disasm.contains("Constants:"));
     assert!(disasm.contains("Disassembly:"));
 
@@ -1185,7 +1186,8 @@ fn test_bytecode_module_import() {
 
     let mod_src = "fn square(n) { n * n }\nlet factor = 10;\n";
     fs::write(&mod_src_path, mod_src).expect("write module src");
-    shae::compile_file_to_bytecode(&mod_src_path, &mod_bc_path).expect("compile module to bytecode");
+    shae::compile_file_to_bytecode(&mod_src_path, &mod_bc_path)
+        .expect("compile module to bytecode");
 
     // Remove source file to prove we are importing directly from .shaec!
     let _ = fs::remove_file(&mod_src_path);

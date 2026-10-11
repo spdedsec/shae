@@ -14,12 +14,12 @@ pub mod lsp;
 pub mod opcode;
 pub mod parser;
 pub mod pkg;
+pub mod repl;
 pub mod stdlib;
 pub mod suggest;
 pub mod token;
 pub mod value;
 pub mod vm;
-pub mod repl;
 
 use thiserror::Error;
 
@@ -135,8 +135,13 @@ pub fn run_file_vm<P: AsRef<std::path::Path>>(path: P) -> Result<value::Value, S
     let chunk = if bytes.starts_with(crate::chunk::BYTECODE_MAGIC)
         || path_ref.extension().map_or(false, |ext| ext == "shaec")
     {
-        chunk::Chunk::from_bytes(&bytes)
-            .map_err(|e| eval::RuntimeError::new(format!("Bytecode load error in '{}': {}", path_ref.display(), e)))?
+        chunk::Chunk::from_bytes(&bytes).map_err(|e| {
+            eval::RuntimeError::new(format!(
+                "Bytecode load error in '{}': {}",
+                path_ref.display(),
+                e
+            ))
+        })?
     } else {
         let source = String::from_utf8(bytes).map_err(|e| {
             eval::RuntimeError::new(format!(
@@ -272,6 +277,3 @@ pub fn parse_source(source: &str) -> Result<ast::Program, ShaeError> {
 }
 
 pub use fmt::{format_program, format_source};
-
-
-

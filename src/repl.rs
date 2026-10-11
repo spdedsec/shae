@@ -154,7 +154,11 @@ pub fn run_interactive_repl(initial_use_vm: bool) {
             Ok(_) => {
                 let trimmed = line.trim();
                 if buffer.is_empty() {
-                    if trimmed == "exit" || trimmed == "quit" || trimmed == ":exit" || trimmed == ":quit" {
+                    if trimmed == "exit"
+                        || trimmed == "quit"
+                        || trimmed == ":exit"
+                        || trimmed == ":quit"
+                    {
                         break;
                     }
                     if trimmed.starts_with(':') {
@@ -232,7 +236,11 @@ fn handle_repl_command(state: &mut ReplState, cmd: &str) {
                     }
                 }
             } else {
-                let cur = if state.use_vm { "Bytecode VM" } else { "AST Interpreter" };
+                let cur = if state.use_vm {
+                    "Bytecode VM"
+                } else {
+                    "AST Interpreter"
+                };
                 println!("Current engine: {}", cur);
             }
         }

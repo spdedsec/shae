@@ -417,7 +417,8 @@ impl Chunk {
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
-        self.serialize(&mut buf).expect("in-memory write cannot fail");
+        self.serialize(&mut buf)
+            .expect("in-memory write cannot fail");
         buf
     }
 
@@ -438,7 +439,9 @@ impl Chunk {
         r.read_exact(&mut magic)
             .map_err(|e| format!("Failed to read bytecode magic: {}", e))?;
         if &magic != BYTECODE_MAGIC {
-            return Err("Invalid bytecode file: magic header mismatch (expected \\x7fSHAE)".to_string());
+            return Err(
+                "Invalid bytecode file: magic header mismatch (expected \\x7fSHAE)".to_string(),
+            );
         }
 
         let mut ver_bytes = [0u8; 2];
@@ -705,20 +708,25 @@ impl Chunk {
                 }
                 Ok(Value::Map(Arc::new(RwLock::new(map))))
             }
-            other => Err(format!("Corrupt bytecode: unrecognized constant tag {}", other)),
+            other => Err(format!(
+                "Corrupt bytecode: unrecognized constant tag {}",
+                other
+            )),
         }
     }
 }
 
 fn read_u8<R: Read>(r: &mut R) -> Result<u8, String> {
     let mut b = [0u8; 1];
-    r.read_exact(&mut b).map_err(|e| format!("Unexpected EOF or read error: {}", e))?;
+    r.read_exact(&mut b)
+        .map_err(|e| format!("Unexpected EOF or read error: {}", e))?;
     Ok(b[0])
 }
 
 fn read_u32<R: Read>(r: &mut R) -> Result<u32, String> {
     let mut b = [0u8; 4];
-    r.read_exact(&mut b).map_err(|e| format!("Unexpected EOF or read error: {}", e))?;
+    r.read_exact(&mut b)
+        .map_err(|e| format!("Unexpected EOF or read error: {}", e))?;
     Ok(u32::from_le_bytes(b))
 }
 
@@ -728,6 +736,7 @@ fn read_string<R: Read>(r: &mut R) -> Result<String, String> {
         return Err("String in bytecode exceeds 50MB limit".to_string());
     }
     let mut buf = vec![0u8; len];
-    r.read_exact(&mut buf).map_err(|e| format!("Failed to read string data: {}", e))?;
+    r.read_exact(&mut buf)
+        .map_err(|e| format!("Failed to read string data: {}", e))?;
     String::from_utf8(buf).map_err(|e| format!("Invalid UTF-8 in bytecode string: {}", e))
 }
