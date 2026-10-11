@@ -140,6 +140,7 @@ impl VM {
             chunk,
             name: None,
             upvalues: Vec::new(),
+            is_async: false,
         });
         let top_closure = Arc::new(Closure {
             function: top_fn,
@@ -1789,6 +1790,32 @@ impl VM {
                                     )
                                 );
                             }
+                            if closure.function.is_async {
+                                let args: Vec<Value> =
+                                    self.stack.drain(callee_slot + 1..).collect();
+                                self.stack.pop(); // pop callee
+                                let current_file = self.current_file.clone();
+                                let globals = self.globals.clone();
+                                let handle = crate::async_rt::spawn_task(move || {
+                                    let mut vm = VM::new();
+                                    vm.current_file = current_file;
+                                    vm.globals = globals;
+                                    match vm.execute_closure(closure, args) {
+                                        InterpretResult::Ok(val) => Ok(val),
+                                        InterpretResult::RuntimeError(msg) => {
+                                            Err(crate::eval::RuntimeError::new(msg))
+                                        }
+                                        InterpretResult::CompileError => {
+                                            Err(crate::eval::RuntimeError::new(
+                                                "Compile error in VM".into(),
+                                            ))
+                                        }
+                                    }
+                                });
+                                self.stack
+                                    .push(Value::Task(Arc::new(Mutex::new(Some(handle)))));
+                                continue;
+                            }
                             if self.frames.len() >= 1024 {
                                 runtime_error!(
                                     self,
@@ -1817,12 +1844,6 @@ impl VM {
                                     )
                                 );
                             }
-                            if self.frames.len() >= 1024 {
-                                runtime_error!(
-                                    self,
-                                    "Stack overflow: call stack exceeded maximum depth.",
-                                );
-                            }
                             let mod_globals = self
                                 .frames
                                 .last()
@@ -1833,6 +1854,38 @@ impl VM {
                                 upvalues: Vec::new(),
                                 module_globals: mod_globals,
                             });
+                            if closure.function.is_async {
+                                let args: Vec<Value> =
+                                    self.stack.drain(callee_slot + 1..).collect();
+                                self.stack.pop(); // pop callee
+                                let current_file = self.current_file.clone();
+                                let globals = self.globals.clone();
+                                let handle = crate::async_rt::spawn_task(move || {
+                                    let mut vm = VM::new();
+                                    vm.current_file = current_file;
+                                    vm.globals = globals;
+                                    match vm.execute_closure(closure, args) {
+                                        InterpretResult::Ok(val) => Ok(val),
+                                        InterpretResult::RuntimeError(msg) => {
+                                            Err(crate::eval::RuntimeError::new(msg))
+                                        }
+                                        InterpretResult::CompileError => {
+                                            Err(crate::eval::RuntimeError::new(
+                                                "Compile error in VM".into(),
+                                            ))
+                                        }
+                                    }
+                                });
+                                self.stack
+                                    .push(Value::Task(Arc::new(Mutex::new(Some(handle)))));
+                                continue;
+                            }
+                            if self.frames.len() >= 1024 {
+                                runtime_error!(
+                                    self,
+                                    "Stack overflow: call stack exceeded maximum depth.",
+                                );
+                            }
                             if let Some(prof) = &mut self.profiler {
                                 let name =
                                     closure.function.name.as_deref().unwrap_or("<anonymous>");
@@ -1970,6 +2023,42 @@ impl VM {
                                     )
                                 );
                             }
+                            if closure.function.is_async {
+                                let args: Vec<Value> =
+                                    self.stack.drain(callee_slot + 1..).collect();
+                                self.stack.pop(); // pop callee
+                                let current_file = self.current_file.clone();
+                                let globals = self.globals.clone();
+                                let handle = crate::async_rt::spawn_task(move || {
+                                    let mut vm = VM::new();
+                                    vm.current_file = current_file;
+                                    vm.globals = globals;
+                                    match vm.execute_closure(closure, args) {
+                                        InterpretResult::Ok(val) => Ok(val),
+                                        InterpretResult::RuntimeError(msg) => {
+                                            Err(crate::eval::RuntimeError::new(msg))
+                                        }
+                                        InterpretResult::CompileError => {
+                                            Err(crate::eval::RuntimeError::new(
+                                                "Compile error in VM".into(),
+                                            ))
+                                        }
+                                    }
+                                });
+                                let val = Value::Task(Arc::new(Mutex::new(Some(handle))));
+                                if has_try {
+                                    self.stack.push(val);
+                                } else {
+                                    let frame = self.frames.pop().unwrap();
+                                    self.close_upvalues(frame.slots_offset);
+                                    if self.frames.is_empty() {
+                                        return InterpretResult::Ok(val);
+                                    }
+                                    self.stack.truncate(frame.slots_offset);
+                                    self.stack.push(val);
+                                }
+                                continue;
+                            }
                             if has_try {
                                 if self.frames.len() >= 1024 {
                                     runtime_error!(
@@ -2024,6 +2113,42 @@ impl VM {
                                 upvalues: Vec::new(),
                                 module_globals: mod_globals,
                             });
+                            if closure.function.is_async {
+                                let args: Vec<Value> =
+                                    self.stack.drain(callee_slot + 1..).collect();
+                                self.stack.pop(); // pop callee
+                                let current_file = self.current_file.clone();
+                                let globals = self.globals.clone();
+                                let handle = crate::async_rt::spawn_task(move || {
+                                    let mut vm = VM::new();
+                                    vm.current_file = current_file;
+                                    vm.globals = globals;
+                                    match vm.execute_closure(closure, args) {
+                                        InterpretResult::Ok(val) => Ok(val),
+                                        InterpretResult::RuntimeError(msg) => {
+                                            Err(crate::eval::RuntimeError::new(msg))
+                                        }
+                                        InterpretResult::CompileError => {
+                                            Err(crate::eval::RuntimeError::new(
+                                                "Compile error in VM".into(),
+                                            ))
+                                        }
+                                    }
+                                });
+                                let val = Value::Task(Arc::new(Mutex::new(Some(handle))));
+                                if has_try {
+                                    self.stack.push(val);
+                                } else {
+                                    let frame = self.frames.pop().unwrap();
+                                    self.close_upvalues(frame.slots_offset);
+                                    if self.frames.is_empty() {
+                                        return InterpretResult::Ok(val);
+                                    }
+                                    self.stack.truncate(frame.slots_offset);
+                                    self.stack.push(val);
+                                }
+                                continue;
+                            }
                             if has_try {
                                 if self.frames.len() >= 1024 {
                                     runtime_error!(
@@ -2300,6 +2425,37 @@ impl VM {
                     let top_slot = self.stack.len() - 1;
                     self.close_upvalues(top_slot);
                     self.stack.pop();
+                }
+                OpCode::Await => {
+                    let val = match self.stack.pop() {
+                        Some(v) => v,
+                        None => {
+                            runtime_error!(self, "Stack underflow on Await");
+                        }
+                    };
+                    match val {
+                        Value::Task(t) => {
+                            let mut guard = t.lock().unwrap();
+                            if let Some(handle) = guard.take() {
+                                match handle.join() {
+                                    Ok(Ok(resolved)) => {
+                                        self.stack.push(resolved);
+                                    }
+                                    Ok(Err(e)) => {
+                                        runtime_error!(self, e.message);
+                                    }
+                                    Err(_) => {
+                                        runtime_error!(self, "Async task panicked");
+                                    }
+                                }
+                            } else {
+                                runtime_error!(self, "Task already awaited or joined");
+                            }
+                        }
+                        other => {
+                            self.stack.push(other);
+                        }
+                    }
                 }
                 _ => unimplemented!("Opcode {:?} not yet implemented", instruction),
             }

@@ -487,7 +487,7 @@ fn builtin_serve(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
         active.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let env_clone = env_root.clone();
         let handler_clone = handler_root.clone();
-        std::thread::spawn(move || {
+        crate::async_rt::global_pool().execute(move || {
             struct ConnGuard(std::sync::Arc<std::sync::atomic::AtomicUsize>);
             impl Drop for ConnGuard {
                 fn drop(&mut self) {
@@ -691,7 +691,7 @@ fn builtin_serve_tls(
         let env_clone = env_root.clone();
         let handler_clone = handler_root.clone();
         let config_clone = tls_config.clone();
-        std::thread::spawn(move || {
+        crate::async_rt::global_pool().execute(move || {
             struct ConnGuard(std::sync::Arc<std::sync::atomic::AtomicUsize>);
             impl Drop for ConnGuard {
                 fn drop(&mut self) {

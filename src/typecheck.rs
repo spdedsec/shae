@@ -347,6 +347,7 @@ impl TypeChecker {
                 params,
                 return_type,
                 body,
+                ..
             } => {
                 self.push_scope();
                 let declared_ret = return_type.clone().unwrap_or(TypeAnnotation::Any);
@@ -881,7 +882,7 @@ impl TypeChecker {
                 params,
                 return_type,
                 body,
-                span: _,
+                ..
             } => {
                 self.push_scope();
                 let declared_ret = return_type.clone().unwrap_or(TypeAnnotation::Any);
@@ -907,6 +908,7 @@ impl TypeChecker {
                     return_type: Box::new(declared_ret),
                 }
             }
+            Expr::Await { expr, span: _ } => self.infer_expr(expr),
             Expr::Use { .. } => TypeAnnotation::Any,
         }
     }

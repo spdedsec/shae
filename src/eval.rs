@@ -505,6 +505,7 @@ impl Evaluator {
                 params,
                 return_type: _,
                 body,
+                is_async,
             } => {
                 let param_names = Arc::new(params.iter().map(|p| p.name.clone()).collect());
                 let func = Value::Function {
@@ -512,6 +513,7 @@ impl Evaluator {
                     params: param_names,
                     body: body.clone(),
                     closure: env.clone(),
+                    is_async: *is_async,
                 };
                 env.write().unwrap().define(name.clone(), func);
                 Ok(Signal::None)
@@ -1231,6 +1233,7 @@ impl Evaluator {
                 return_type: _,
                 body,
                 span: _,
+                is_async,
             } => {
                 let param_names = Arc::new(params.iter().map(|p| p.name.clone()).collect());
                 Ok(Value::Function {
@@ -1238,7 +1241,31 @@ impl Evaluator {
                     params: param_names,
                     body: body.clone(),
                     closure: env.clone(),
+                    is_async: *is_async,
                 })
+            }
+            Expr::Await { expr, span } => {
+                let val = self.eval_expr(expr, env).map_err(|e| e.or_at(*span))?;
+                match val {
+                    Value::Task(handle_ref) => {
+                        let mut opt_handle = handle_ref.lock().unwrap();
+                        if let Some(handle) = opt_handle.take() {
+                            match handle.join() {
+                                Ok(res) => res.map_err(|e| e.or_at(*span)),
+                                Err(_) => {
+                                    Err(RuntimeError::new("Async task panicked".to_string())
+                                        .at(*span))
+                                }
+                            }
+                        } else {
+                            Err(
+                                RuntimeError::new("Task already awaited or joined".to_string())
+                                    .at(*span),
+                            )
+                        }
+                    }
+                    other => Ok(other),
+                }
             }
             _ => {
                 // For Call, Get, Index, use eval_chain
@@ -1680,6 +1707,7 @@ impl Evaluator {
                 params,
                 body,
                 closure,
+                is_async,
             } => {
                 if args.len() != params.len() {
                     let fn_name = name.clone().unwrap_or_else(|| "anonymous function".into());
@@ -1692,8 +1720,33 @@ impl Evaluator {
                     ))
                     .at(span));
                 }
+                if *is_async {
+                    self.depth -= 1;
+                    let call_env =
+                        Arc::new(RwLock::new(Environment::new_with_parent(closure.clone())));
+                    for (param_name, arg_val) in params.iter().zip(args) {
+                        call_env
+                            .write()
+                            .unwrap()
+                            .define(param_name.clone(), arg_val);
+                    }
+                    let body = body.clone();
+                    let global_env = self.global_env.clone();
+                    let current_file = self.current_file.clone();
+                    let handle = crate::async_rt::spawn_task(move || {
+                        let mut eval = Evaluator::with_env(global_env);
+                        eval.current_file = current_file;
+                        match eval.eval_block(&body, &call_env) {
+                            Ok(Signal::Return(v)) => Ok(v),
+                            Ok(Signal::Value(v)) => Ok(v),
+                            Ok(_) => Ok(Value::Null),
+                            Err(e) => Err(e),
+                        }
+                    });
+                    return Ok(Value::Task(Arc::new(std::sync::Mutex::new(Some(handle)))));
+                }
                 let call_env = Arc::new(RwLock::new(Environment::new_with_parent(closure.clone())));
-                for (param_name, arg_val) in params.iter().zip(args.into_iter()) {
+                for (param_name, arg_val) in params.iter().zip(args) {
                     call_env
                         .write()
                         .unwrap()
@@ -1716,6 +1769,29 @@ impl Evaluator {
                     ))
                     .at(span));
                 }
+                if closure.function.is_async {
+                    self.depth -= 1;
+                    let closure = closure.clone();
+                    let current_file = self.current_file.clone();
+                    let global_map = self.global_env.read().unwrap().export_map();
+                    let handle = crate::async_rt::spawn_task(move || {
+                        let mut vm = crate::vm::VM::new();
+                        vm.current_file = current_file;
+                        for (k, v) in global_map {
+                            vm.globals.insert(k, v);
+                        }
+                        match vm.execute_closure(closure, args) {
+                            crate::vm::InterpretResult::Ok(val) => Ok(val),
+                            crate::vm::InterpretResult::RuntimeError(msg) => {
+                                Err(RuntimeError::new(msg).at(span))
+                            }
+                            crate::vm::InterpretResult::CompileError => {
+                                Err(RuntimeError::new("Compile error in VM".into()).at(span))
+                            }
+                        }
+                    });
+                    return Ok(Value::Task(Arc::new(std::sync::Mutex::new(Some(handle)))));
+                }
                 let mut vm = crate::vm::VM::new();
                 vm.current_file = self.current_file.clone();
                 for (k, v) in self.global_env.read().unwrap().export_map() {
@@ -1737,6 +1813,28 @@ impl Evaluator {
                     upvalues: Vec::new(),
                     module_globals: None,
                 });
+                if func.is_async {
+                    self.depth -= 1;
+                    let current_file = self.current_file.clone();
+                    let global_map = self.global_env.read().unwrap().export_map();
+                    let handle = crate::async_rt::spawn_task(move || {
+                        let mut vm = crate::vm::VM::new();
+                        vm.current_file = current_file;
+                        for (k, v) in global_map {
+                            vm.globals.insert(k, v);
+                        }
+                        match vm.execute_closure(closure, args) {
+                            crate::vm::InterpretResult::Ok(val) => Ok(val),
+                            crate::vm::InterpretResult::RuntimeError(msg) => {
+                                Err(RuntimeError::new(msg).at(span))
+                            }
+                            crate::vm::InterpretResult::CompileError => {
+                                Err(RuntimeError::new("Compile error in VM".into()).at(span))
+                            }
+                        }
+                    });
+                    return Ok(Value::Task(Arc::new(std::sync::Mutex::new(Some(handle)))));
+                }
                 let mut vm = crate::vm::VM::new();
                 vm.current_file = self.current_file.clone();
                 for (k, v) in self.global_env.read().unwrap().export_map() {

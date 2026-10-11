@@ -39,6 +39,8 @@ pub enum Token {
     Continue,
     Try,
     Catch,
+    Async,
+    Await,
 
     // Identifiers & Literals
     Ident(String),
@@ -122,6 +124,8 @@ impl fmt::Display for Token {
             Token::Continue => write!(f, "'continue'"),
             Token::Try => write!(f, "'try'"),
             Token::Catch => write!(f, "'catch'"),
+            Token::Async => write!(f, "'async'"),
+            Token::Await => write!(f, "'await'"),
             Token::Ident(s) => write!(f, "identifier '{}'", s),
             Token::StringLit(s) => write!(f, "string \"{}\"", s),
             Token::IntLit(n) => write!(f, "integer {}", n),
@@ -193,6 +197,8 @@ impl Token {
             Token::Use => Some("use".to_string()),
             Token::From => Some("from".to_string()),
             Token::As => Some("as".to_string()),
+            Token::Async => Some("async".to_string()),
+            Token::Await => Some("await".to_string()),
             _ => None,
         }
     }

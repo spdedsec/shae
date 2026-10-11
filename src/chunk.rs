@@ -76,7 +76,7 @@ impl Chunk {
         }
 
         let op_byte = self.code[offset];
-        if op_byte > OpCode::TailCall as u8 {
+        if op_byte > OpCode::Await as u8 {
             return (
                 format!("{:04} {} UnknownOp(0x{:02x})", offset, line_str, op_byte),
                 offset + 1,
@@ -122,7 +122,8 @@ impl Chunk {
             | OpCode::PopTry
             | OpCode::Dup
             | OpCode::ImportModule
-            | OpCode::ImportStar => (
+            | OpCode::ImportStar
+            | OpCode::Await => (
                 format!("{:04} {} {:?}", offset, line_str, opcode),
                 offset + 1,
             ),
@@ -557,6 +558,7 @@ impl Chunk {
                 } else {
                     w.write_all(&[0u8])?;
                 }
+                w.write_all(&[if func.is_async { 1u8 } else { 0u8 }])?;
                 w.write_all(&(func.upvalues.len() as u32).to_le_bytes())?;
                 for uv in &func.upvalues {
                     w.write_all(&[uv.index, if uv.is_local { 1 } else { 0 }])?;
@@ -654,6 +656,7 @@ impl Chunk {
                 } else {
                     None
                 };
+                let is_async = read_u8(r)? != 0;
                 let uv_len = read_u32(r)? as usize;
                 let mut upvalues = Vec::with_capacity(uv_len);
                 for _ in 0..uv_len {
@@ -667,6 +670,7 @@ impl Chunk {
                     chunk,
                     name,
                     upvalues,
+                    is_async,
                 })))
             }
             6 => {

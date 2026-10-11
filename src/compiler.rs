@@ -77,6 +77,7 @@ impl Compiler {
         name: Option<String>,
         params: &[String],
         body: &[Stmt],
+        is_async: bool,
     ) -> Result<CompiledFunction, String> {
         let parent = std::mem::replace(self, Compiler::new());
         let mut child = Compiler {
@@ -120,6 +121,7 @@ impl Compiler {
             chunk: child.chunk,
             name,
             upvalues: upvalue_descs,
+            is_async,
         };
 
         *self = *child.enclosing.unwrap();
@@ -496,9 +498,11 @@ impl Compiler {
                 params,
                 return_type: _,
                 body,
+                is_async,
             } => {
                 let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
-                let compiled = self.compile_function(Some(name.clone()), &param_names, body)?;
+                let compiled =
+                    self.compile_function(Some(name.clone()), &param_names, body, *is_async)?;
                 let const_idx = self
                     .chunk
                     .add_constant(Value::CompiledFunction(Arc::new(compiled)));
@@ -894,9 +898,10 @@ impl Compiler {
                 return_type: _,
                 body,
                 span,
+                is_async,
             } => {
                 let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
-                let compiled = self.compile_function(None, &param_names, body)?;
+                let compiled = self.compile_function(None, &param_names, body, *is_async)?;
                 let const_idx = self
                     .chunk
                     .add_constant(Value::CompiledFunction(Arc::new(compiled)));
@@ -1032,6 +1037,11 @@ impl Compiler {
             Expr::Use { path, span } => {
                 self.compile_expr(path)?;
                 self.chunk.write_opcode(OpCode::ImportModule, span.line);
+                Ok(())
+            }
+            Expr::Await { expr, span } => {
+                self.compile_expr(expr)?;
+                self.chunk.write_opcode(OpCode::Await, span.line);
                 Ok(())
             }
         }

@@ -266,8 +266,18 @@ impl Parser {
             self.parse_struct_def(cur.line, cur.col)?
         } else if self.match_token(Token::Enum) {
             self.parse_enum_def(cur.line, cur.col)?
+        } else if self.match_token(Token::Async) {
+            if self.match_token(Token::Fn) {
+                self.parse_fn_statement(cur.line, cur.col, true)?
+            } else {
+                return Err(ParserError::UnexpectedToken {
+                    message: "Expected 'fn' after 'async'.".into(),
+                    line: self.peek().line,
+                    col: self.peek().col,
+                });
+            }
         } else if self.match_token(Token::Fn) {
-            self.parse_fn_statement(cur.line, cur.col)?
+            self.parse_fn_statement(cur.line, cur.col, false)?
         } else if self.match_token(Token::If) {
             self.parse_if_statement(cur.line, cur.col)?
         } else if self.match_token(Token::Try) {
@@ -687,7 +697,12 @@ impl Parser {
         })
     }
 
-    fn parse_fn_statement(&mut self, line: usize, col: usize) -> Result<Stmt, ParserError> {
+    fn parse_fn_statement(
+        &mut self,
+        line: usize,
+        col: usize,
+        is_async: bool,
+    ) -> Result<Stmt, ParserError> {
         let name = if let Token::Ident(n) = &self.advance().token {
             n.clone()
         } else {
@@ -705,6 +720,7 @@ impl Parser {
                 params: Arc::new(params),
                 return_type,
                 body: Arc::new(body),
+                is_async,
             },
             span: Span { line, col },
         })
@@ -1447,6 +1463,17 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Expr, ParserError> {
+        if self.match_token(Token::Await) {
+            let tok = self.tokens[self.cursor - 1].clone();
+            let right = self.parse_unary()?;
+            return Ok(Expr::Await {
+                expr: Box::new(right),
+                span: Span {
+                    line: tok.line,
+                    col: tok.col,
+                },
+            });
+        }
         if self.match_token(Token::Not)
             || self.match_token(Token::Minus)
             || self.match_token(Token::Tilde)
@@ -1760,6 +1787,24 @@ impl Parser {
                     span,
                 })
             }
+            Token::Async => {
+                if self.match_token(Token::Fn) {
+                    let (params, return_type, body) = self.parse_function_body()?;
+                    Ok(Expr::Lambda {
+                        params: Arc::new(params),
+                        return_type,
+                        body: Arc::new(body),
+                        span,
+                        is_async: true,
+                    })
+                } else {
+                    Err(ParserError::UnexpectedToken {
+                        message: "Expected 'fn' after 'async'.".into(),
+                        line: self.peek().line,
+                        col: self.peek().col,
+                    })
+                }
+            }
             Token::Fn => {
                 let (params, return_type, body) = self.parse_function_body()?;
                 Ok(Expr::Lambda {
@@ -1767,6 +1812,7 @@ impl Parser {
                     return_type,
                     body: Arc::new(body),
                     span,
+                    is_async: false,
                 })
             }
             Token::Interp(parts) => {

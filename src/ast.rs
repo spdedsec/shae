@@ -130,6 +130,7 @@ pub enum StmtKind {
         params: Arc<Vec<Param>>,
         return_type: Option<TypeAnnotation>,
         body: Arc<Vec<Stmt>>,
+        is_async: bool,
     },
     If {
         condition: Expr,
@@ -263,6 +264,11 @@ pub enum Expr {
         return_type: Option<TypeAnnotation>,
         body: Arc<Vec<Stmt>>,
         span: Span,
+        is_async: bool,
+    },
+    Await {
+        expr: Box<Expr>,
+        span: Span,
     },
 }
 
@@ -276,6 +282,7 @@ impl Expr {
             Expr::Get { span, .. } => Some(*span),
             Expr::Index { span, .. } => Some(*span),
             Expr::Lambda { span, .. } => Some(*span),
+            Expr::Await { span, .. } => Some(*span),
 
             Expr::StructInit { span, .. } => Some(*span),
             Expr::Match { span, .. } => Some(*span),

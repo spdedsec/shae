@@ -26,6 +26,7 @@ pub struct CompiledFunction {
     pub chunk: Chunk,
     pub name: Option<String>,
     pub upvalues: Vec<UpvalueDesc>,
+    pub is_async: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,6 +83,7 @@ pub enum Value {
         params: Arc<Vec<String>>,
         body: Arc<Vec<Stmt>>,
         closure: Arc<RwLock<Environment>>,
+        is_async: bool,
     },
     Builtin {
         name: String,

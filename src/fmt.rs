@@ -60,8 +60,12 @@ impl Formatter {
                 params,
                 return_type,
                 body,
+                is_async,
             } => {
                 self.write_indent();
+                if *is_async {
+                    self.output.push_str("async ");
+                }
                 let _ = write!(self.output, "fn {}(", name);
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
@@ -515,8 +519,12 @@ impl Formatter {
                 params,
                 return_type,
                 body,
+                is_async,
                 ..
             } => {
+                if *is_async {
+                    self.output.push_str("async ");
+                }
                 self.output.push_str("fn(");
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
@@ -540,6 +548,10 @@ impl Formatter {
                 self.indent_level -= 1;
                 self.write_indent();
                 self.output.push('}');
+            }
+            Expr::Await { expr, .. } => {
+                self.output.push_str("await ");
+                self.format_expr(expr, 0);
             }
         }
     }

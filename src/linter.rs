@@ -298,6 +298,7 @@ impl Linter {
                 params,
                 return_type: _,
                 body,
+                is_async: _,
             } => {
                 if self.scopes.len() > 1 {
                     self.declare_var(name, stmt.span, false);
@@ -507,6 +508,7 @@ impl Linter {
                 return_type: _,
                 body,
                 span,
+                is_async: _,
             } => {
                 self.push_scope();
                 for p in params.iter() {
@@ -514,6 +516,9 @@ impl Linter {
                 }
                 self.lint_stmt_block(body);
                 self.pop_scope();
+            }
+            Expr::Await { expr, .. } => {
+                self.lint_expr(expr);
             }
         }
     }

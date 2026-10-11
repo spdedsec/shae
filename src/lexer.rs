@@ -855,6 +855,8 @@ impl Lexer {
             "continue" => Token::Continue,
             "try" => Token::Try,
             "catch" => Token::Catch,
+            "async" => Token::Async,
+            "await" => Token::Await,
             "use" => Token::Use,
             "from" => Token::From,
             "as" => Token::As,
