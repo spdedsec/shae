@@ -6,6 +6,7 @@ pub mod chunk;
 pub mod compiler;
 pub mod env;
 pub mod eval;
+pub mod ffi;
 pub mod fmt;
 pub mod gc;
 pub mod lexer;

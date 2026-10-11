@@ -29,8 +29,9 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "env" => Ok(build_env_module()),
         "cli" | "args" => Ok(build_cli_module()),
         "collections" | "set" => Ok(build_collections_module()),
+        "ffi" => Ok(build_ffi_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi",
             clean_name
         ))
         .at(span)),
@@ -1639,5 +1640,264 @@ fn build_collections_module() -> Value {
         ("set_union", col_union),
         ("set_intersect", col_intersect),
         ("set_difference", col_difference),
+    ])
+}
+
+// -------------------------------------------------------------
+// std:ffi
+// -------------------------------------------------------------
+fn ffi_open(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    let path = if args.is_empty() {
+        "".to_string()
+    } else {
+        match &args[0] {
+            Value::String(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "ffi.open expects string or no arguments, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        }
+    };
+
+    let lib = crate::ffi::DynamicLibrary::open(&path).map_err(|e| RuntimeError::new(e).at(span))?;
+    Ok(Value::FfiLibrary(Arc::new(lib)))
+}
+
+fn ffi_current_process(
+    _ev: &mut Evaluator,
+    _args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    let lib = crate::ffi::DynamicLibrary::this().map_err(|e| RuntimeError::new(e).at(span))?;
+    Ok(Value::FfiLibrary(Arc::new(lib)))
+}
+
+fn ffi_load(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() != 4 {
+        return Err(RuntimeError::new(
+            "ffi.load(lib, symbol, params, return_type) expects 4 arguments".into(),
+        )
+        .at(span));
+    }
+
+    let lib_arc = match &args[0] {
+        Value::FfiLibrary(l) => l.clone(),
+        Value::String(path) => {
+            let lib = crate::ffi::DynamicLibrary::open(path)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Arc::new(lib)
+        }
+        other => {
+            return Err(RuntimeError::new(format!(
+                "ffi.load expects library or path as first argument, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+
+    let sym_name = match &args[1] {
+        Value::String(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "ffi.load expects symbol name string, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+
+    let param_types = match &args[2] {
+        Value::Array(arr) => {
+            let items = arr.read().unwrap();
+            let mut types = Vec::new();
+            for item in items.iter() {
+                match item {
+                    Value::String(t) => {
+                        let parsed = t
+                            .parse::<crate::ffi::FfiType>()
+                            .map_err(|e| RuntimeError::new(e).at(span))?;
+                        types.push(parsed);
+                    }
+                    other => {
+                        return Err(RuntimeError::new(format!(
+                            "ffi.load parameter type must be a string, got {}",
+                            other.type_name()
+                        ))
+                        .at(span));
+                    }
+                }
+            }
+            types
+        }
+        other => {
+            return Err(RuntimeError::new(format!(
+                "ffi.load parameter types must be an array, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+
+    let ret_type = match &args[3] {
+        Value::String(s) => s
+            .parse::<crate::ffi::FfiType>()
+            .map_err(|e| RuntimeError::new(e).at(span))?,
+        other => {
+            return Err(RuntimeError::new(format!(
+                "ffi.load return type must be a string, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+
+    let dynamic_fn = lib_arc
+        .get_symbol(&sym_name, param_types, ret_type)
+        .map_err(|e| RuntimeError::new(e).at(span))?;
+    Ok(Value::FfiFunction(Arc::new(dynamic_fn)))
+}
+
+fn ffi_alloc(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("ffi.alloc", 1, &args, span)?;
+    let size = match &args[0] {
+        Value::Int(n) if *n > 0 => *n as usize,
+        Value::Float(n) | Value::Number(n) if *n > 0.0 => *n as usize,
+        _ => return Err(RuntimeError::new("ffi.alloc expects positive size".into()).at(span)),
+    };
+    let ptr = crate::ffi::memory_alloc(size);
+    Ok(Value::Int(ptr as usize as i64))
+}
+
+fn ffi_free(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(
+            RuntimeError::new("ffi.free expects at least 1 argument (pointer)".into()).at(span),
+        );
+    }
+    let ptr = match &args[0] {
+        Value::Int(n) => *n as usize,
+        _ => return Err(RuntimeError::new("ffi.free expects integer pointer".into()).at(span)),
+    };
+    let size = if args.len() >= 2 {
+        match &args[1] {
+            Value::Int(n) if *n >= 0 => *n as usize,
+            _ => 8,
+        }
+    } else {
+        8
+    };
+    crate::ffi::memory_free(ptr, size);
+    Ok(Value::Null)
+}
+
+fn ffi_read_string(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("ffi.read_string", 1, &args, span)?;
+    let ptr = match &args[0] {
+        Value::Int(n) => *n as usize,
+        _ => {
+            return Err(
+                RuntimeError::new("ffi.read_string expects integer pointer".into()).at(span),
+            );
+        }
+    };
+    match crate::ffi::memory_read_string(ptr) {
+        Some(s) => Ok(Value::String(s)),
+        None => Ok(Value::Null),
+    }
+}
+
+fn ffi_read_i32(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("ffi.read_i32", 1, &args, span)?;
+    let ptr = match &args[0] {
+        Value::Int(n) => *n as usize,
+        _ => return Err(RuntimeError::new("ffi.read_i32 expects integer pointer".into()).at(span)),
+    };
+    Ok(Value::Int(crate::ffi::memory_read_i32(ptr) as i64))
+}
+
+fn ffi_read_i64(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("ffi.read_i64", 1, &args, span)?;
+    let ptr = match &args[0] {
+        Value::Int(n) => *n as usize,
+        _ => return Err(RuntimeError::new("ffi.read_i64 expects integer pointer".into()).at(span)),
+    };
+    Ok(Value::Int(crate::ffi::memory_read_i64(ptr)))
+}
+
+fn ffi_write_i32(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("ffi.write_i32", 2, &args, span)?;
+    let ptr = match &args[0] {
+        Value::Int(n) => *n as usize,
+        _ => {
+            return Err(RuntimeError::new("ffi.write_i32 expects integer pointer".into()).at(span));
+        }
+    };
+    let val = match &args[1] {
+        Value::Int(n) => *n as i32,
+        Value::Float(n) | Value::Number(n) => *n as i32,
+        _ => return Err(RuntimeError::new("ffi.write_i32 expects integer value".into()).at(span)),
+    };
+    crate::ffi::memory_write_i32(ptr, val);
+    Ok(Value::Null)
+}
+
+fn ffi_write_i64(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("ffi.write_i64", 2, &args, span)?;
+    let ptr = match &args[0] {
+        Value::Int(n) => *n as usize,
+        _ => {
+            return Err(RuntimeError::new("ffi.write_i64 expects integer pointer".into()).at(span));
+        }
+    };
+    let val = match &args[1] {
+        Value::Int(n) => *n,
+        Value::Float(n) | Value::Number(n) => *n as i64,
+        _ => return Err(RuntimeError::new("ffi.write_i64 expects integer value".into()).at(span)),
+    };
+    crate::ffi::memory_write_i64(ptr, val);
+    Ok(Value::Null)
+}
+
+fn ffi_sizeof(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("ffi.sizeof", 1, &args, span)?;
+    let type_str = match &args[0] {
+        Value::String(s) => s.as_str(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "ffi.sizeof expects string type name, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    let parsed: crate::ffi::FfiType = type_str
+        .parse()
+        .map_err(|e| RuntimeError::new(e).at(span))?;
+    Ok(Value::Int(parsed.size() as i64))
+}
+
+fn build_ffi_module() -> Value {
+    make_map(vec![
+        ("open", ffi_open),
+        ("current_process", ffi_current_process),
+        ("load", ffi_load),
+        ("fn", ffi_load),
+        ("alloc", ffi_alloc),
+        ("free", ffi_free),
+        ("read_string", ffi_read_string),
+        ("read_str", ffi_read_string),
+        ("read_i32", ffi_read_i32),
+        ("read_i64", ffi_read_i64),
+        ("write_i32", ffi_write_i32),
+        ("write_i64", ffi_write_i64),
+        ("sizeof", ffi_sizeof),
     ])
 }

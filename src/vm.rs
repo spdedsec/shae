@@ -1170,6 +1170,23 @@ impl VM {
                                 );
                             }
                         }
+                        Value::FfiLibrary(ref lib) => {
+                            if matches!(property.as_str(), "fn" | "symbol" | "get" | "close") {
+                                self.stack.push(Value::BoundMethod {
+                                    object: Box::new(target.clone()),
+                                    method: property,
+                                });
+                            } else if property == "path" {
+                                self.stack.push(Value::String(lib.path.clone()));
+                            } else if is_safe {
+                                self.stack.push(Value::Null);
+                            } else {
+                                runtime_error!(
+                                    self,
+                                    format!("Unknown FFI library property '{}'", property)
+                                );
+                            }
+                        }
                         other => {
                             runtime_error!(
                                 self,
@@ -1806,7 +1823,9 @@ impl VM {
                                 Err(e) => runtime_error!(self, e.message),
                             }
                         }
-                        Value::Function { .. } | Value::BoundMethod { .. } => {
+                        Value::Function { .. }
+                        | Value::BoundMethod { .. }
+                        | Value::FfiFunction(_) => {
                             let args: Vec<Value> = self.stack.drain(callee_slot + 1..).collect();
                             self.stack.pop(); // pop callee
                             self.close_upvalues_in_value(&callee);
@@ -2048,7 +2067,9 @@ impl VM {
                                 Err(e) => runtime_error!(self, e.message),
                             }
                         }
-                        Value::Function { .. } | Value::BoundMethod { .. } => {
+                        Value::Function { .. }
+                        | Value::BoundMethod { .. }
+                        | Value::FfiFunction(_) => {
                             let args: Vec<Value> = self.stack.drain(callee_slot + 1..).collect();
                             self.stack.pop(); // pop callee
                             self.close_upvalues_in_value(&callee);

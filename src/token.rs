@@ -171,6 +171,33 @@ impl fmt::Display for Token {
     }
 }
 
+impl Token {
+    pub fn property_name(&self) -> Option<String> {
+        match self {
+            Token::Ident(s) => Some(s.clone()),
+            Token::Fn => Some("fn".to_string()),
+            Token::Let => Some("let".to_string()),
+            Token::If => Some("if".to_string()),
+            Token::Else => Some("else".to_string()),
+            Token::While => Some("while".to_string()),
+            Token::For => Some("for".to_string()),
+            Token::In => Some("in".to_string()),
+            Token::Return => Some("return".to_string()),
+            Token::Break => Some("break".to_string()),
+            Token::Continue => Some("continue".to_string()),
+            Token::Try => Some("try".to_string()),
+            Token::Catch => Some("catch".to_string()),
+            Token::Match => Some("match".to_string()),
+            Token::Struct => Some("struct".to_string()),
+            Token::Enum => Some("enum".to_string()),
+            Token::Use => Some("use".to_string()),
+            Token::From => Some("from".to_string()),
+            Token::As => Some("as".to_string()),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpannedToken {
     pub token: Token,

@@ -1362,10 +1362,11 @@ impl Parser {
                     safe = true;
                 }
 
-                if let Token::Ident(name) = &self.advance().token {
+                let tok = self.advance();
+                if let Some(name) = tok.token.property_name() {
                     expr = Expr::Get {
                         target: Box::new(expr),
-                        property: name.clone(),
+                        property: name,
                         safe,
                         span: Span { line, col },
                     };

@@ -115,6 +115,8 @@ pub enum Value {
     },
     Task(Arc<Mutex<Option<std::thread::JoinHandle<Result<Value, RuntimeError>>>>>),
     Channel(Arc<crate::channel::Channel>),
+    FfiLibrary(Arc<crate::ffi::DynamicLibrary>),
+    FfiFunction(Arc<crate::ffi::DynamicFunction>),
 }
 
 impl Value {
@@ -141,6 +143,8 @@ impl Value {
             Value::EnumInstance { .. } => "enum_instance",
             Value::Task(_) => "task",
             Value::Channel(_) => "channel",
+            Value::FfiLibrary(_) => "ffi_library",
+            Value::FfiFunction(_) => "ffi_function",
         }
     }
 
@@ -166,7 +170,9 @@ impl Value {
             | Value::EnumConstructor { .. }
             | Value::EnumInstance { .. }
             | Value::Task(_)
-            | Value::Channel(_) => true,
+            | Value::Channel(_)
+            | Value::FfiLibrary(_)
+            | Value::FfiFunction(_) => true,
         }
     }
 
@@ -269,6 +275,8 @@ impl Value {
                     "<channel>".to_string()
                 }
             }
+            Value::FfiLibrary(lib) => format!("<ffi_library \"{}\">", lib.path),
+            Value::FfiFunction(func) => format!("<ffi_function {}()>", func.name),
         }
     }
 
@@ -356,6 +364,10 @@ impl Value {
             Value::GcInstance(r) => JsonValue::String(format!("<gc_instance:{}>", r)),
             Value::Task(_) => JsonValue::String("<task>".to_string()),
             Value::Channel(_) => JsonValue::String("<channel>".to_string()),
+            Value::FfiLibrary(lib) => JsonValue::String(format!("<ffi_library \"{}\">", lib.path)),
+            Value::FfiFunction(func) => {
+                JsonValue::String(format!("<ffi_function {}()>", func.name))
+            }
         }
     }
 
@@ -448,6 +460,8 @@ impl PartialEq for Value {
             ) => n1 == n2 && v1 == v2,
             (Value::Task(a), Value::Task(b)) => Arc::ptr_eq(a, b),
             (Value::Channel(a), Value::Channel(b)) => Arc::ptr_eq(a, b),
+            (Value::FfiLibrary(a), Value::FfiLibrary(b)) => Arc::ptr_eq(a, b),
+            (Value::FfiFunction(a), Value::FfiFunction(b)) => Arc::ptr_eq(a, b),
             (Value::CompiledFunction(a), Value::CompiledFunction(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::Closure(a), Value::Closure(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::GcArray(a), Value::GcArray(b)) => a == b,

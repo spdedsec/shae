@@ -1464,6 +1464,26 @@ impl Evaluator {
                             }
                         }
                     }
+                    Value::FfiLibrary(lib) => {
+                        if matches!(property.as_str(), "fn" | "symbol" | "get" | "close") {
+                            Ok(Some(Value::BoundMethod {
+                                object: Box::new(Value::FfiLibrary(lib.clone())),
+                                method: property.clone(),
+                            }))
+                        } else if property == "path" {
+                            Ok(Some(Value::String(lib.path.clone())))
+                        } else {
+                            if *safe || lenient {
+                                Ok(None)
+                            } else {
+                                Err(RuntimeError::new(format!(
+                                    "FFI library has no property '{}'",
+                                    property
+                                ))
+                                .at(*span))
+                            }
+                        }
+                    }
                     other => {
                         if *safe || lenient {
                             Ok(None)
@@ -2553,12 +2573,91 @@ impl Evaluator {
                         let prev = m.write().unwrap().shift_remove(&key).unwrap_or(Value::Null);
                         Ok(prev)
                     }
+                    (Value::FfiLibrary(lib), "fn" | "symbol" | "get") => {
+                        if args.len() != 3 {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new(
+                                "lib.fn(name, param_types, return_type) expects 3 arguments".into(),
+                            )
+                            .at(span));
+                        }
+                        let sym_name = match &args[0] {
+                            Value::String(s) => s.clone(),
+                            other => {
+                                self.depth -= 1;
+                                return Err(RuntimeError::new(format!(
+                                    "Expected symbol name string, got {}",
+                                    other.type_name()
+                                ))
+                                .at(span));
+                            }
+                        };
+                        let param_types = match &args[1] {
+                            Value::Array(arr) => {
+                                let items = arr.read().unwrap();
+                                let mut types = Vec::new();
+                                for item in items.iter() {
+                                    match item {
+                                        Value::String(t) => {
+                                            let parsed =
+                                                t.parse::<crate::ffi::FfiType>().map_err(|e| {
+                                                    self.depth -= 1;
+                                                    RuntimeError::new(e).at(span)
+                                                })?;
+                                            types.push(parsed);
+                                        }
+                                        other => {
+                                            self.depth -= 1;
+                                            return Err(RuntimeError::new(format!(
+                                                "Parameter type must be a string, got {}",
+                                                other.type_name()
+                                            ))
+                                            .at(span));
+                                        }
+                                    }
+                                }
+                                types
+                            }
+                            other => {
+                                self.depth -= 1;
+                                return Err(RuntimeError::new(format!(
+                                    "Parameter types must be an array, got {}",
+                                    other.type_name()
+                                ))
+                                .at(span));
+                            }
+                        };
+                        let ret_type = match &args[2] {
+                            Value::String(s) => s.parse::<crate::ffi::FfiType>().map_err(|e| {
+                                self.depth -= 1;
+                                RuntimeError::new(e).at(span)
+                            })?,
+                            other => {
+                                self.depth -= 1;
+                                return Err(RuntimeError::new(format!(
+                                    "Return type must be a string, got {}",
+                                    other.type_name()
+                                ))
+                                .at(span));
+                            }
+                        };
+                        let dynamic_fn =
+                            lib.get_symbol(&sym_name, param_types, ret_type)
+                                .map_err(|e| {
+                                    self.depth -= 1;
+                                    RuntimeError::new(e).at(span)
+                                })?;
+                        Ok(Value::FfiFunction(Arc::new(dynamic_fn)))
+                    }
+                    (Value::FfiLibrary(_), "close") => Ok(Value::Null),
                     _ => {
                         self.depth -= 1;
                         Err(RuntimeError::new(format!("Method {} not found", method)).at(span))
                     }
                 }
             }
+
+            Value::FfiFunction(func) => func.invoke(args, span),
 
             other => Err(RuntimeError::new(format!("Cannot call {}", other.type_name())).at(span)),
         };
@@ -2573,6 +2672,7 @@ impl Evaluator {
                     Value::Builtin { name, .. } => name.clone(),
                     Value::BoundMethod { method, .. } => method.clone(),
                     Value::EnumConstructor { variant_name, .. } => variant_name.clone(),
+                    Value::FfiFunction(func) => func.name.clone(),
                     _ => "unknown".to_string(),
                 };
                 e.stack.push((func_name, span));
