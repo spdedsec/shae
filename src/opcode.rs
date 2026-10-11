@@ -66,6 +66,7 @@ pub enum OpCode {
     ConstantLong,
     GetLocalLong,
     SetLocalLong,
+    TailCall,
 }
 
 impl From<u8> for OpCode {

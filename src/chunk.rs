@@ -76,7 +76,7 @@ impl Chunk {
         }
 
         let op_byte = self.code[offset];
-        if op_byte > OpCode::SetLocalLong as u8 {
+        if op_byte > OpCode::TailCall as u8 {
             return (
                 format!("{:04} {} UnknownOp(0x{:02x})", offset, line_str, op_byte),
                 offset + 1,
@@ -251,10 +251,16 @@ impl Chunk {
                     offset + 3,
                 )
             }
-            OpCode::Call => {
+            OpCode::Call | OpCode::TailCall => {
                 let argc = self.code.get(offset + 1).copied().unwrap_or(0);
                 (
-                    format!("{:04} {} {:<16} argc {}", offset, line_str, "Call", argc),
+                    format!(
+                        "{:04} {} {:<16} argc {}",
+                        offset,
+                        line_str,
+                        format!("{:?}", opcode),
+                        argc
+                    ),
                     offset + 2,
                 )
             }

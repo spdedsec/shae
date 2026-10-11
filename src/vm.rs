@@ -22,6 +22,12 @@ pub struct CallFrame {
     pub try_handlers: Vec<TryHandler>,
 }
 
+#[derive(Debug, Clone)]
+pub struct InlineCacheEntry {
+    pub property: String,
+    pub index: usize,
+}
+
 pub struct VM {
     pub frames: Vec<CallFrame>,
     pub stack: Vec<Value>,
@@ -32,6 +38,8 @@ pub struct VM {
     pub current_file: Option<std::path::PathBuf>,
     pub embedded_archive: Option<Arc<HashMap<String, String>>>,
     pub embedded_bytecode: Option<Arc<HashMap<String, Vec<u8>>>>,
+    pub prop_get_ic: HashMap<(usize, usize), InlineCacheEntry>,
+    pub prop_set_ic: HashMap<(usize, usize), InlineCacheEntry>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -74,6 +82,8 @@ impl VM {
             current_file: None,
             embedded_archive: None,
             embedded_bytecode: None,
+            prop_get_ic: HashMap::new(),
+            prop_set_ic: HashMap::new(),
         }
     }
 
@@ -957,6 +967,10 @@ impl VM {
                     }
                 }
                 OpCode::GetProperty => {
+                    let callsite = (
+                        Arc::as_ptr(&self.frames.last().unwrap().closure.function) as usize,
+                        self.frames.last().unwrap().ip - 1,
+                    );
                     let name_val = self.read_constant();
                     let is_safe = self.read_byte() != 0;
                     let property = match name_val {
@@ -974,8 +988,24 @@ impl VM {
                         }
                         Value::Map(ref m) => {
                             let map = m.read().unwrap();
-                            if let Some(v) = map.get(&property) {
-                                self.stack.push(v.clone());
+                            if let Some(entry) = self.prop_get_ic.get(&callsite) {
+                                if let Some((k, v)) = map.get_index(entry.index) {
+                                    if k == &property {
+                                        self.stack.push(v.clone());
+                                        continue;
+                                    }
+                                }
+                            }
+                            if let Some(idx) = map.get_index_of(&property) {
+                                let v = map.get_index(idx).unwrap().1.clone();
+                                self.prop_get_ic.insert(
+                                    callsite,
+                                    InlineCacheEntry {
+                                        property: property.clone(),
+                                        index: idx,
+                                    },
+                                );
+                                self.stack.push(v);
                             } else if property == "len" {
                                 self.stack.push(Value::Int(map.len() as i64));
                             } else if matches!(
@@ -1012,8 +1042,25 @@ impl VM {
                             ref name,
                             ref fields,
                         } => {
-                            if let Some(v) = fields.read().unwrap().get(&property) {
-                                self.stack.push(v.clone());
+                            let fields_read = fields.read().unwrap();
+                            if let Some(entry) = self.prop_get_ic.get(&callsite) {
+                                if let Some((k, v)) = fields_read.get_index(entry.index) {
+                                    if k == &property {
+                                        self.stack.push(v.clone());
+                                        continue;
+                                    }
+                                }
+                            }
+                            if let Some(idx) = fields_read.get_index_of(&property) {
+                                let v = fields_read.get_index(idx).unwrap().1.clone();
+                                self.prop_get_ic.insert(
+                                    callsite,
+                                    InlineCacheEntry {
+                                        property: property.clone(),
+                                        index: idx,
+                                    },
+                                );
+                                self.stack.push(v);
                             } else if is_safe {
                                 self.stack.push(Value::Null);
                             } else {
@@ -1136,6 +1183,10 @@ impl VM {
                     }
                 }
                 OpCode::SetProperty => {
+                    let callsite = (
+                        Arc::as_ptr(&self.frames.last().unwrap().closure.function) as usize,
+                        self.frames.last().unwrap().ip - 1,
+                    );
                     let name_val = self.read_constant();
                     let property = match name_val {
                         Value::String(s) => s,
@@ -1145,7 +1196,33 @@ impl VM {
                     let target = self.stack.pop().unwrap();
                     match target {
                         Value::Map(ref m) => {
-                            m.write().unwrap().insert(property, value.clone());
+                            let mut map = m.write().unwrap();
+                            if let Some(entry) = self.prop_set_ic.get(&callsite) {
+                                if let Some((k, v_mut)) = map.get_index_mut(entry.index) {
+                                    if k == &property {
+                                        *v_mut = value.clone();
+                                        self.stack.push(value);
+                                        continue;
+                                    }
+                                }
+                            }
+                            let idx = match map.get_index_of(&property) {
+                                Some(i) => {
+                                    *map.get_index_mut(i).unwrap().1 = value.clone();
+                                    i
+                                }
+                                None => {
+                                    map.insert(property.clone(), value.clone());
+                                    map.len() - 1
+                                }
+                            };
+                            self.prop_set_ic.insert(
+                                callsite,
+                                InlineCacheEntry {
+                                    property: property.clone(),
+                                    index: idx,
+                                },
+                            );
                             self.stack.push(value);
                         }
                         Value::GcMap(r) => {
@@ -1158,8 +1235,25 @@ impl VM {
                             ref name,
                             ref fields,
                         } => {
-                            if fields.read().unwrap().contains_key(&property) {
-                                fields.write().unwrap().insert(property, value.clone());
+                            let mut fields_write = fields.write().unwrap();
+                            if let Some(entry) = self.prop_set_ic.get(&callsite) {
+                                if let Some((k, v_mut)) = fields_write.get_index_mut(entry.index) {
+                                    if k == &property {
+                                        *v_mut = value.clone();
+                                        self.stack.push(value);
+                                        continue;
+                                    }
+                                }
+                            }
+                            if let Some(idx) = fields_write.get_index_of(&property) {
+                                *fields_write.get_index_mut(idx).unwrap().1 = value.clone();
+                                self.prop_set_ic.insert(
+                                    callsite,
+                                    InlineCacheEntry {
+                                        property: property.clone(),
+                                        index: idx,
+                                    },
+                                );
                                 self.stack.push(value);
                             } else {
                                 runtime_error!(
@@ -1760,6 +1854,271 @@ impl VM {
                                 variant_name,
                                 values: args,
                             });
+                        }
+                        other => {
+                            runtime_error!(
+                                self,
+                                format!("Can only call functions, got {}.", other.type_name())
+                            );
+                        }
+                    }
+                }
+                OpCode::TailCall => {
+                    let arg_count = self.read_byte() as usize;
+                    if self.stack.len() < 1 + arg_count {
+                        runtime_error!(self, "Stack underflow on TailCall");
+                    }
+                    let callee_slot = self.stack.len() - 1 - arg_count;
+                    let callee = self.stack[callee_slot].clone();
+
+                    let has_try = !self.frames.last().unwrap().try_handlers.is_empty();
+
+                    match callee {
+                        Value::Closure(closure) => {
+                            if arg_count != closure.function.arity {
+                                runtime_error!(
+                                    self,
+                                    format!(
+                                        "Expected {} arguments but got {}.",
+                                        closure.function.arity, arg_count
+                                    )
+                                );
+                            }
+                            if has_try {
+                                if self.frames.len() >= 1024 {
+                                    runtime_error!(
+                                        self,
+                                        "Stack overflow: call stack exceeded maximum depth.",
+                                    );
+                                }
+                                self.frames.push(CallFrame {
+                                    closure,
+                                    ip: 0,
+                                    slots_offset: callee_slot,
+                                    try_handlers: Vec::new(),
+                                });
+                            } else {
+                                let current_slots_offset = self.frames.last().unwrap().slots_offset;
+                                self.close_upvalues(current_slots_offset);
+
+                                let call_slice =
+                                    self.stack[callee_slot..callee_slot + 1 + arg_count].to_vec();
+                                for (i, val) in call_slice.into_iter().enumerate() {
+                                    let target_idx = current_slots_offset + i;
+                                    if target_idx < self.stack.len() {
+                                        self.stack[target_idx] = val;
+                                    } else {
+                                        self.stack.push(val);
+                                    }
+                                }
+                                self.stack.truncate(current_slots_offset + 1 + arg_count);
+
+                                let frame = self.frames.last_mut().unwrap();
+                                frame.closure = closure;
+                                frame.ip = 0;
+                            }
+                        }
+                        Value::CompiledFunction(func) => {
+                            if arg_count != func.arity {
+                                runtime_error!(
+                                    self,
+                                    format!(
+                                        "Expected {} arguments but got {}.",
+                                        func.arity, arg_count
+                                    )
+                                );
+                            }
+                            let mod_globals = self
+                                .frames
+                                .last()
+                                .and_then(|f| f.closure.module_globals.clone())
+                                .or_else(|| self.module_globals.clone());
+                            let closure = Arc::new(Closure {
+                                function: func,
+                                upvalues: Vec::new(),
+                                module_globals: mod_globals,
+                            });
+                            if has_try {
+                                if self.frames.len() >= 1024 {
+                                    runtime_error!(
+                                        self,
+                                        "Stack overflow: call stack exceeded maximum depth.",
+                                    );
+                                }
+                                self.frames.push(CallFrame {
+                                    closure,
+                                    ip: 0,
+                                    slots_offset: callee_slot,
+                                    try_handlers: Vec::new(),
+                                });
+                            } else {
+                                let current_slots_offset = self.frames.last().unwrap().slots_offset;
+                                self.close_upvalues(current_slots_offset);
+
+                                let call_slice =
+                                    self.stack[callee_slot..callee_slot + 1 + arg_count].to_vec();
+                                for (i, val) in call_slice.into_iter().enumerate() {
+                                    let target_idx = current_slots_offset + i;
+                                    if target_idx < self.stack.len() {
+                                        self.stack[target_idx] = val;
+                                    } else {
+                                        self.stack.push(val);
+                                    }
+                                }
+                                self.stack.truncate(current_slots_offset + 1 + arg_count);
+
+                                let frame = self.frames.last_mut().unwrap();
+                                frame.closure = closure;
+                                frame.ip = 0;
+                            }
+                        }
+                        Value::Builtin { name, func } => {
+                            let args: Vec<Value> = self.stack.drain(callee_slot + 1..).collect();
+                            self.stack.pop(); // pop callee
+                            for arg in &args {
+                                self.close_upvalues_in_value(arg);
+                            }
+                            self.open_upvalues.retain(|uv| {
+                                matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
+                            });
+                            if name == "gc" {
+                                let stats = self.collect_garbage();
+                                let val = Value::Int(stats.freed_objects as i64);
+                                if has_try {
+                                    self.stack.push(val);
+                                } else {
+                                    let frame = self.frames.pop().unwrap();
+                                    self.close_upvalues(frame.slots_offset);
+                                    if self.frames.is_empty() {
+                                        return InterpretResult::Ok(val);
+                                    }
+                                    self.stack.truncate(frame.slots_offset);
+                                    self.stack.push(val);
+                                }
+                                continue;
+                            }
+                            if name == "len" && args.len() == 1 {
+                                let len_res = match &args[0] {
+                                    Value::GcArray(r) => Some(Value::Int(
+                                        self.heap.as_array(*r).map(|a| a.len()).unwrap_or(0) as i64,
+                                    )),
+                                    Value::GcMap(r) => Some(Value::Int(
+                                        self.heap.as_map(*r).map(|m| m.len()).unwrap_or(0) as i64,
+                                    )),
+                                    _ => None,
+                                };
+                                if let Some(val) = len_res {
+                                    if has_try {
+                                        self.stack.push(val);
+                                    } else {
+                                        let frame = self.frames.pop().unwrap();
+                                        self.close_upvalues(frame.slots_offset);
+                                        if self.frames.is_empty() {
+                                            return InterpretResult::Ok(val);
+                                        }
+                                        self.stack.truncate(frame.slots_offset);
+                                        self.stack.push(val);
+                                    }
+                                    continue;
+                                }
+                            }
+                            let mut evaluator = crate::eval::Evaluator::new();
+                            evaluator.current_file = self.current_file.clone();
+                            for (k, v) in &self.globals {
+                                evaluator
+                                    .global_env
+                                    .write()
+                                    .unwrap()
+                                    .define(k.clone(), v.clone());
+                            }
+                            match func(&mut evaluator, args, crate::ast::Span::new(1, 1)) {
+                                Ok(val) => {
+                                    if has_try {
+                                        self.stack.push(val);
+                                    } else {
+                                        let frame = self.frames.pop().unwrap();
+                                        self.close_upvalues(frame.slots_offset);
+                                        if self.frames.is_empty() {
+                                            return InterpretResult::Ok(val);
+                                        }
+                                        self.stack.truncate(frame.slots_offset);
+                                        self.stack.push(val);
+                                    }
+                                }
+                                Err(e) => runtime_error!(self, e.message),
+                            }
+                        }
+                        Value::Function { .. } | Value::BoundMethod { .. } => {
+                            let args: Vec<Value> = self.stack.drain(callee_slot + 1..).collect();
+                            self.stack.pop(); // pop callee
+                            self.close_upvalues_in_value(&callee);
+                            for arg in &args {
+                                self.close_upvalues_in_value(arg);
+                            }
+                            self.open_upvalues.retain(|uv| {
+                                matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
+                            });
+                            let mut evaluator = crate::eval::Evaluator::new();
+                            evaluator.current_file = self.current_file.clone();
+                            for (k, v) in &self.globals {
+                                evaluator
+                                    .global_env
+                                    .write()
+                                    .unwrap()
+                                    .define(k.clone(), v.clone());
+                            }
+                            match evaluator.call_value(&callee, args, crate::ast::Span::new(1, 1)) {
+                                Ok(val) => {
+                                    if has_try {
+                                        self.stack.push(val);
+                                    } else {
+                                        let frame = self.frames.pop().unwrap();
+                                        self.close_upvalues(frame.slots_offset);
+                                        if self.frames.is_empty() {
+                                            return InterpretResult::Ok(val);
+                                        }
+                                        self.stack.truncate(frame.slots_offset);
+                                        self.stack.push(val);
+                                    }
+                                }
+                                Err(e) => runtime_error!(self, e.message),
+                            }
+                        }
+                        Value::EnumConstructor {
+                            enum_name,
+                            variant_name,
+                            params,
+                        } => {
+                            if arg_count != params.len() {
+                                runtime_error!(
+                                    self,
+                                    format!(
+                                        "Enum variant {}.{} expects {} arguments, got {}",
+                                        enum_name,
+                                        variant_name,
+                                        params.len(),
+                                        arg_count
+                                    )
+                                );
+                            }
+                            let args: Vec<Value> = self.stack.drain(callee_slot + 1..).collect();
+                            self.stack.pop(); // pop constructor
+                            let val = Value::EnumInstance {
+                                enum_name,
+                                variant_name,
+                                values: args,
+                            };
+                            if has_try {
+                                self.stack.push(val);
+                            } else {
+                                let frame = self.frames.pop().unwrap();
+                                self.close_upvalues(frame.slots_offset);
+                                if self.frames.is_empty() {
+                                    return InterpretResult::Ok(val);
+                                }
+                                self.stack.truncate(frame.slots_offset);
+                                self.stack.push(val);
+                            }
                         }
                         other => {
                             runtime_error!(

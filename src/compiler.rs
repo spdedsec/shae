@@ -54,13 +54,21 @@ impl Compiler {
         if len == 0 {
             self.chunk.write_opcode(OpCode::Nil, 0);
         }
-        self.chunk.write_opcode(OpCode::Return, 0);
+        self.emit_return(0);
         Ok(self.chunk)
+    }
+
+    pub fn emit_return(&mut self, line: usize) {
+        let len = self.chunk.code.len();
+        if len >= 2 && self.chunk.code[len - 2] == OpCode::Call as u8 {
+            self.chunk.code[len - 2] = OpCode::TailCall as u8;
+        }
+        self.chunk.write_opcode(OpCode::Return, line);
     }
 
     pub fn compile(mut self, expr: &Expr) -> Result<Chunk, String> {
         self.compile_expr(expr)?;
-        self.chunk.write_opcode(OpCode::Return, 0);
+        self.emit_return(0);
         Ok(self.chunk)
     }
 
@@ -96,7 +104,7 @@ impl Compiler {
         if body.is_empty() {
             child.chunk.write_opcode(OpCode::Nil, 0);
         }
-        child.chunk.write_opcode(OpCode::Return, 0);
+        child.emit_return(0);
 
         let upvalue_descs: Vec<UpvalueDesc> = child
             .upvalues
@@ -476,7 +484,7 @@ impl Compiler {
                 } else {
                     self.chunk.write_opcode(OpCode::Nil, stmt.span.line);
                 }
-                self.chunk.write_opcode(OpCode::Return, stmt.span.line);
+                self.emit_return(stmt.span.line);
                 Ok(())
             }
             StmtKind::FnDef { name, params, body } => {
