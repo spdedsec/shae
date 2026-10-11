@@ -263,7 +263,11 @@ impl Linter {
 
     fn lint_stmt(&mut self, stmt: &Stmt) {
         match &stmt.kind {
-            StmtKind::Let { pattern, init } => {
+            StmtKind::Let {
+                pattern,
+                type_ann: _,
+                init,
+            } => {
                 self.lint_expr(init);
                 self.declare_binding_pattern(pattern, stmt.span);
             }
@@ -289,13 +293,18 @@ impl Linter {
                 }
                 self.lint_expr(value);
             }
-            StmtKind::FnDef { name, params, body } => {
+            StmtKind::FnDef {
+                name,
+                params,
+                return_type: _,
+                body,
+            } => {
                 if self.scopes.len() > 1 {
                     self.declare_var(name, stmt.span, false);
                 }
                 self.push_scope();
                 for param in params.iter() {
-                    self.declare_var(param, stmt.span, true);
+                    self.declare_var(&param.name, stmt.span, true);
                 }
                 self.lint_stmt_block(body);
                 self.pop_scope();
@@ -493,10 +502,15 @@ impl Linter {
                     self.pop_scope();
                 }
             }
-            Expr::Lambda { params, body, span } => {
+            Expr::Lambda {
+                params,
+                return_type: _,
+                body,
+                span,
+            } => {
                 self.push_scope();
                 for p in params.iter() {
-                    self.declare_var(p, *span, true);
+                    self.declare_var(&p.name, *span, true);
                 }
                 self.lint_stmt_block(body);
                 self.pop_scope();

@@ -457,11 +457,12 @@ impl Evaluator {
     ) -> Result<Signal, RuntimeError> {
         match &stmt.kind {
             StmtKind::StructDef { name, fields } => {
+                let field_names = fields.iter().map(|f| f.name.clone()).collect();
                 env.write().unwrap().define(
                     name.clone(),
                     Value::StructDef {
                         name: name.clone(),
-                        fields: fields.clone(),
+                        fields: field_names,
                     },
                 );
                 Ok(Signal::None)
@@ -484,7 +485,11 @@ impl Evaluator {
                 let val = self.eval_expr(expr, env).map_err(|e| e.or_at(stmt.span))?;
                 Ok(Signal::Value(val))
             }
-            StmtKind::Let { pattern, init } => {
+            StmtKind::Let {
+                pattern,
+                type_ann: _,
+                init,
+            } => {
                 let val = self.eval_expr(init, env).map_err(|e| e.or_at(stmt.span))?;
                 self.bind_pattern_value(pattern, val, env, stmt.span)?;
                 Ok(Signal::None)
@@ -495,10 +500,16 @@ impl Evaluator {
                     .map_err(|e| e.or_at(stmt.span))?;
                 Ok(Signal::None)
             }
-            StmtKind::FnDef { name, params, body } => {
+            StmtKind::FnDef {
+                name,
+                params,
+                return_type: _,
+                body,
+            } => {
+                let param_names = Arc::new(params.iter().map(|p| p.name.clone()).collect());
                 let func = Value::Function {
                     name: Some(name.clone()),
-                    params: params.clone(),
+                    params: param_names,
                     body: body.clone(),
                     closure: env.clone(),
                 };
@@ -1217,14 +1228,18 @@ impl Evaluator {
             }
             Expr::Lambda {
                 params,
+                return_type: _,
                 body,
                 span: _,
-            } => Ok(Value::Function {
-                name: None,
-                params: params.clone(),
-                body: body.clone(),
-                closure: env.clone(),
-            }),
+            } => {
+                let param_names = Arc::new(params.iter().map(|p| p.name.clone()).collect());
+                Ok(Value::Function {
+                    name: None,
+                    params: param_names,
+                    body: body.clone(),
+                    closure: env.clone(),
+                })
+            }
             _ => {
                 // For Call, Get, Index, use eval_chain
                 if let Some(val) = self.eval_chain(expr, env, false)? {

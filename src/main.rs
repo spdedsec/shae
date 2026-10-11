@@ -251,12 +251,18 @@ fn check_file(filename: &str) {
     };
 
     let mut linter = shae::linter::Linter::new();
-    let diagnostics = linter.lint_program(&program);
+    let lint_diagnostics = linter.lint_program(&program);
+
+    let mut typechecker = shae::typecheck::TypeChecker::new();
+    let type_diagnostics = typechecker.check_program(&program);
+
+    let mut all_diagnostics = lint_diagnostics.to_vec();
+    all_diagnostics.extend(type_diagnostics.to_vec());
 
     let mut error_count = 0;
     let mut warning_count = 0;
 
-    for diag in diagnostics {
+    for diag in &all_diagnostics {
         let prefix = match diag.severity {
             shae::linter::DiagnosticSeverity::Error => {
                 error_count += 1;

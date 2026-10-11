@@ -245,6 +245,31 @@ impl<R: Read, W: Write> LspServer<R, W> {
                             "message": msg
                         }));
                     }
+
+                    let mut typechecker = crate::typecheck::TypeChecker::new();
+                    let type_errs = typechecker.check_program(&program);
+                    for diag in type_errs {
+                        let l = diag.span.line.saturating_sub(1);
+                        let c = diag.span.col.saturating_sub(1);
+                        let sev = match diag.severity {
+                            crate::linter::DiagnosticSeverity::Error => 1,
+                            crate::linter::DiagnosticSeverity::Warning => 2,
+                        };
+                        let msg = if let Some(ref h) = diag.hint {
+                            format!("{} (Hint: {})", diag.message, h)
+                        } else {
+                            diag.message.clone()
+                        };
+                        diagnostics.push(json!({
+                            "range": {
+                                "start": { "line": l, "character": c },
+                                "end": { "line": l, "character": c + 1 }
+                            },
+                            "severity": sev,
+                            "source": "shae-typechecker",
+                            "message": msg
+                        }));
+                    }
                 }
             },
         }
@@ -396,18 +421,50 @@ impl<R: Read, W: Write> LspServer<R, W> {
                     if let Ok(program) = crate::parser::parse(tokens) {
                         for stmt in &program.statements {
                             match &stmt.kind {
-                                crate::ast::StmtKind::FnDef { name, params, .. } => {
+                                crate::ast::StmtKind::FnDef {
+                                    name,
+                                    params,
+                                    return_type,
+                                    ..
+                                } => {
+                                    let p_str = params
+                                        .iter()
+                                        .map(|p| {
+                                            if let Some(ann) = &p.type_ann {
+                                                format!("{}: {}", p.name, ann)
+                                            } else {
+                                                p.name.clone()
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(", ");
+                                    let ret_str = if let Some(ret) = return_type {
+                                        format!(" -> {}", ret)
+                                    } else {
+                                        String::new()
+                                    };
                                     items.push(json!({
                                         "label": name,
                                         "kind": 3, // Function
-                                        "detail": format!("fn {}({})", name, params.join(", "))
+                                        "detail": format!("fn {}({}){}", name, p_str, ret_str)
                                     }));
                                 }
                                 crate::ast::StmtKind::StructDef { name, fields } => {
+                                    let f_str = fields
+                                        .iter()
+                                        .map(|f| {
+                                            if let Some(ann) = &f.type_ann {
+                                                format!("{}: {}", f.name, ann)
+                                            } else {
+                                                f.name.clone()
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(", ");
                                     items.push(json!({
                                         "label": name,
                                         "kind": 22, // Struct
-                                        "detail": format!("struct {} {{ {} }}", name, fields.join(", "))
+                                        "detail": format!("struct {} {{ {} }}", name, f_str)
                                     }));
                                 }
                                 crate::ast::StmtKind::EnumDef { name, .. } => {

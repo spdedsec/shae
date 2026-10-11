@@ -1,6 +1,6 @@
 use crate::ast::{
-    BinaryOp, BindingPattern, Expr, InterpPart, Literal, Program, Span, Stmt, StmtKind, UnaryOp,
-    UseItem,
+    BinaryOp, BindingPattern, Expr, InterpPart, Literal, Param, Program, Span, Stmt, StmtKind,
+    StructField, TypeAnnotation, UnaryOp, UseItem,
 };
 use crate::lexer::LexerError;
 use crate::token::{SpannedToken, StrPart, Token};
@@ -86,6 +86,131 @@ impl Parser {
                 col: self.peek().col,
             })
         }
+    }
+
+    pub fn parse_type_annotation(&mut self) -> Result<TypeAnnotation, ParserError> {
+        let mut primary = self.parse_single_type()?;
+
+        // Check for union `|`
+        if self.match_token(Token::BitOr) {
+            let mut union_types = vec![primary];
+            loop {
+                let next_type = self.parse_single_type()?;
+                union_types.push(next_type);
+                if !self.match_token(Token::BitOr) {
+                    break;
+                }
+            }
+            primary = TypeAnnotation::Union(union_types);
+        }
+
+        Ok(primary)
+    }
+
+    fn parse_single_type(&mut self) -> Result<TypeAnnotation, ParserError> {
+        let mut base = match &self.peek().token {
+            Token::Ident(name) => {
+                let name = name.clone();
+                self.advance();
+                match name.as_str() {
+                    "any" => TypeAnnotation::Any,
+                    "int" => TypeAnnotation::Int,
+                    "float" | "number" => TypeAnnotation::Float,
+                    "string" | "str" => TypeAnnotation::String,
+                    "bool" | "boolean" => TypeAnnotation::Bool,
+                    "null" => TypeAnnotation::Null,
+                    "void" => TypeAnnotation::Void,
+                    "map" => {
+                        if self.match_token(Token::Lt) {
+                            let key = self.parse_type_annotation()?;
+                            self.consume(
+                                Token::Comma,
+                                "Expected ',' between map key and value types.",
+                            )?;
+                            let value = self.parse_type_annotation()?;
+                            self.consume(Token::Gt, "Expected '>' after map value type.")?;
+                            TypeAnnotation::Map {
+                                key: Box::new(key),
+                                value: Box::new(value),
+                            }
+                        } else {
+                            TypeAnnotation::Map {
+                                key: Box::new(TypeAnnotation::Any),
+                                value: Box::new(TypeAnnotation::Any),
+                            }
+                        }
+                    }
+                    _ => TypeAnnotation::Custom(name),
+                }
+            }
+            Token::LBracket => {
+                self.advance();
+                let inner = self.parse_type_annotation()?;
+                self.consume(Token::RBracket, "Expected ']' after array type.")?;
+                TypeAnnotation::Array(Box::new(inner))
+            }
+            Token::LBrace => {
+                self.advance();
+                let key = self.parse_type_annotation()?;
+                self.consume(Token::Colon, "Expected ':' in map type '{Key: Value}'.")?;
+                let value = self.parse_type_annotation()?;
+                self.consume(Token::RBrace, "Expected '}' after map type.")?;
+                TypeAnnotation::Map {
+                    key: Box::new(key),
+                    value: Box::new(value),
+                }
+            }
+            Token::Fn => {
+                self.advance();
+                self.consume(Token::LParen, "Expected '(' after 'fn' in function type.")?;
+                let mut params = Vec::new();
+                if self.peek().token != Token::RParen {
+                    loop {
+                        params.push(self.parse_type_annotation()?);
+                        if !self.match_token(Token::Comma) {
+                            break;
+                        }
+                    }
+                }
+                self.consume(
+                    Token::RParen,
+                    "Expected ')' after function type parameters.",
+                )?;
+                self.consume(
+                    Token::Arrow,
+                    "Expected '->' after function type parameters.",
+                )?;
+                let ret = self.parse_type_annotation()?;
+                TypeAnnotation::Function {
+                    params,
+                    return_type: Box::new(ret),
+                }
+            }
+            _ => {
+                return Err(ParserError::UnexpectedToken {
+                    message: format!("Expected type annotation, found {:?}", self.peek().token),
+                    line: self.peek().line,
+                    col: self.peek().col,
+                });
+            }
+        };
+
+        // Postfix modifiers: [] and ?
+        loop {
+            if self.peek().token == Token::LBracket
+                && self.peek_next().map(|t| &t.token) == Some(&Token::RBracket)
+            {
+                self.advance(); // [
+                self.advance(); // ]
+                base = TypeAnnotation::Array(Box::new(base));
+            } else if self.match_token(Token::Question) {
+                base = TypeAnnotation::Nullable(Box::new(base));
+            } else {
+                break;
+            }
+        }
+
+        Ok(base)
     }
 
     fn is_at_end(&self) -> bool {
@@ -302,15 +427,24 @@ impl Parser {
         let mut fields = Vec::new();
         if self.peek().token != Token::RBrace {
             loop {
-                if let Token::Ident(f) = &self.advance().token {
-                    fields.push(f.clone());
+                let f_name = if let Token::Ident(f) = &self.advance().token {
+                    f.clone()
                 } else {
                     return Err(ParserError::UnexpectedToken {
                         message: "Expected field name.".into(),
                         line: self.peek().line,
                         col: self.peek().col,
                     });
-                }
+                };
+                let type_ann = if self.match_token(Token::Colon) {
+                    Some(self.parse_type_annotation()?)
+                } else {
+                    None
+                };
+                fields.push(StructField {
+                    name: f_name,
+                    type_ann,
+                });
                 if !self.match_token(Token::Comma) {
                     break;
                 }
@@ -526,6 +660,12 @@ impl Parser {
     fn parse_let_statement(&mut self, line: usize, col: usize) -> Result<Stmt, ParserError> {
         let pattern = self.parse_binding_pattern()?;
 
+        let type_ann = if self.match_token(Token::Colon) {
+            Some(self.parse_type_annotation()?)
+        } else {
+            None
+        };
+
         if !self.match_token(Token::Equals) {
             return Err(ParserError::UnexpectedToken {
                 message: "Expected '=' in 'let' statement.".into(),
@@ -538,7 +678,11 @@ impl Parser {
         self.end_statement()?;
 
         Ok(Stmt {
-            kind: StmtKind::Let { pattern, init },
+            kind: StmtKind::Let {
+                pattern,
+                type_ann,
+                init,
+            },
             span: Span { line, col },
         })
     }
@@ -554,18 +698,21 @@ impl Parser {
             });
         };
 
-        let (params, body) = self.parse_function_body()?;
+        let (params, return_type, body) = self.parse_function_body()?;
         Ok(Stmt {
             kind: StmtKind::FnDef {
                 name,
                 params: Arc::new(params),
+                return_type,
                 body: Arc::new(body),
             },
             span: Span { line, col },
         })
     }
 
-    fn parse_function_body(&mut self) -> Result<(Vec<String>, Vec<Stmt>), ParserError> {
+    fn parse_function_body(
+        &mut self,
+    ) -> Result<(Vec<Param>, Option<TypeAnnotation>, Vec<Stmt>), ParserError> {
         if !self.match_token(Token::LParen) {
             return Err(ParserError::UnexpectedToken {
                 message: "Expected '(' after function name.".into(),
@@ -577,15 +724,24 @@ impl Parser {
         let mut params = Vec::new();
         if self.peek().token != Token::RParen {
             loop {
-                if let Token::Ident(p) = &self.advance().token {
-                    params.push(p.clone());
+                let p_name = if let Token::Ident(p) = &self.advance().token {
+                    p.clone()
                 } else {
                     return Err(ParserError::UnexpectedToken {
                         message: "Expected parameter name.".into(),
                         line: self.peek().line,
                         col: self.peek().col,
                     });
-                }
+                };
+                let type_ann = if self.match_token(Token::Colon) {
+                    Some(self.parse_type_annotation()?)
+                } else {
+                    None
+                };
+                params.push(Param {
+                    name: p_name,
+                    type_ann,
+                });
                 if !self.match_token(Token::Comma) {
                     break;
                 }
@@ -599,6 +755,12 @@ impl Parser {
                 col: self.peek().col,
             });
         }
+
+        let return_type = if self.match_token(Token::Arrow) {
+            Some(self.parse_type_annotation()?)
+        } else {
+            None
+        };
 
         if !self.match_token(Token::LBrace) {
             return Err(ParserError::UnexpectedToken {
@@ -621,7 +783,7 @@ impl Parser {
             });
         }
 
-        Ok((params, body))
+        Ok((params, return_type, body))
     }
 
     fn parse_if_statement(&mut self, line: usize, col: usize) -> Result<Stmt, ParserError> {
@@ -1599,9 +1761,10 @@ impl Parser {
                 })
             }
             Token::Fn => {
-                let (params, body) = self.parse_function_body()?;
+                let (params, return_type, body) = self.parse_function_body()?;
                 Ok(Expr::Lambda {
                     params: Arc::new(params),
+                    return_type,
                     body: Arc::new(body),
                     span,
                 })

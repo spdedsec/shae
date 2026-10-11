@@ -270,7 +270,11 @@ impl Compiler {
 
     pub fn compile_stmt(&mut self, stmt: &Stmt, is_last: bool) -> Result<(), String> {
         match &stmt.kind {
-            StmtKind::Let { pattern, init } => {
+            StmtKind::Let {
+                pattern,
+                type_ann: _,
+                init,
+            } => {
                 self.compile_expr(init)?;
                 self.compile_binding_pattern(pattern)?;
                 if is_last {
@@ -487,8 +491,14 @@ impl Compiler {
                 self.emit_return(stmt.span.line);
                 Ok(())
             }
-            StmtKind::FnDef { name, params, body } => {
-                let compiled = self.compile_function(Some(name.clone()), params, body)?;
+            StmtKind::FnDef {
+                name,
+                params,
+                return_type: _,
+                body,
+            } => {
+                let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+                let compiled = self.compile_function(Some(name.clone()), &param_names, body)?;
                 let const_idx = self
                     .chunk
                     .add_constant(Value::CompiledFunction(Arc::new(compiled)));
@@ -508,10 +518,11 @@ impl Compiler {
                 Ok(())
             }
             StmtKind::StructDef { name, fields } => {
+                let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
                 self.emit_constant(
                     Value::StructDef {
                         name: name.clone(),
-                        fields: fields.clone(),
+                        fields: field_names,
                     },
                     stmt.span.line,
                 );
@@ -878,8 +889,14 @@ impl Compiler {
                 self.chunk.write(args.len() as u8, span.line);
                 Ok(())
             }
-            Expr::Lambda { params, body, span } => {
-                let compiled = self.compile_function(None, params, body)?;
+            Expr::Lambda {
+                params,
+                return_type: _,
+                body,
+                span,
+            } => {
+                let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+                let compiled = self.compile_function(None, &param_names, body)?;
                 let const_idx = self
                     .chunk
                     .add_constant(Value::CompiledFunction(Arc::new(compiled)));

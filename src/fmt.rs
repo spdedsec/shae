@@ -35,10 +35,17 @@ impl Formatter {
 
     fn format_stmt(&mut self, stmt: &Stmt) {
         match &stmt.kind {
-            StmtKind::Let { pattern, init } => {
+            StmtKind::Let {
+                pattern,
+                type_ann,
+                init,
+            } => {
                 self.write_indent();
                 self.output.push_str("let ");
                 self.format_binding_pattern(pattern);
+                if let Some(ann) = type_ann {
+                    let _ = write!(self.output, ": {}", ann);
+                }
                 self.output.push_str(" = ");
                 self.format_expr(init, 0);
             }
@@ -48,16 +55,28 @@ impl Formatter {
                 self.output.push_str(" = ");
                 self.format_expr(value, 0);
             }
-            StmtKind::FnDef { name, params, body } => {
+            StmtKind::FnDef {
+                name,
+                params,
+                return_type,
+                body,
+            } => {
                 self.write_indent();
                 let _ = write!(self.output, "fn {}(", name);
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
                         self.output.push_str(", ");
                     }
-                    self.output.push_str(p);
+                    self.output.push_str(&p.name);
+                    if let Some(ann) = &p.type_ann {
+                        let _ = write!(self.output, ": {}", ann);
+                    }
                 }
-                self.output.push_str(") {\n");
+                self.output.push(')');
+                if let Some(ret) = return_type {
+                    let _ = write!(self.output, " -> {}", ret);
+                }
+                self.output.push_str(" {\n");
                 self.indent_level += 1;
                 for s in body.iter() {
                     self.format_stmt(s);
@@ -185,7 +204,10 @@ impl Formatter {
                     if i > 0 {
                         self.output.push_str(", ");
                     }
-                    self.output.push_str(f);
+                    self.output.push_str(&f.name);
+                    if let Some(ann) = &f.type_ann {
+                        let _ = write!(self.output, ": {}", ann);
+                    }
                 }
                 self.output.push_str(" }");
             }
@@ -489,15 +511,27 @@ impl Formatter {
                 self.write_indent();
                 self.output.push('}');
             }
-            Expr::Lambda { params, body, .. } => {
+            Expr::Lambda {
+                params,
+                return_type,
+                body,
+                ..
+            } => {
                 self.output.push_str("fn(");
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
                         self.output.push_str(", ");
                     }
-                    self.output.push_str(p);
+                    self.output.push_str(&p.name);
+                    if let Some(ann) = &p.type_ann {
+                        let _ = write!(self.output, ": {}", ann);
+                    }
                 }
-                self.output.push_str(") {\n");
+                self.output.push(')');
+                if let Some(ret) = return_type {
+                    let _ = write!(self.output, " -> {}", ret);
+                }
+                self.output.push_str(" {\n");
                 self.indent_level += 1;
                 for s in body.iter() {
                     self.format_stmt(s);

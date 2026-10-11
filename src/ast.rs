@@ -42,10 +42,83 @@ pub enum BindingPattern {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeAnnotation {
+    Any,
+    Int,
+    Float,
+    String,
+    Bool,
+    Null,
+    Void,
+    Array(Box<TypeAnnotation>),
+    Map {
+        key: Box<TypeAnnotation>,
+        value: Box<TypeAnnotation>,
+    },
+    Function {
+        params: Vec<TypeAnnotation>,
+        return_type: Box<TypeAnnotation>,
+    },
+    Custom(String),
+    Union(Vec<TypeAnnotation>),
+    Nullable(Box<TypeAnnotation>),
+}
+
+impl std::fmt::Display for TypeAnnotation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeAnnotation::Any => write!(f, "any"),
+            TypeAnnotation::Int => write!(f, "int"),
+            TypeAnnotation::Float => write!(f, "float"),
+            TypeAnnotation::String => write!(f, "string"),
+            TypeAnnotation::Bool => write!(f, "bool"),
+            TypeAnnotation::Null => write!(f, "null"),
+            TypeAnnotation::Void => write!(f, "void"),
+            TypeAnnotation::Array(inner) => write!(f, "[{}]", inner),
+            TypeAnnotation::Map { key, value } => write!(f, "map<{}, {}>", key, value),
+            TypeAnnotation::Function {
+                params,
+                return_type,
+            } => {
+                let p = params
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "fn({}) -> {}", p, return_type)
+            }
+            TypeAnnotation::Custom(name) => write!(f, "{}", name),
+            TypeAnnotation::Union(types) => {
+                let u = types
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                write!(f, "{}", u)
+            }
+            TypeAnnotation::Nullable(inner) => write!(f, "{}?", inner),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Param {
+    pub name: String,
+    pub type_ann: Option<TypeAnnotation>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructField {
+    pub name: String,
+    pub type_ann: Option<TypeAnnotation>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum StmtKind {
     Let {
         pattern: BindingPattern,
+        type_ann: Option<TypeAnnotation>,
         init: Expr,
     },
     Assign {
@@ -54,7 +127,8 @@ pub enum StmtKind {
     },
     FnDef {
         name: String,
-        params: Arc<Vec<String>>,
+        params: Arc<Vec<Param>>,
+        return_type: Option<TypeAnnotation>,
         body: Arc<Vec<Stmt>>,
     },
     If {
@@ -83,7 +157,7 @@ pub enum StmtKind {
 
     StructDef {
         name: String,
-        fields: Vec<String>,
+        fields: Vec<StructField>,
     },
     EnumDef {
         name: String,
@@ -185,7 +259,8 @@ pub enum Expr {
     },
 
     Lambda {
-        params: Arc<Vec<String>>,
+        params: Arc<Vec<Param>>,
+        return_type: Option<TypeAnnotation>,
         body: Arc<Vec<Stmt>>,
         span: Span,
     },
