@@ -291,3 +291,82 @@ fn test_vm_gc_heavy_allocation_churn() {
         panic!("root2 missing from stack");
     }
 }
+
+#[test]
+fn test_generational_gc_nursery_promotion() {
+    let mut heap = GcHeap::new();
+
+    let root_ref = heap.alloc_array(vec![Value::Int(1), Value::Int(2)]);
+    let junk_ref = heap.alloc_string("temporary nursery string".to_string());
+
+    assert_eq!(heap.objects[root_ref.0].as_ref().unwrap().generation, 0);
+    assert_eq!(heap.objects[junk_ref.0].as_ref().unwrap().generation, 0);
+    assert_eq!(heap.nursery_count, 2);
+
+    // Minor collection keeping root_ref
+    let stats = heap.collect_minor(|h, gray| {
+        h.mark_ref(root_ref, gray);
+    });
+
+    assert_eq!(stats.gc_kind, Some(shae::gc::GcKind::Minor));
+    assert_eq!(stats.freed_objects, 1);
+    assert_eq!(stats.promoted_objects, 1);
+    assert_eq!(heap.live_objects_count(), 1);
+
+    // Root should now be promoted to Generation 1 (tenured)
+    let promoted_obj = heap.objects[root_ref.0].as_ref().unwrap();
+    assert_eq!(promoted_obj.generation, 1);
+    assert_eq!(heap.nursery_count, 0);
+}
+
+#[test]
+fn test_generational_write_barrier_and_remembered_set() {
+    let mut heap = GcHeap::new();
+
+    // Allocate an object and promote it to tenured space
+    let old_map_ref = heap.alloc_map(IndexMap::new());
+    heap.collect_minor(|h, gray| {
+        h.mark_ref(old_map_ref, gray);
+    });
+    assert_eq!(heap.objects[old_map_ref.0].as_ref().unwrap().generation, 1);
+
+    // Allocate a new young object in nursery
+    let young_arr_ref = heap.alloc_array(vec![Value::Int(100), Value::Int(200)]);
+    assert_eq!(heap.objects[young_arr_ref.0].as_ref().unwrap().generation, 0);
+
+    // Simulate mutation: old_map["child"] = young_arr
+    heap.as_map_mut(old_map_ref)
+        .unwrap()
+        .insert("child".to_string(), Value::GcArray(young_arr_ref));
+
+    // Trigger write barrier
+    heap.write_barrier(old_map_ref, &Value::GcArray(young_arr_ref));
+
+    // Remembered set must now contain old_map_ref
+    assert!(heap.remembered_set.contains(&old_map_ref));
+
+    // Run Minor GC: ONLY marking old_map_ref as root
+    let stats = heap.collect_minor(|h, gray| {
+        h.mark_ref(old_map_ref, gray);
+    });
+
+    // young_arr should have been visited via the remembered set and promoted!
+    assert_eq!(stats.freed_objects, 0);
+    assert_eq!(stats.promoted_objects, 1);
+    assert_eq!(heap.objects[young_arr_ref.0].as_ref().unwrap().generation, 1);
+}
+
+#[test]
+fn test_vm_minor_gc_script_builtin() {
+    let script = r#"
+gc("minor")
+"#;
+    let program = shae::parse_source(script).unwrap();
+    let chunk = shae::compiler::Compiler::new()
+        .compile_program(&program)
+        .unwrap();
+    let mut vm = shae::vm::VM::new();
+    let result = vm.interpret(chunk);
+    assert_eq!(result, shae::vm::InterpretResult::Ok(Value::Int(0)));
+}
+

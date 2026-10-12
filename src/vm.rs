@@ -131,6 +131,50 @@ impl VM {
         })
     }
 
+    pub fn collect_minor(&mut self) -> GcStats {
+        let stack = &self.stack;
+        let globals = &self.globals;
+        let open_upvalues = &self.open_upvalues;
+        let frames = &self.frames;
+
+        self.heap.collect_minor(|heap, gray_stack| {
+            for val in stack {
+                heap.mark_value(val, gray_stack);
+            }
+            for val in globals.values() {
+                heap.mark_value(val, gray_stack);
+            }
+            if let Some(mg) = &self.module_globals {
+                for val in mg.read().unwrap().values() {
+                    heap.mark_value(val, gray_stack);
+                }
+            }
+            for uv in open_upvalues {
+                let guard = uv.read().unwrap();
+                if let UpvalueLocation::Closed(ref val) = guard.location {
+                    heap.mark_value(val, gray_stack);
+                }
+            }
+            for frame in frames {
+                if let Some(mg) = &frame.closure.module_globals {
+                    for val in mg.read().unwrap().values() {
+                        heap.mark_value(val, gray_stack);
+                    }
+                }
+                for uv in &frame.closure.upvalues {
+                    let guard = uv.read().unwrap();
+                    if let UpvalueLocation::Closed(ref val) = guard.location {
+                        heap.mark_value(val, gray_stack);
+                    }
+                }
+            }
+        })
+    }
+
+    pub fn collect_major(&mut self) -> GcStats {
+        self.collect_garbage()
+    }
+
     pub fn interpret(&mut self, chunk: Chunk) -> InterpretResult {
         if self.module_globals.is_none() {
             self.module_globals = Some(Arc::new(RwLock::new(HashMap::new())));
@@ -957,6 +1001,7 @@ impl VM {
                             match idx_res {
                                 Ok(idx) => {
                                     self.heap.as_array_mut(r).unwrap()[idx] = value.clone();
+                                    self.heap.write_barrier(r, &value);
                                     self.stack.push(value);
                                 }
                                 Err(IndexError::NotWhole) => {
@@ -1006,6 +1051,7 @@ impl VM {
                                 other => other.to_string(),
                             };
                             self.heap.as_map_mut(r).unwrap().insert(key, value.clone());
+                            self.heap.write_barrier(r, &value);
                             self.stack.push(value);
                         }
                         Value::Map(m) => {
@@ -1303,6 +1349,7 @@ impl VM {
                         Value::GcMap(r) => {
                             if let Some(map) = self.heap.as_map_mut(r) {
                                 map.insert(property, value.clone());
+                                self.heap.write_barrier(r, &value);
                             }
                             self.stack.push(value);
                         }
@@ -1908,7 +1955,18 @@ impl VM {
                                 matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
                             });
                             if name == "gc" {
-                                let stats = self.collect_garbage();
+                                let is_minor = match args.first() {
+                                    Some(Value::String(s)) => s == "minor",
+                                    Some(Value::GcString(r)) => {
+                                        self.heap.as_string(*r).map(|s| s == "minor").unwrap_or(false)
+                                    }
+                                    _ => false,
+                                };
+                                let stats = if is_minor {
+                                    self.collect_minor()
+                                } else {
+                                    self.collect_garbage()
+                                };
                                 self.stack.push(Value::Int(stats.freed_objects as i64));
                                 continue;
                             }
@@ -2193,7 +2251,18 @@ impl VM {
                                 matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
                             });
                             if name == "gc" {
-                                let stats = self.collect_garbage();
+                                let is_minor = match args.first() {
+                                    Some(Value::String(s)) => s == "minor",
+                                    Some(Value::GcString(r)) => {
+                                        self.heap.as_string(*r).map(|s| s == "minor").unwrap_or(false)
+                                    }
+                                    _ => false,
+                                };
+                                let stats = if is_minor {
+                                    self.collect_minor()
+                                } else {
+                                    self.collect_garbage()
+                                };
                                 let val = Value::Int(stats.freed_objects as i64);
                                 if has_try {
                                     self.stack.push(val);
