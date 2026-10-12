@@ -12,6 +12,7 @@ pub mod eval;
 pub mod ffi;
 pub mod fmt;
 pub mod gc;
+pub mod jit;
 pub mod lexer;
 pub mod linter;
 pub mod lsp;

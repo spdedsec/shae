@@ -665,13 +665,9 @@ impl Chunk {
                     upvalues.push(UpvalueDesc { index, is_local });
                 }
                 let chunk = Self::deserialize_inner(r)?;
-                Ok(Value::CompiledFunction(Arc::new(CompiledFunction {
-                    arity,
-                    chunk,
-                    name,
-                    upvalues,
-                    is_async,
-                })))
+                Ok(Value::CompiledFunction(Arc::new(CompiledFunction::new(
+                    arity, chunk, name, upvalues, is_async,
+                ))))
             }
             6 => {
                 let name = read_string(r)?;

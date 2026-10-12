@@ -42,6 +42,8 @@ pub struct VM {
     pub prop_set_ic: HashMap<(usize, usize), InlineCacheEntry>,
     pub profiler: Option<crate::profiler::Profiler>,
     pub debug_session: Option<Arc<Mutex<crate::debugger::DebugSession>>>,
+    pub jit_enabled: bool,
+    pub jit_engine: Option<Arc<Mutex<crate::jit::JitEngine>>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -74,6 +76,14 @@ impl VM {
                 func: |_ev, _args, _span| Ok(Value::Int(0)),
             },
         );
+        globals.insert(
+            "jit".to_string(),
+            Value::Builtin {
+                name: "jit".to_string(),
+                func: |_ev, _args, _span| Ok(Value::String("enabled".to_string())),
+            },
+        );
+        let jit_engine = crate::jit::JitEngine::new().ok().map(|e| Arc::new(Mutex::new(e)));
         VM {
             frames: Vec::with_capacity(64),
             stack: Vec::with_capacity(256),
@@ -88,7 +98,70 @@ impl VM {
             prop_set_ic: HashMap::new(),
             profiler: None,
             debug_session: None,
+            jit_enabled: true,
+            jit_engine,
         }
+    }
+
+    pub fn set_jit_enabled(&mut self, enabled: bool) {
+        self.jit_enabled = enabled;
+    }
+
+    pub fn compile_function_jit(&mut self, func: &CompiledFunction) -> Result<crate::jit::JitFnPtr, String> {
+        if let Some(engine) = &self.jit_engine {
+            let mut eng = engine.lock().map_err(|e| e.to_string())?;
+            let ptr = eng.compile_function(func)?;
+            func.set_jit_fn(ptr);
+            Ok(ptr)
+        } else {
+            Err("JIT engine not available".into())
+        }
+    }
+
+    fn try_exec_jit(
+        &mut self,
+        func: &Arc<CompiledFunction>,
+        callee_slot: usize,
+    ) -> Option<Result<i64, String>> {
+        if !self.jit_enabled || func.is_async || !func.upvalues.is_empty() {
+            return None;
+        }
+
+        let invocations = func.record_invocation();
+        if func.get_jit_fn().is_none()
+            && invocations >= crate::jit::JIT_THRESHOLD
+            && crate::jit::JitEngine::can_compile(func)
+        {
+            if let Some(engine) = &self.jit_engine {
+                if let Ok(mut eng) = engine.lock() {
+                    if let Ok(fn_ptr) = eng.compile_function(func) {
+                        func.set_jit_fn(fn_ptr);
+                    }
+                }
+            }
+        }
+
+        if let Some(jit_fn) = func.get_jit_fn() {
+            let args_slice = &self.stack[callee_slot + 1..];
+            if args_slice.iter().all(|v| matches!(v, Value::Int(_))) {
+                let int_args: Vec<i64> = args_slice
+                    .iter()
+                    .map(|v| match v {
+                        Value::Int(i) => *i,
+                        _ => 0,
+                    })
+                    .collect();
+                let mut out_res: i64 = 0;
+                let status = unsafe { jit_fn(int_args.as_ptr(), int_args.len(), &mut out_res) };
+                if status == 0 {
+                    return Some(Ok(out_res));
+                } else if status == 2 {
+                    return Some(Err("Division by zero in native JIT execution".into()));
+                }
+            }
+        }
+
+        None
     }
 
     pub fn collect_garbage(&mut self) -> GcStats {
@@ -179,13 +252,7 @@ impl VM {
         if self.module_globals.is_none() {
             self.module_globals = Some(Arc::new(RwLock::new(HashMap::new())));
         }
-        let top_fn = Arc::new(CompiledFunction {
-            arity: 0,
-            chunk,
-            name: None,
-            upvalues: Vec::new(),
-            is_async: false,
-        });
+        let top_fn = Arc::new(CompiledFunction::new(0, chunk, None, Vec::new(), false));
         let top_closure = Arc::new(Closure {
             function: top_fn,
             upvalues: Vec::new(),
@@ -1863,6 +1930,18 @@ impl VM {
                                     .push(Value::Task(Arc::new(Mutex::new(Some(handle)))));
                                 continue;
                             }
+                            if let Some(res) = self.try_exec_jit(&closure.function, callee_slot) {
+                                match res {
+                                    Ok(out_res) => {
+                                        self.stack.truncate(callee_slot);
+                                        self.stack.push(Value::Int(out_res));
+                                        continue;
+                                    }
+                                    Err(msg) => {
+                                        runtime_error!(self, msg);
+                                    }
+                                }
+                            }
                             if self.frames.len() >= 1024 {
                                 runtime_error!(
                                     self,
@@ -1927,6 +2006,18 @@ impl VM {
                                     .push(Value::Task(Arc::new(Mutex::new(Some(handle)))));
                                 continue;
                             }
+                            if let Some(res) = self.try_exec_jit(&closure.function, callee_slot) {
+                                match res {
+                                    Ok(out_res) => {
+                                        self.stack.truncate(callee_slot);
+                                        self.stack.push(Value::Int(out_res));
+                                        continue;
+                                    }
+                                    Err(msg) => {
+                                        runtime_error!(self, msg);
+                                    }
+                                }
+                            }
                             if self.frames.len() >= 1024 {
                                 runtime_error!(
                                     self,
@@ -1954,6 +2045,54 @@ impl VM {
                             self.open_upvalues.retain(|uv| {
                                 matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
                             });
+                            if name == "jit" {
+                                let action = match args.first() {
+                                    Some(Value::String(s)) => s.as_str(),
+                                    Some(Value::GcString(r)) => {
+                                        self.heap.as_string(*r).unwrap_or("")
+                                    }
+                                    _ => "status",
+                                };
+                                let res = match action {
+                                    "status" => {
+                                        if self.jit_enabled {
+                                            Value::String("enabled".into())
+                                        } else {
+                                            Value::String("disabled".into())
+                                        }
+                                    }
+                                    "enable" => {
+                                        self.jit_enabled = true;
+                                        Value::Bool(true)
+                                    }
+                                    "disable" => {
+                                        self.jit_enabled = false;
+                                        Value::Bool(false)
+                                    }
+                                    "compile" => {
+                                        if let Some(target) = args.get(1) {
+                                            let func_opt = match target {
+                                                Value::CompiledFunction(f) => Some(f.clone()),
+                                                Value::Closure(c) => Some(c.function.clone()),
+                                                _ => None,
+                                            };
+                                            if let Some(func) = func_opt {
+                                                match self.compile_function_jit(&func) {
+                                                    Ok(_) => Value::Bool(true),
+                                                    Err(_) => Value::Bool(false),
+                                                }
+                                            } else {
+                                                Value::Bool(false)
+                                            }
+                                        } else {
+                                            Value::Bool(false)
+                                        }
+                                    }
+                                    _ => Value::Null,
+                                };
+                                self.stack.push(res);
+                                continue;
+                            }
                             if name == "gc" {
                                 let is_minor = match args.first() {
                                     Some(Value::String(s)) => s == "minor",
@@ -2115,7 +2254,30 @@ impl VM {
                                     self.stack.truncate(frame.slots_offset);
                                     self.stack.push(val);
                                 }
-                                continue;
+                                 continue;
+                            }
+                            if let Some(res) = self.try_exec_jit(&closure.function, callee_slot) {
+                                match res {
+                                    Ok(out_res) => {
+                                        let val = Value::Int(out_res);
+                                        if has_try {
+                                            self.stack.truncate(callee_slot);
+                                            self.stack.push(val);
+                                        } else {
+                                            let frame = self.frames.pop().unwrap();
+                                            self.close_upvalues(frame.slots_offset);
+                                            if self.frames.is_empty() {
+                                                return InterpretResult::Ok(val);
+                                            }
+                                            self.stack.truncate(frame.slots_offset);
+                                            self.stack.push(val);
+                                        }
+                                        continue;
+                                    }
+                                    Err(msg) => {
+                                        runtime_error!(self, msg);
+                                    }
+                                }
                             }
                             if has_try {
                                 if self.frames.len() >= 1024 {
@@ -2207,6 +2369,29 @@ impl VM {
                                 }
                                 continue;
                             }
+                            if let Some(res) = self.try_exec_jit(&closure.function, callee_slot) {
+                                match res {
+                                    Ok(out_res) => {
+                                        let val = Value::Int(out_res);
+                                        if has_try {
+                                            self.stack.truncate(callee_slot);
+                                            self.stack.push(val);
+                                        } else {
+                                            let frame = self.frames.pop().unwrap();
+                                            self.close_upvalues(frame.slots_offset);
+                                            if self.frames.is_empty() {
+                                                return InterpretResult::Ok(val);
+                                            }
+                                            self.stack.truncate(frame.slots_offset);
+                                            self.stack.push(val);
+                                        }
+                                        continue;
+                                    }
+                                    Err(msg) => {
+                                        runtime_error!(self, msg);
+                                    }
+                                }
+                            }
                             if has_try {
                                 if self.frames.len() >= 1024 {
                                     runtime_error!(
@@ -2250,6 +2435,64 @@ impl VM {
                             self.open_upvalues.retain(|uv| {
                                 matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
                             });
+                            if name == "jit" {
+                                let action = match args.first() {
+                                    Some(Value::String(s)) => s.as_str(),
+                                    Some(Value::GcString(r)) => {
+                                        self.heap.as_string(*r).unwrap_or("")
+                                    }
+                                    _ => "status",
+                                };
+                                let res = match action {
+                                    "status" => {
+                                        if self.jit_enabled {
+                                            Value::String("enabled".into())
+                                        } else {
+                                            Value::String("disabled".into())
+                                        }
+                                    }
+                                    "enable" => {
+                                        self.jit_enabled = true;
+                                        Value::Bool(true)
+                                    }
+                                    "disable" => {
+                                        self.jit_enabled = false;
+                                        Value::Bool(false)
+                                    }
+                                    "compile" => {
+                                        if let Some(target) = args.get(1) {
+                                            let func_opt = match target {
+                                                Value::CompiledFunction(f) => Some(f.clone()),
+                                                Value::Closure(c) => Some(c.function.clone()),
+                                                _ => None,
+                                            };
+                                            if let Some(func) = func_opt {
+                                                match self.compile_function_jit(&func) {
+                                                    Ok(_) => Value::Bool(true),
+                                                    Err(_) => Value::Bool(false),
+                                                }
+                                            } else {
+                                                Value::Bool(false)
+                                            }
+                                        } else {
+                                            Value::Bool(false)
+                                        }
+                                    }
+                                    _ => Value::Null,
+                                };
+                                if has_try {
+                                    self.stack.push(res);
+                                } else {
+                                    let frame = self.frames.pop().unwrap();
+                                    self.close_upvalues(frame.slots_offset);
+                                    if self.frames.is_empty() {
+                                        return InterpretResult::Ok(res);
+                                    }
+                                    self.stack.truncate(frame.slots_offset);
+                                    self.stack.push(res);
+                                }
+                                continue;
+                            }
                             if name == "gc" {
                                 let is_minor = match args.first() {
                                     Some(Value::String(s)) => s == "minor",

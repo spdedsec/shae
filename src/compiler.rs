@@ -116,13 +116,7 @@ impl Compiler {
             })
             .collect();
 
-        let compiled = CompiledFunction {
-            arity: params.len(),
-            chunk: child.chunk,
-            name,
-            upvalues: upvalue_descs,
-            is_async,
-        };
+        let compiled = CompiledFunction::new(params.len(), child.chunk, name, upvalue_descs, is_async);
 
         *self = *child.enclosing.unwrap();
 
@@ -289,7 +283,7 @@ impl Compiler {
                     self.compile_expr(value)?;
                     if let Some(slot) = self.resolve_local(name) {
                         self.emit_set_local(slot, span.line);
-                        if self.scope_depth == 0 {
+                        if self.scope_depth == 0 && self.enclosing.is_none() {
                             let const_idx = self.chunk.add_constant(Value::String(name.clone()));
                             self.chunk.write_opcode(OpCode::SetGlobal, span.line);
                             self.chunk.write(const_idx as u8, span.line);
@@ -631,7 +625,7 @@ impl Compiler {
         match pattern {
             BindingPattern::Ident(name) => {
                 let slot = self.add_local(name.clone());
-                if self.scope_depth == 0 {
+                if self.scope_depth == 0 && self.enclosing.is_none() {
                     self.emit_get_local(slot, 0);
                     let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                     self.chunk.write_opcode(OpCode::DefineGlobal, 0);

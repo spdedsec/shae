@@ -20,6 +20,27 @@ pub struct UpvalueDesc {
     pub is_local: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct JitMetadata {
+    pub invocation_count: Arc<std::sync::atomic::AtomicUsize>,
+    pub jit_fn: Arc<std::sync::RwLock<Option<crate::jit::JitFnPtr>>>,
+}
+
+impl PartialEq for JitMetadata {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Default for JitMetadata {
+    fn default() -> Self {
+        Self {
+            invocation_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            jit_fn: Arc::new(std::sync::RwLock::new(None)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompiledFunction {
     pub arity: usize,
@@ -27,6 +48,41 @@ pub struct CompiledFunction {
     pub name: Option<String>,
     pub upvalues: Vec<UpvalueDesc>,
     pub is_async: bool,
+    pub jit: JitMetadata,
+}
+
+impl CompiledFunction {
+    pub fn new(
+        arity: usize,
+        chunk: Chunk,
+        name: Option<String>,
+        upvalues: Vec<UpvalueDesc>,
+        is_async: bool,
+    ) -> Self {
+        Self {
+            arity,
+            chunk,
+            name,
+            upvalues,
+            is_async,
+            jit: JitMetadata::default(),
+        }
+    }
+
+    pub fn record_invocation(&self) -> usize {
+        self.jit
+            .invocation_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1
+    }
+
+    pub fn get_jit_fn(&self) -> Option<crate::jit::JitFnPtr> {
+        *self.jit.jit_fn.read().unwrap()
+    }
+
+    pub fn set_jit_fn(&self, f: crate::jit::JitFnPtr) {
+        *self.jit.jit_fn.write().unwrap() = Some(f);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

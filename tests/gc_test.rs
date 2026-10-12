@@ -332,7 +332,10 @@ fn test_generational_write_barrier_and_remembered_set() {
 
     // Allocate a new young object in nursery
     let young_arr_ref = heap.alloc_array(vec![Value::Int(100), Value::Int(200)]);
-    assert_eq!(heap.objects[young_arr_ref.0].as_ref().unwrap().generation, 0);
+    assert_eq!(
+        heap.objects[young_arr_ref.0].as_ref().unwrap().generation,
+        0
+    );
 
     // Simulate mutation: old_map["child"] = young_arr
     heap.as_map_mut(old_map_ref)
@@ -353,7 +356,10 @@ fn test_generational_write_barrier_and_remembered_set() {
     // young_arr should have been visited via the remembered set and promoted!
     assert_eq!(stats.freed_objects, 0);
     assert_eq!(stats.promoted_objects, 1);
-    assert_eq!(heap.objects[young_arr_ref.0].as_ref().unwrap().generation, 1);
+    assert_eq!(
+        heap.objects[young_arr_ref.0].as_ref().unwrap().generation,
+        1
+    );
 }
 
 #[test]
