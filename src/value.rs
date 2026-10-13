@@ -83,6 +83,13 @@ impl CompiledFunction {
     pub fn set_jit_fn(&self, f: crate::jit::JitFnPtr) {
         *self.jit.jit_fn.write().unwrap() = Some(f);
     }
+
+    pub fn is_float_candidate(&self) -> bool {
+        self.chunk
+            .constants
+            .iter()
+            .any(|c| matches!(c, Value::Float(_) | Value::Number(_)))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1,0 +1,32 @@
+import "std:sqlite"
+import "std:csv"
+
+print("🧪 Testing Real-World SQLite & CSV integration directly...")
+
+let db = sqlite.open(":memory:")
+sqlite.execute(db, "CREATE TABLE test_telemetry (id INTEGER PRIMARY KEY AUTOINCREMENT, service TEXT, latency_ms REAL, status_code INTEGER)")
+
+// Insert records
+sqlite.execute(db, "INSERT INTO test_telemetry (service, latency_ms, status_code) VALUES (?, ?, ?)", ["api-gateway", 15.2, 200])
+sqlite.execute(db, "INSERT INTO test_telemetry (service, latency_ms, status_code) VALUES (?, ?, ?)", ["billing", 88.0, 200])
+sqlite.execute(db, "INSERT INTO test_telemetry (service, latency_ms, status_code) VALUES (?, ?, ?)", ["auth", 24.5, 401])
+
+// Query and verify
+let rows = sqlite.query(db, "SELECT * FROM test_telemetry ORDER BY id ASC")
+print("✅ Query returned " + str(rows.len()) + " rows from SQLite")
+
+// Export to CSV
+let csv_out = csv.stringify(rows)
+print("✅ Exported to CSV:\n" + csv_out)
+
+// Parse CSV back
+let parsed = csv.parse(csv_out)
+print("✅ Re-parsed " + str(parsed.len()) + " rows from CSV")
+
+if parsed.len() == 3 and parsed[0]["service"] == "api-gateway" {
+    print("🎉 All Real-World Service components verified successfully!")
+} else {
+    print("❌ Verification failed!")
+}
+
+sqlite.close(db)

@@ -127,7 +127,7 @@ impl VM {
         &mut self,
         func: &Arc<CompiledFunction>,
         callee_slot: usize,
-    ) -> Option<Result<i64, String>> {
+    ) -> Option<Result<Value, String>> {
         if !self.jit_enabled || func.is_async || !func.upvalues.is_empty() {
             return None;
         }
@@ -148,20 +148,47 @@ impl VM {
 
         if let Some(jit_fn) = func.get_jit_fn() {
             let args_slice = &self.stack[callee_slot + 1..];
-            if args_slice.iter().all(|v| matches!(v, Value::Int(_))) {
-                let int_args: Vec<i64> = args_slice
+            let is_float = func.is_float_candidate();
+            if is_float {
+                let is_all_num = args_slice
                     .iter()
-                    .map(|v| match v {
-                        Value::Int(i) => *i,
-                        _ => 0,
-                    })
-                    .collect();
-                let mut out_res: i64 = 0;
-                let status = unsafe { jit_fn(int_args.as_ptr(), int_args.len(), &mut out_res) };
-                if status == 0 {
-                    return Some(Ok(out_res));
-                } else if status == 2 {
-                    return Some(Err("Division by zero in native JIT execution".into()));
+                    .all(|v| matches!(v, Value::Int(_) | Value::Float(_) | Value::Number(_)));
+                if is_all_num {
+                    let raw_args: Vec<i64> = args_slice
+                        .iter()
+                        .map(|v| match v {
+                            Value::Int(i) => (*i as f64).to_bits() as i64,
+                            Value::Float(f) | Value::Number(f) => f.to_bits() as i64,
+                            _ => 0,
+                        })
+                        .collect();
+                    let mut out_res: i64 = 0;
+                    let status = unsafe { jit_fn(raw_args.as_ptr(), raw_args.len(), &mut out_res) };
+                    if status == 3 {
+                        return Some(Ok(Value::Float(f64::from_bits(out_res as u64))));
+                    } else if status == 0 {
+                        return Some(Ok(Value::Int(out_res)));
+                    } else if status == 2 {
+                        return Some(Err("Division by zero in native JIT execution".into()));
+                    }
+                }
+            } else {
+                let is_all_int = args_slice.iter().all(|v| matches!(v, Value::Int(_)));
+                if is_all_int {
+                    let int_args: Vec<i64> = args_slice
+                        .iter()
+                        .map(|v| match v {
+                            Value::Int(i) => *i,
+                            _ => 0,
+                        })
+                        .collect();
+                    let mut out_res: i64 = 0;
+                    let status = unsafe { jit_fn(int_args.as_ptr(), int_args.len(), &mut out_res) };
+                    if status == 0 {
+                        return Some(Ok(Value::Int(out_res)));
+                    } else if status == 2 {
+                        return Some(Err("Division by zero in native JIT execution".into()));
+                    }
                 }
             }
         }
@@ -1187,7 +1214,11 @@ impl VM {
                             } else if matches!(
                                 property.as_str(),
                                 "keys" | "values" | "has" | "contains" | "get" | "delete"
-                            ) {
+                            ) || (map.contains_key("_sqlite_handle")
+                                && matches!(
+                                    property.as_str(),
+                                    "execute" | "query" | "close" | "changes" | "last_insert_id"
+                                )) {
                                 self.stack.push(Value::BoundMethod {
                                     object: Box::new(target.clone()),
                                     method: property,
@@ -1939,7 +1970,7 @@ impl VM {
                                 match res {
                                     Ok(out_res) => {
                                         self.stack.truncate(callee_slot);
-                                        self.stack.push(Value::Int(out_res));
+                                        self.stack.push(out_res);
                                         continue;
                                     }
                                     Err(msg) => {
@@ -2015,7 +2046,7 @@ impl VM {
                                 match res {
                                     Ok(out_res) => {
                                         self.stack.truncate(callee_slot);
-                                        self.stack.push(Value::Int(out_res));
+                                        self.stack.push(out_res);
                                         continue;
                                     }
                                     Err(msg) => {
@@ -2266,7 +2297,7 @@ impl VM {
                             if let Some(res) = self.try_exec_jit(&closure.function, callee_slot) {
                                 match res {
                                     Ok(out_res) => {
-                                        let val = Value::Int(out_res);
+                                        let val = out_res;
                                         if has_try {
                                             self.stack.truncate(callee_slot);
                                             self.stack.push(val);
@@ -2379,7 +2410,7 @@ impl VM {
                             if let Some(res) = self.try_exec_jit(&closure.function, callee_slot) {
                                 match res {
                                     Ok(out_res) => {
-                                        let val = Value::Int(out_res);
+                                        let val = out_res;
                                         if has_try {
                                             self.stack.truncate(callee_slot);
                                             self.stack.push(val);

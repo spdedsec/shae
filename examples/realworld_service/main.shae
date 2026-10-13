@@ -1,0 +1,149 @@
+import "std:sqlite"
+import "std:csv"
+import "std:time"
+import "std:sys"
+
+print("=======================================================")
+print("  Shae Production Microservice: SQLite & CSV Analytics ")
+print("=======================================================")
+
+// Initialize SQLite database
+let db = sqlite.open("analytics.db")
+
+// Ensure telemetry table schema exists
+sqlite.execute(db, "CREATE TABLE IF NOT EXISTS telemetry (id INTEGER PRIMARY KEY AUTOINCREMENT, service TEXT, endpoint TEXT, latency_ms REAL, status_code INTEGER, created_at INTEGER)")
+
+// Seed sample metrics if table is empty
+let count_rows = sqlite.query(db, "SELECT COUNT(*) as count FROM telemetry")
+let total = count_rows[0]["count"]
+
+if total == 0 {
+    print("⚡ Seeding initial telemetry dataset into SQLite...")
+    sqlite.execute(db, "INSERT INTO telemetry (service, endpoint, latency_ms, status_code, created_at) VALUES (?, ?, ?, ?, ?)", ["api-gateway", "/v1/auth", 14.5, 200, time.now_ms()])
+    sqlite.execute(db, "INSERT INTO telemetry (service, endpoint, latency_ms, status_code, created_at) VALUES (?, ?, ?, ?, ?)", ["billing", "/v1/charge", 85.2, 200, time.now_ms()])
+    sqlite.execute(db, "INSERT INTO telemetry (service, endpoint, latency_ms, status_code, created_at) VALUES (?, ?, ?, ?, ?)", ["orders", "/v1/checkout", 120.4, 500, time.now_ms()])
+    print("   Inserted 3 seed records.")
+}
+
+fn handle_request(req) {
+    let method = req.method
+    let path = req.path
+
+    // Health check endpoint
+    if method == "GET" and path == "/health" {
+        let stats = sqlite.query(db, "SELECT COUNT(*) as total_events, AVG(latency_ms) as avg_latency FROM telemetry")
+        let total_events = stats[0]["total_events"]
+        let avg_latency = stats[0]["avg_latency"]
+
+        let payload = {
+            status: "online",
+            runtime: "Shae Language Runtime",
+            platform: sys.platform(),
+            database: "SQLite 3",
+            total_events: total_events,
+            avg_latency_ms: avg_latency
+        }
+        return {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+            body: json_stringify(payload)
+        }
+    }
+
+    // List metrics as JSON
+    if method == "GET" and path == "/api/metrics" {
+        let records = sqlite.query(db, "SELECT service, endpoint, latency_ms, status_code, created_at FROM telemetry ORDER BY id DESC LIMIT 50")
+        return {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+            body: json_stringify(records)
+        }
+    }
+
+    // Export metrics as RFC 4180 CSV
+    if method == "GET" and path == "/api/export.csv" {
+        let records = sqlite.query(db, "SELECT service, endpoint, latency_ms, status_code, created_at FROM telemetry ORDER BY id ASC")
+        let csv_text = csv.stringify(records)
+        return {
+            status: 200,
+            headers: {
+                "Content-Type": "text/csv; charset=utf-8",
+                "Content-Disposition": "attachment; filename=\"telemetry.csv\""
+            },
+            body: csv_text
+        }
+    }
+
+    // Record new telemetry event
+    if method == "POST" and path == "/api/metrics" {
+        let payload = null
+        try {
+            payload = json_parse(req.body)
+        } catch (_err) {
+            return {
+                status: 400,
+                headers: { "Content-Type": "application/json" },
+                body: json_stringify({ error: "Invalid JSON body" })
+            }
+        }
+
+        let service = payload["service"] ?? "unknown"
+        let endpoint = payload["endpoint"] ?? "/"
+        let latency_ms = payload["latency_ms"] ?? 0.0
+        let status_code = payload["status_code"] ?? 200
+
+        sqlite.execute(db, "INSERT INTO telemetry (service, endpoint, latency_ms, status_code, created_at) VALUES (?, ?, ?, ?, ?)", [service, endpoint, latency_ms, status_code, time.now_ms()])
+        let new_id = sqlite.last_insert_id(db)
+
+        return {
+            status: 201,
+            headers: { "Content-Type": "application/json" },
+            body: json_stringify({ message: "Recorded event", event_id: new_id })
+        }
+    }
+
+    // Batch import telemetry events from CSV
+    if method == "POST" and path == "/api/import.csv" {
+        let parsed = null
+        try {
+            parsed = csv.parse(req.body)
+        } catch (e) {
+            return {
+                status: 400,
+                headers: { "Content-Type": "application/json" },
+                body: json_stringify({ error: "CSV parsing failed: " + str(e) })
+            }
+        }
+
+        let imported = 0
+        for row in parsed {
+            let s = row["service"] ?? "batch"
+            let ep = row["endpoint"] ?? "/"
+            let lat = row["latency_ms"] ?? 0.0
+            let code = row["status_code"] ?? 200
+            sqlite.execute(db, "INSERT INTO telemetry (service, endpoint, latency_ms, status_code, created_at) VALUES (?, ?, ?, ?, ?)", [s, ep, lat, code, time.now_ms()])
+            imported = imported + 1
+        }
+
+        return {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+            body: json_stringify({ message: "Batch imported telemetry", imported_count: imported })
+        }
+    }
+
+    return {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+        body: json_stringify({ error: "Route not found", path: path })
+    }
+}
+
+print("🚀 Service listening on http://127.0.0.1:8088")
+print("   Endpoints:")
+print("   - GET  /health")
+print("   - GET  /api/metrics")
+print("   - POST /api/metrics")
+print("   - GET  /api/export.csv")
+print("   - POST /api/import.csv")
+serve(8088, handle_request)

@@ -1347,7 +1347,11 @@ impl Evaluator {
                         } else if matches!(
                             property.as_str(),
                             "keys" | "values" | "has" | "contains" | "get" | "delete"
-                        ) {
+                        ) || (map.contains_key("_sqlite_handle")
+                            && matches!(
+                                property.as_str(),
+                                "execute" | "query" | "close" | "changes" | "last_insert_id"
+                            )) {
                             Ok(Some(Value::BoundMethod {
                                 object: Box::new(Value::Map(m.clone())),
                                 method: property.clone(),
@@ -2685,6 +2689,148 @@ impl Evaluator {
                         };
                         let prev = m.write().unwrap().shift_remove(&key).unwrap_or(Value::Null);
                         Ok(prev)
+                    }
+                    (Value::Map(m), "execute")
+                        if m.read().unwrap().contains_key("_sqlite_handle") =>
+                    {
+                        let handle = match m.read().unwrap().get("_sqlite_handle") {
+                            Some(Value::Int(h)) => *h as u64,
+                            _ => {
+                                self.depth -= 1;
+                                return Err(
+                                    RuntimeError::new("Invalid SQLite handle".into()).at(span)
+                                );
+                            }
+                        };
+                        if args.is_empty() {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new(
+                                "execute(sql, [params]) expects at least 1 argument".into(),
+                            )
+                            .at(span));
+                        }
+                        let sql = match &args[0] {
+                            Value::String(s) => s.as_str(),
+                            other => {
+                                self.depth -= 1;
+                                return Err(RuntimeError::new(format!(
+                                    "execute expects SQL string, got {}",
+                                    other.type_name()
+                                ))
+                                .at(span));
+                            }
+                        };
+                        let params: Vec<Value> = if args.len() > 1 {
+                            match &args[1] {
+                                Value::Array(arr) => arr.read().unwrap().clone(),
+                                other => vec![other.clone()],
+                            }
+                        } else {
+                            Vec::new()
+                        };
+                        let changes = crate::sqlite::sqlite_execute(handle, sql, &params)
+                            .map_err(|e| {
+                                self.depth -= 1;
+                                RuntimeError::new(e).at(span)
+                            })?;
+                        Ok(Value::Int(changes))
+                    }
+                    (Value::Map(m), "query")
+                        if m.read().unwrap().contains_key("_sqlite_handle") =>
+                    {
+                        let handle = match m.read().unwrap().get("_sqlite_handle") {
+                            Some(Value::Int(h)) => *h as u64,
+                            _ => {
+                                self.depth -= 1;
+                                return Err(
+                                    RuntimeError::new("Invalid SQLite handle".into()).at(span)
+                                );
+                            }
+                        };
+                        if args.is_empty() {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new(
+                                "query(sql, [params]) expects at least 1 argument".into(),
+                            )
+                            .at(span));
+                        }
+                        let sql = match &args[0] {
+                            Value::String(s) => s.as_str(),
+                            other => {
+                                self.depth -= 1;
+                                return Err(RuntimeError::new(format!(
+                                    "query expects SQL string, got {}",
+                                    other.type_name()
+                                ))
+                                .at(span));
+                            }
+                        };
+                        let params: Vec<Value> = if args.len() > 1 {
+                            match &args[1] {
+                                Value::Array(arr) => arr.read().unwrap().clone(),
+                                other => vec![other.clone()],
+                            }
+                        } else {
+                            Vec::new()
+                        };
+                        crate::sqlite::sqlite_query(handle, sql, &params).map_err(|e| {
+                            self.depth -= 1;
+                            RuntimeError::new(e).at(span)
+                        })
+                    }
+                    (Value::Map(m), "last_insert_id")
+                        if m.read().unwrap().contains_key("_sqlite_handle") =>
+                    {
+                        let handle = match m.read().unwrap().get("_sqlite_handle") {
+                            Some(Value::Int(h)) => *h as u64,
+                            _ => {
+                                self.depth -= 1;
+                                return Err(
+                                    RuntimeError::new("Invalid SQLite handle".into()).at(span)
+                                );
+                            }
+                        };
+                        let id = crate::sqlite::sqlite_last_insert_id(handle).map_err(|e| {
+                            self.depth -= 1;
+                            RuntimeError::new(e).at(span)
+                        })?;
+                        Ok(Value::Int(id))
+                    }
+                    (Value::Map(m), "changes")
+                        if m.read().unwrap().contains_key("_sqlite_handle") =>
+                    {
+                        let handle = match m.read().unwrap().get("_sqlite_handle") {
+                            Some(Value::Int(h)) => *h as u64,
+                            _ => {
+                                self.depth -= 1;
+                                return Err(
+                                    RuntimeError::new("Invalid SQLite handle".into()).at(span)
+                                );
+                            }
+                        };
+                        let count = crate::sqlite::sqlite_changes(handle).map_err(|e| {
+                            self.depth -= 1;
+                            RuntimeError::new(e).at(span)
+                        })?;
+                        Ok(Value::Int(count))
+                    }
+                    (Value::Map(m), "close")
+                        if m.read().unwrap().contains_key("_sqlite_handle") =>
+                    {
+                        let handle = match m.read().unwrap().get("_sqlite_handle") {
+                            Some(Value::Int(h)) => *h as u64,
+                            _ => {
+                                self.depth -= 1;
+                                return Err(
+                                    RuntimeError::new("Invalid SQLite handle".into()).at(span)
+                                );
+                            }
+                        };
+                        crate::sqlite::sqlite_close(handle).map_err(|e| {
+                            self.depth -= 1;
+                            RuntimeError::new(e).at(span)
+                        })?;
+                        Ok(Value::Null)
                     }
                     (Value::FfiLibrary(lib), "fn" | "symbol" | "get") => {
                         if args.len() != 3 {

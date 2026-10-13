@@ -1,7 +1,8 @@
 use crate::opcode::OpCode;
 use crate::value::{CompiledFunction, Value};
 use cranelift_codegen::Context;
-use cranelift_codegen::ir::{AbiParam, Block, InstBuilder, MachMemFlags, condcodes::IntCC, types};
+use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
+use cranelift_codegen::ir::{AbiParam, Block, InstBuilder, MachMemFlags, types};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -106,11 +107,16 @@ impl JitEngine {
             match opcode {
                 OpCode::Constant => {
                     let idx = chunk.code.get(offset + 1).copied().unwrap_or(0) as usize;
-                    if chunk
-                        .constants
-                        .get(idx)
-                        .is_some_and(|c| !matches!(c, Value::Int(_) | Value::Bool(_) | Value::Null))
-                    {
+                    if chunk.constants.get(idx).is_some_and(|c| {
+                        !matches!(
+                            c,
+                            Value::Int(_)
+                                | Value::Float(_)
+                                | Value::Number(_)
+                                | Value::Bool(_)
+                                | Value::Null
+                        )
+                    }) {
                         return false;
                     }
                     offset += 2;
@@ -119,11 +125,16 @@ impl JitEngine {
                     let hi = chunk.code.get(offset + 1).copied().unwrap_or(0) as usize;
                     let lo = chunk.code.get(offset + 2).copied().unwrap_or(0) as usize;
                     let idx = (hi << 8) | lo;
-                    if chunk
-                        .constants
-                        .get(idx)
-                        .is_some_and(|c| !matches!(c, Value::Int(_) | Value::Bool(_) | Value::Null))
-                    {
+                    if chunk.constants.get(idx).is_some_and(|c| {
+                        !matches!(
+                            c,
+                            Value::Int(_)
+                                | Value::Float(_)
+                                | Value::Number(_)
+                                | Value::Bool(_)
+                                | Value::Null
+                        )
+                    }) {
                         return false;
                     }
                     offset += 3;
@@ -263,11 +274,17 @@ impl JitEngine {
         let num_args = builder.block_params(entry_block)[1];
         let out_ptr = builder.block_params(entry_block)[2];
 
+        let is_float = chunk
+            .constants
+            .iter()
+            .any(|c| matches!(c, Value::Float(_) | Value::Number(_)));
+        let val_type = if is_float { types::F64 } else { types::I64 };
+
         // Declare unified local variables and evaluation stack slots
         let total_vars = (max_local + 500).max(1000);
         let mut vars: Vec<Variable> = Vec::with_capacity(total_vars);
         for _ in 0..total_vars {
-            vars.push(builder.declare_var(types::I64));
+            vars.push(builder.declare_var(val_type));
         }
         let var = |idx: usize| vars[idx];
 
@@ -276,14 +293,18 @@ impl JitEngine {
         let div_zero_block = builder.create_block();
 
         // Setup parameters and local variables in entry
-        let zero_const = builder.ins().iconst(types::I64, 0);
+        let zero_const = if is_float {
+            builder.ins().f64const(0.0)
+        } else {
+            builder.ins().iconst(types::I64, 0)
+        };
         builder.def_var(var(0), zero_const);
 
         for i in 0..arity {
             let offset_val = (i * 8) as i32;
             let loaded = builder
                 .ins()
-                .load(types::I64, mem_flags(), args_ptr, offset_val);
+                .load(val_type, mem_flags(), args_ptr, offset_val);
             builder.def_var(var(1 + i), loaded);
         }
 
@@ -342,10 +363,23 @@ impl JitEngine {
             match opcode {
                 OpCode::Constant => {
                     let idx = chunk.code.get(offset + 1).copied().unwrap_or(0) as usize;
-                    let val = match &chunk.constants[idx] {
-                        Value::Int(n) => builder.ins().iconst(types::I64, *n),
-                        Value::Bool(b) => builder.ins().iconst(types::I64, if *b { 1 } else { 0 }),
-                        _ => builder.ins().iconst(types::I64, 0),
+                    let val = if is_float {
+                        match &chunk.constants[idx] {
+                            Value::Float(f) | Value::Number(f) => builder.ins().f64const(*f),
+                            Value::Int(n) => builder.ins().f64const(*n as f64),
+                            Value::Bool(b) => {
+                                builder.ins().f64const(if *b { 1.0 } else { 0.0 })
+                            }
+                            _ => builder.ins().f64const(0.0),
+                        }
+                    } else {
+                        match &chunk.constants[idx] {
+                            Value::Int(n) => builder.ins().iconst(types::I64, *n),
+                            Value::Bool(b) => {
+                                builder.ins().iconst(types::I64, if *b { 1 } else { 0 })
+                            }
+                            _ => builder.ins().iconst(types::I64, 0),
+                        }
                     };
                     builder.def_var(var(cur_sp), val);
                     cur_sp += 1;
@@ -355,23 +389,44 @@ impl JitEngine {
                     let hi = chunk.code.get(offset + 1).copied().unwrap_or(0) as usize;
                     let lo = chunk.code.get(offset + 2).copied().unwrap_or(0) as usize;
                     let idx = (hi << 8) | lo;
-                    let val = match &chunk.constants[idx] {
-                        Value::Int(n) => builder.ins().iconst(types::I64, *n),
-                        Value::Bool(b) => builder.ins().iconst(types::I64, if *b { 1 } else { 0 }),
-                        _ => builder.ins().iconst(types::I64, 0),
+                    let val = if is_float {
+                        match &chunk.constants[idx] {
+                            Value::Float(f) | Value::Number(f) => builder.ins().f64const(*f),
+                            Value::Int(n) => builder.ins().f64const(*n as f64),
+                            Value::Bool(b) => {
+                                builder.ins().f64const(if *b { 1.0 } else { 0.0 })
+                            }
+                            _ => builder.ins().f64const(0.0),
+                        }
+                    } else {
+                        match &chunk.constants[idx] {
+                            Value::Int(n) => builder.ins().iconst(types::I64, *n),
+                            Value::Bool(b) => {
+                                builder.ins().iconst(types::I64, if *b { 1 } else { 0 })
+                            }
+                            _ => builder.ins().iconst(types::I64, 0),
+                        }
                     };
                     builder.def_var(var(cur_sp), val);
                     cur_sp += 1;
                     offset += 3;
                 }
                 OpCode::Nil | OpCode::False => {
-                    let val = builder.ins().iconst(types::I64, 0);
+                    let val = if is_float {
+                        builder.ins().f64const(0.0)
+                    } else {
+                        builder.ins().iconst(types::I64, 0)
+                    };
                     builder.def_var(var(cur_sp), val);
                     cur_sp += 1;
                     offset += 1;
                 }
                 OpCode::True => {
-                    let val = builder.ins().iconst(types::I64, 1);
+                    let val = if is_float {
+                        builder.ins().f64const(1.0)
+                    } else {
+                        builder.ins().iconst(types::I64, 1)
+                    };
                     builder.def_var(var(cur_sp), val);
                     cur_sp += 1;
                     offset += 1;
@@ -421,7 +476,11 @@ impl JitEngine {
                 OpCode::Add => {
                     let b = builder.use_var(var(cur_sp - 1));
                     let a = builder.use_var(var(cur_sp - 2));
-                    let res = builder.ins().iadd(a, b);
+                    let res = if is_float {
+                        builder.ins().fadd(a, b)
+                    } else {
+                        builder.ins().iadd(a, b)
+                    };
                     builder.def_var(var(cur_sp - 2), res);
                     cur_sp -= 1;
                     offset += 1;
@@ -429,7 +488,11 @@ impl JitEngine {
                 OpCode::Subtract => {
                     let b = builder.use_var(var(cur_sp - 1));
                     let a = builder.use_var(var(cur_sp - 2));
-                    let res = builder.ins().isub(a, b);
+                    let res = if is_float {
+                        builder.ins().fsub(a, b)
+                    } else {
+                        builder.ins().isub(a, b)
+                    };
                     builder.def_var(var(cur_sp - 2), res);
                     cur_sp -= 1;
                     offset += 1;
@@ -437,7 +500,11 @@ impl JitEngine {
                 OpCode::Multiply => {
                     let b = builder.use_var(var(cur_sp - 1));
                     let a = builder.use_var(var(cur_sp - 2));
-                    let res = builder.ins().imul(a, b);
+                    let res = if is_float {
+                        builder.ins().fmul(a, b)
+                    } else {
+                        builder.ins().imul(a, b)
+                    };
                     builder.def_var(var(cur_sp - 2), res);
                     cur_sp -= 1;
                     offset += 1;
@@ -445,95 +512,146 @@ impl JitEngine {
                 OpCode::Divide => {
                     let b = builder.use_var(var(cur_sp - 1));
                     let a = builder.use_var(var(cur_sp - 2));
-                    let zero = builder.ins().iconst(types::I64, 0);
-                    let is_zero = builder.ins().icmp(IntCC::Equal, b, zero);
-                    let safe_div_block = builder.create_block();
-                    builder
-                        .ins()
-                        .brif(is_zero, div_zero_block, &[], safe_div_block, &[]);
+                    if is_float {
+                        let res = builder.ins().fdiv(a, b);
+                        builder.def_var(var(cur_sp - 2), res);
+                    } else {
+                        let zero = builder.ins().iconst(types::I64, 0);
+                        let is_zero = builder.ins().icmp(IntCC::Equal, b, zero);
+                        let safe_div_block = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(is_zero, div_zero_block, &[], safe_div_block, &[]);
 
-                    builder.switch_to_block(safe_div_block);
-                    builder.seal_block(safe_div_block);
-                    let res = builder.ins().sdiv(a, b);
-                    builder.def_var(var(cur_sp - 2), res);
+                        builder.switch_to_block(safe_div_block);
+                        builder.seal_block(safe_div_block);
+                        let res = builder.ins().sdiv(a, b);
+                        builder.def_var(var(cur_sp - 2), res);
+                    }
                     cur_sp -= 1;
                     offset += 1;
                 }
                 OpCode::Mod => {
-                    let b = builder.use_var(var(cur_sp - 1));
-                    let a = builder.use_var(var(cur_sp - 2));
-                    let zero = builder.ins().iconst(types::I64, 0);
-                    let is_zero = builder.ins().icmp(IntCC::Equal, b, zero);
-                    let safe_mod_block = builder.create_block();
-                    builder
-                        .ins()
-                        .brif(is_zero, div_zero_block, &[], safe_mod_block, &[]);
+                    if is_float {
+                        builder.ins().jump(bailout_block, &[]);
+                        block_terminated = true;
+                    } else {
+                        let b = builder.use_var(var(cur_sp - 1));
+                        let a = builder.use_var(var(cur_sp - 2));
+                        let zero = builder.ins().iconst(types::I64, 0);
+                        let is_zero = builder.ins().icmp(IntCC::Equal, b, zero);
+                        let safe_mod_block = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(is_zero, div_zero_block, &[], safe_mod_block, &[]);
 
-                    builder.switch_to_block(safe_mod_block);
-                    builder.seal_block(safe_mod_block);
-                    let res = builder.ins().srem(a, b);
-                    builder.def_var(var(cur_sp - 2), res);
-                    cur_sp -= 1;
+                        builder.switch_to_block(safe_mod_block);
+                        builder.seal_block(safe_mod_block);
+                        let res = builder.ins().srem(a, b);
+                        builder.def_var(var(cur_sp - 2), res);
+                        cur_sp -= 1;
+                    }
                     offset += 1;
                 }
                 OpCode::Negate => {
                     let a = builder.use_var(var(cur_sp - 1));
-                    let zero = builder.ins().iconst(types::I64, 0);
-                    let res = builder.ins().isub(zero, a);
+                    let res = if is_float {
+                        builder.ins().fneg(a)
+                    } else {
+                        let zero = builder.ins().iconst(types::I64, 0);
+                        builder.ins().isub(zero, a)
+                    };
                     builder.def_var(var(cur_sp - 1), res);
                     offset += 1;
                 }
                 OpCode::BitAnd => {
-                    let b = builder.use_var(var(cur_sp - 1));
-                    let a = builder.use_var(var(cur_sp - 2));
-                    let res = builder.ins().band(a, b);
-                    builder.def_var(var(cur_sp - 2), res);
-                    cur_sp -= 1;
+                    if is_float {
+                        builder.ins().jump(bailout_block, &[]);
+                        block_terminated = true;
+                    } else {
+                        let b = builder.use_var(var(cur_sp - 1));
+                        let a = builder.use_var(var(cur_sp - 2));
+                        let res = builder.ins().band(a, b);
+                        builder.def_var(var(cur_sp - 2), res);
+                        cur_sp -= 1;
+                    }
                     offset += 1;
                 }
                 OpCode::BitOr => {
-                    let b = builder.use_var(var(cur_sp - 1));
-                    let a = builder.use_var(var(cur_sp - 2));
-                    let res = builder.ins().bor(a, b);
-                    builder.def_var(var(cur_sp - 2), res);
-                    cur_sp -= 1;
+                    if is_float {
+                        builder.ins().jump(bailout_block, &[]);
+                        block_terminated = true;
+                    } else {
+                        let b = builder.use_var(var(cur_sp - 1));
+                        let a = builder.use_var(var(cur_sp - 2));
+                        let res = builder.ins().bor(a, b);
+                        builder.def_var(var(cur_sp - 2), res);
+                        cur_sp -= 1;
+                    }
                     offset += 1;
                 }
                 OpCode::BitXor => {
-                    let b = builder.use_var(var(cur_sp - 1));
-                    let a = builder.use_var(var(cur_sp - 2));
-                    let res = builder.ins().bxor(a, b);
-                    builder.def_var(var(cur_sp - 2), res);
-                    cur_sp -= 1;
+                    if is_float {
+                        builder.ins().jump(bailout_block, &[]);
+                        block_terminated = true;
+                    } else {
+                        let b = builder.use_var(var(cur_sp - 1));
+                        let a = builder.use_var(var(cur_sp - 2));
+                        let res = builder.ins().bxor(a, b);
+                        builder.def_var(var(cur_sp - 2), res);
+                        cur_sp -= 1;
+                    }
                     offset += 1;
                 }
                 OpCode::BitNot => {
-                    let a = builder.use_var(var(cur_sp - 1));
-                    let res = builder.ins().bnot(a);
-                    builder.def_var(var(cur_sp - 1), res);
+                    if is_float {
+                        builder.ins().jump(bailout_block, &[]);
+                        block_terminated = true;
+                    } else {
+                        let a = builder.use_var(var(cur_sp - 1));
+                        let res = builder.ins().bnot(a);
+                        builder.def_var(var(cur_sp - 1), res);
+                    }
                     offset += 1;
                 }
                 OpCode::Shl => {
-                    let b = builder.use_var(var(cur_sp - 1));
-                    let a = builder.use_var(var(cur_sp - 2));
-                    let res = builder.ins().ishl(a, b);
-                    builder.def_var(var(cur_sp - 2), res);
-                    cur_sp -= 1;
+                    if is_float {
+                        builder.ins().jump(bailout_block, &[]);
+                        block_terminated = true;
+                    } else {
+                        let b = builder.use_var(var(cur_sp - 1));
+                        let a = builder.use_var(var(cur_sp - 2));
+                        let res = builder.ins().ishl(a, b);
+                        builder.def_var(var(cur_sp - 2), res);
+                        cur_sp -= 1;
+                    }
                     offset += 1;
                 }
                 OpCode::Shr => {
-                    let b = builder.use_var(var(cur_sp - 1));
-                    let a = builder.use_var(var(cur_sp - 2));
-                    let res = builder.ins().sshr(a, b);
-                    builder.def_var(var(cur_sp - 2), res);
-                    cur_sp -= 1;
+                    if is_float {
+                        builder.ins().jump(bailout_block, &[]);
+                        block_terminated = true;
+                    } else {
+                        let b = builder.use_var(var(cur_sp - 1));
+                        let a = builder.use_var(var(cur_sp - 2));
+                        let res = builder.ins().sshr(a, b);
+                        builder.def_var(var(cur_sp - 2), res);
+                        cur_sp -= 1;
+                    }
                     offset += 1;
                 }
                 OpCode::Equal => {
                     let b = builder.use_var(var(cur_sp - 1));
                     let a = builder.use_var(var(cur_sp - 2));
-                    let cmp = builder.ins().icmp(IntCC::Equal, a, b);
-                    let res = builder.ins().uextend(types::I64, cmp);
+                    let res = if is_float {
+                        let cmp = builder.ins().fcmp(FloatCC::Equal, a, b);
+                        let one = builder.ins().f64const(1.0);
+                        let zero = builder.ins().f64const(0.0);
+                        builder.ins().select(cmp, one, zero)
+                    } else {
+                        let cmp = builder.ins().icmp(IntCC::Equal, a, b);
+                        builder.ins().uextend(types::I64, cmp)
+                    };
                     builder.def_var(var(cur_sp - 2), res);
                     cur_sp -= 1;
                     offset += 1;
@@ -541,8 +659,15 @@ impl JitEngine {
                 OpCode::Less => {
                     let b = builder.use_var(var(cur_sp - 1));
                     let a = builder.use_var(var(cur_sp - 2));
-                    let cmp = builder.ins().icmp(IntCC::SignedLessThan, a, b);
-                    let res = builder.ins().uextend(types::I64, cmp);
+                    let res = if is_float {
+                        let cmp = builder.ins().fcmp(FloatCC::LessThan, a, b);
+                        let one = builder.ins().f64const(1.0);
+                        let zero = builder.ins().f64const(0.0);
+                        builder.ins().select(cmp, one, zero)
+                    } else {
+                        let cmp = builder.ins().icmp(IntCC::SignedLessThan, a, b);
+                        builder.ins().uextend(types::I64, cmp)
+                    };
                     builder.def_var(var(cur_sp - 2), res);
                     cur_sp -= 1;
                     offset += 1;
@@ -550,17 +675,31 @@ impl JitEngine {
                 OpCode::Greater => {
                     let b = builder.use_var(var(cur_sp - 1));
                     let a = builder.use_var(var(cur_sp - 2));
-                    let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, a, b);
-                    let res = builder.ins().uextend(types::I64, cmp);
+                    let res = if is_float {
+                        let cmp = builder.ins().fcmp(FloatCC::GreaterThan, a, b);
+                        let one = builder.ins().f64const(1.0);
+                        let zero = builder.ins().f64const(0.0);
+                        builder.ins().select(cmp, one, zero)
+                    } else {
+                        let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, a, b);
+                        builder.ins().uextend(types::I64, cmp)
+                    };
                     builder.def_var(var(cur_sp - 2), res);
                     cur_sp -= 1;
                     offset += 1;
                 }
                 OpCode::Not => {
                     let a = builder.use_var(var(cur_sp - 1));
-                    let zero = builder.ins().iconst(types::I64, 0);
-                    let cmp = builder.ins().icmp(IntCC::Equal, a, zero);
-                    let res = builder.ins().uextend(types::I64, cmp);
+                    let res = if is_float {
+                        let zero = builder.ins().f64const(0.0);
+                        let cmp = builder.ins().fcmp(FloatCC::Equal, a, zero);
+                        let one = builder.ins().f64const(1.0);
+                        builder.ins().select(cmp, one, zero)
+                    } else {
+                        let zero = builder.ins().iconst(types::I64, 0);
+                        let cmp = builder.ins().icmp(IntCC::Equal, a, zero);
+                        builder.ins().uextend(types::I64, cmp)
+                    };
                     builder.def_var(var(cur_sp - 1), res);
                     offset += 1;
                 }
@@ -581,8 +720,13 @@ impl JitEngine {
                     let jump = (hi << 8) | lo;
                     let target = offset + 3 + jump;
                     let cond = builder.use_var(var(cur_sp - 1));
-                    let zero = builder.ins().iconst(types::I64, 0);
-                    let is_false = builder.ins().icmp(IntCC::Equal, cond, zero);
+                    let is_false = if is_float {
+                        let zero = builder.ins().f64const(0.0);
+                        builder.ins().fcmp(FloatCC::Equal, cond, zero)
+                    } else {
+                        let zero = builder.ins().iconst(types::I64, 0);
+                        builder.ins().icmp(IntCC::Equal, cond, zero)
+                    };
 
                     block_sp.insert(target, cur_sp);
                     block_sp.insert(offset + 3, cur_sp);
@@ -609,11 +753,14 @@ impl JitEngine {
                 OpCode::Return => {
                     let ret_val = if cur_sp > 0 {
                         builder.use_var(var(cur_sp - 1))
+                    } else if is_float {
+                        builder.ins().f64const(0.0)
                     } else {
                         builder.ins().iconst(types::I64, 0)
                     };
                     builder.ins().store(mem_flags(), ret_val, out_ptr, 0);
-                    let status_ok = builder.ins().iconst(types::I32, 0);
+                    let status_code = if is_float { 3 } else { 0 };
+                    let status_ok = builder.ins().iconst(types::I32, status_code);
                     builder.ins().return_(&[status_ok]);
                     block_terminated = true;
                     offset += 1;

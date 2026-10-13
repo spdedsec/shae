@@ -328,3 +328,74 @@ let result = double(21)
         _ => panic!("Expected array result, got {:?}", res),
     }
 }
+
+#[test]
+fn test_jit_float_direct_compilation() {
+    let script = r#"
+fn circle_area(radius) {
+    let pi = 3.141592653589793
+    return pi * radius * radius
+}
+circle_area(2.0)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+
+    let func = chunk
+        .constants
+        .iter()
+        .find_map(|v| match v {
+            Value::CompiledFunction(f) => Some(f.clone()),
+            _ => None,
+        })
+        .expect("CompiledFunction constant not found");
+
+    assert!(JitEngine::can_compile(&func));
+
+    let mut engine = JitEngine::new().expect("Failed to initialize JitEngine");
+    let jit_fn = engine
+        .compile_function(&func)
+        .expect("JIT compilation failed");
+
+    let radius_val = (2.0f64).to_bits() as i64;
+    let args = [radius_val];
+    let mut out: i64 = 0;
+    let status = unsafe { jit_fn(args.as_ptr(), args.len(), &mut out) };
+
+    assert_eq!(status, 3);
+    let res = f64::from_bits(out as u64);
+    assert!((res - 12.566370614359172).abs() < 1e-9);
+}
+
+#[test]
+fn test_jit_float_vm_integration() {
+    let script = r#"
+fn compute_f64(x, y) {
+    let diff = x - y
+    let prod = diff * 2.5
+    return prod / 1.25
+}
+
+let compiled = jit("compile", compute_f64)
+let res = compute_f64(10.5, 3.5)
+[compiled, res]
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+
+    let res = vm.interpret(chunk);
+    match res {
+        InterpretResult::Ok(Value::Array(arr)) => {
+            let guard = arr.read().unwrap();
+            assert_eq!(guard[0], Value::Bool(true));
+            match &guard[1] {
+                Value::Float(f) | Value::Number(f) => {
+                    assert!((*f - 14.0).abs() < 1e-9);
+                }
+                other => panic!("Expected Float, got {:?}", other),
+            }
+        }
+        _ => panic!("Expected array result, got {:?}", res),
+    }
+}
