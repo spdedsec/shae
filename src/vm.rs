@@ -83,7 +83,9 @@ impl VM {
                 func: |_ev, _args, _span| Ok(Value::String("enabled".to_string())),
             },
         );
-        let jit_engine = crate::jit::JitEngine::new().ok().map(|e| Arc::new(Mutex::new(e)));
+        let jit_engine = crate::jit::JitEngine::new()
+            .ok()
+            .map(|e| Arc::new(Mutex::new(e)));
         VM {
             frames: Vec::with_capacity(64),
             stack: Vec::with_capacity(256),
@@ -107,7 +109,10 @@ impl VM {
         self.jit_enabled = enabled;
     }
 
-    pub fn compile_function_jit(&mut self, func: &CompiledFunction) -> Result<crate::jit::JitFnPtr, String> {
+    pub fn compile_function_jit(
+        &mut self,
+        func: &CompiledFunction,
+    ) -> Result<crate::jit::JitFnPtr, String> {
         if let Some(engine) = &self.jit_engine {
             let mut eng = engine.lock().map_err(|e| e.to_string())?;
             let ptr = eng.compile_function(func)?;
@@ -2254,7 +2259,7 @@ impl VM {
                                     self.stack.truncate(frame.slots_offset);
                                     self.stack.push(val);
                                 }
-                                 continue;
+                                continue;
                             }
                             if let Some(res) = self.try_exec_jit(&closure.function, callee_slot) {
                                 match res {

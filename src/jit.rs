@@ -160,18 +160,33 @@ impl JitEngine {
         self.ctx.func.signature.returns.clear();
 
         // Signature: extern "C" fn(args: *const i64, num_args: usize, out_val: *mut i64) -> i32
-        self.ctx.func.signature.params.push(AbiParam::new(pointer_type));
-        self.ctx.func.signature.params.push(AbiParam::new(pointer_type));
-        self.ctx.func.signature.params.push(AbiParam::new(pointer_type));
-        self.ctx.func.signature.returns.push(AbiParam::new(types::I32));
+        self.ctx
+            .func
+            .signature
+            .params
+            .push(AbiParam::new(pointer_type));
+        self.ctx
+            .func
+            .signature
+            .params
+            .push(AbiParam::new(pointer_type));
+        self.ctx
+            .func
+            .signature
+            .params
+            .push(AbiParam::new(pointer_type));
+        self.ctx
+            .func
+            .signature
+            .returns
+            .push(AbiParam::new(types::I32));
 
         let func_id = self
             .module
             .declare_function(&func_name, Linkage::Export, &self.ctx.func.signature)
             .map_err(|e| format!("Declaration error: {}", e))?;
 
-        let mut builder =
-            FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
+        let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
 
         // Pre-scan block starts
         let mut block_starts = BTreeSet::new();
@@ -268,12 +283,9 @@ impl JitEngine {
 
         for i in 0..arity {
             let offset_val = (i * 8) as i32;
-            let loaded = builder.ins().load(
-                types::I64,
-                mem_flags(),
-                args_ptr,
-                offset_val,
-            );
+            let loaded = builder
+                .ins()
+                .load(types::I64, mem_flags(), args_ptr, offset_val);
             builder.def_var(var(1 + i), loaded);
         }
 
@@ -606,9 +618,7 @@ impl JitEngine {
                     } else {
                         builder.ins().iconst(types::I64, 0)
                     };
-                    builder
-                        .ins()
-                        .store(mem_flags(), ret_val, out_ptr, 0);
+                    builder.ins().store(mem_flags(), ret_val, out_ptr, 0);
                     let status_ok = builder.ins().iconst(types::I32, 0);
                     builder.ins().return_(&[status_ok]);
                     block_terminated = true;

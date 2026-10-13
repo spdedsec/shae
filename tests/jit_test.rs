@@ -1,5 +1,5 @@
 use shae::compiler::Compiler;
-use shae::jit::{JitEngine, JIT_THRESHOLD};
+use shae::jit::{JIT_THRESHOLD, JitEngine};
 use shae::parse_source;
 use shae::value::Value;
 use shae::vm::{InterpretResult, VM};
@@ -264,8 +264,17 @@ sum
         })
         .expect("square function not found in globals");
 
-    assert!(square_func.jit.invocation_count.load(std::sync::atomic::Ordering::Relaxed) >= JIT_THRESHOLD);
-    assert!(square_func.get_jit_fn().is_some(), "Function should be tiered into JIT native code");
+    assert!(
+        square_func
+            .jit
+            .invocation_count
+            .load(std::sync::atomic::Ordering::Relaxed)
+            >= JIT_THRESHOLD
+    );
+    assert!(
+        square_func.get_jit_fn().is_some(),
+        "Function should be tiered into JIT native code"
+    );
 }
 
 #[test]
