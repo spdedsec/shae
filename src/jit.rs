@@ -2,7 +2,9 @@ use crate::opcode::OpCode;
 use crate::value::{CompiledFunction, Value};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
-use cranelift_codegen::ir::{AbiParam, Block, InstBuilder, MachMemFlags, types};
+use cranelift_codegen::ir::{
+    AbiParam, Block, InstBuilder, MachMemFlags, StackSlotData, StackSlotKind, types,
+};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -84,6 +86,7 @@ impl JitEngine {
                 | OpCode::Jump
                 | OpCode::JumpIfFalse
                 | OpCode::Loop
+                | OpCode::Call
         )
     }
 
@@ -142,6 +145,13 @@ impl JitEngine {
                 OpCode::GetLocal | OpCode::SetLocal => offset += 2,
                 OpCode::GetLocalLong | OpCode::SetLocalLong => offset += 3,
                 OpCode::Jump | OpCode::JumpIfFalse | OpCode::Loop => offset += 3,
+                OpCode::Call => {
+                    let arg_count = chunk.code.get(offset + 1).copied().unwrap_or(0) as usize;
+                    if arg_count != func.arity {
+                        return false;
+                    }
+                    offset += 2;
+                }
                 _ => offset += 1,
             }
         }
@@ -196,6 +206,7 @@ impl JitEngine {
             .map_err(|e| format!("Declaration error: {}", e))?;
 
         let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
+        let self_callee = self.module.declare_func_in_func(func_id, &mut builder.func);
 
         // Pre-scan block starts
         let mut block_starts = BTreeSet::new();
@@ -249,6 +260,9 @@ impl JitEngine {
                     let target = (offset + 3).saturating_sub(jump);
                     block_starts.insert(target);
                     offset += 3;
+                }
+                OpCode::Call => {
+                    offset += 2;
                 }
                 OpCode::Return => {
                     offset += 1;
@@ -316,6 +330,13 @@ impl JitEngine {
         let expected_arity = builder.ins().iconst(pointer_type, arity as i64);
         let arity_match = builder.ins().icmp(IntCC::Equal, num_args, expected_arity);
 
+        let call_args_slot = builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            ((arity.max(16)) * 8) as u32,
+        ));
+        let call_out_slot =
+            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8));
+
         let first_block = blocks[&0];
         builder
             .ins()
@@ -354,6 +375,7 @@ impl JitEngine {
                     OpCode::GetLocal | OpCode::SetLocal => offset += 2,
                     OpCode::GetLocalLong | OpCode::SetLocalLong => offset += 3,
                     OpCode::Jump | OpCode::JumpIfFalse | OpCode::Loop => offset += 3,
+                    OpCode::Call => offset += 2,
                     _ => offset += 1,
                 }
                 continue;
@@ -745,6 +767,44 @@ impl JitEngine {
                     builder.ins().jump(target_block, &[]);
                     block_terminated = true;
                     offset += 3;
+                }
+                OpCode::Call => {
+                    let arg_count = chunk.code.get(offset + 1).copied().unwrap_or(0) as usize;
+                    let call_args_addr = builder.ins().stack_addr(pointer_type, call_args_slot, 0);
+                    let call_out_addr = builder.ins().stack_addr(pointer_type, call_out_slot, 0);
+
+                    for i in 0..arg_count {
+                        let arg_val = builder.use_var(var(cur_sp - arg_count + i));
+                        builder
+                            .ins()
+                            .store(mem_flags(), arg_val, call_args_addr, (i * 8) as i32);
+                    }
+
+                    let arg_count_val = builder.ins().iconst(pointer_type, arg_count as i64);
+                    let call_inst = builder
+                        .ins()
+                        .call(self_callee, &[call_args_addr, arg_count_val, call_out_addr]);
+                    let status = builder.inst_results(call_inst)[0];
+
+                    let expected_status = if is_float { 3 } else { 0 };
+                    let status_ok =
+                        builder
+                            .ins()
+                            .icmp_imm(IntCC::Equal, status, expected_status as i64);
+
+                    let next_block = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(status_ok, next_block, &[], bailout_block, &[]);
+
+                    builder.switch_to_block(next_block);
+                    builder.seal_block(next_block);
+                    let ret_val = builder.ins().load(val_type, mem_flags(), call_out_addr, 0);
+
+                    let callee_slot = cur_sp - 1 - arg_count;
+                    builder.def_var(var(callee_slot), ret_val);
+                    cur_sp = callee_slot + 1;
+                    offset += 2;
                 }
                 OpCode::Return => {
                     let ret_val = if cur_sp > 0 {

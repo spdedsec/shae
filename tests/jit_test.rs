@@ -399,3 +399,114 @@ let res = compute_f64(10.5, 3.5)
         _ => panic!("Expected array result, got {:?}", res),
     }
 }
+
+#[test]
+fn test_jit_recursive_fibonacci_direct() {
+    let script = r#"
+fn rec_fib(n) {
+    if n <= 1 {
+        return n
+    }
+    return rec_fib(n - 1) + rec_fib(n - 2)
+}
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+
+    let func = chunk
+        .constants
+        .iter()
+        .find_map(|v| match v {
+            Value::CompiledFunction(f) => Some(f.clone()),
+            _ => None,
+        })
+        .expect("CompiledFunction not found");
+
+    assert!(JitEngine::can_compile(&func));
+
+    let mut engine = JitEngine::new().expect("Init JitEngine");
+    let jit_fn = engine
+        .compile_function(&func)
+        .expect("JIT compile recursive fib");
+
+    // fib(10) = 55
+    let args10 = [10i64];
+    let mut out10: i64 = 0;
+    let status10 = unsafe { jit_fn(args10.as_ptr(), args10.len(), &mut out10) };
+    assert_eq!(status10, 0);
+    assert_eq!(out10, 55);
+
+    // fib(15) = 610
+    let args15 = [15i64];
+    let mut out15: i64 = 0;
+    let status15 = unsafe { jit_fn(args15.as_ptr(), args15.len(), &mut out15) };
+    assert_eq!(status15, 0);
+    assert_eq!(out15, 610);
+}
+
+#[test]
+fn test_jit_recursive_factorial_direct() {
+    let script = r#"
+fn rec_fact(n) {
+    if n <= 1 {
+        return 1
+    }
+    return n * rec_fact(n - 1)
+}
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+
+    let func = chunk
+        .constants
+        .iter()
+        .find_map(|v| match v {
+            Value::CompiledFunction(f) => Some(f.clone()),
+            _ => None,
+        })
+        .expect("CompiledFunction not found");
+
+    assert!(JitEngine::can_compile(&func));
+
+    let mut engine = JitEngine::new().expect("Init JitEngine");
+    let jit_fn = engine
+        .compile_function(&func)
+        .expect("JIT compile recursive factorial");
+
+    // fact(6) = 720
+    let args6 = [6i64];
+    let mut out6: i64 = 0;
+    let status6 = unsafe { jit_fn(args6.as_ptr(), args6.len(), &mut out6) };
+    assert_eq!(status6, 0);
+    assert_eq!(out6, 720);
+}
+
+#[test]
+fn test_jit_recursive_vm_integration() {
+    let script = r#"
+fn rec_fib(n) {
+    if n <= 1 {
+        return n
+    }
+    return rec_fib(n - 1) + rec_fib(n - 2)
+}
+
+let compiled = jit("compile", rec_fib)
+let res = rec_fib(12)
+
+[compiled, res]
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+
+    let res = vm.interpret(chunk);
+    match res {
+        InterpretResult::Ok(Value::Array(arr)) => {
+            let guard = arr.read().unwrap();
+            assert_eq!(guard[0], Value::Bool(true));
+            assert_eq!(guard[1], Value::Int(144));
+        }
+        _ => panic!("Expected array result, got {:?}", res),
+    }
+}
