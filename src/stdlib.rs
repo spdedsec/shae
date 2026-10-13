@@ -964,11 +964,67 @@ fn regex_captures(
 // -------------------------------------------------------------
 // std:http
 // -------------------------------------------------------------
+fn url_encode_component(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            b' ' => out.push('+'),
+            other => {
+                use std::fmt::Write;
+                let _ = write!(out, "%{:02X}", other);
+            }
+        }
+    }
+    out
+}
+
+struct HttpOptions {
+    headers: Option<IndexMap<String, Value>>,
+    query: Option<IndexMap<String, Value>>,
+    json: Option<Value>,
+    timeout_ms: Option<u64>,
+}
+
+fn extract_http_options(opt_val: Option<&Value>) -> HttpOptions {
+    let mut opts = HttpOptions {
+        headers: None,
+        query: None,
+        json: None,
+        timeout_ms: None,
+    };
+    if let Some(Value::Map(m)) = opt_val {
+        let guard = m.read().unwrap();
+        opts.headers = guard.get("headers").and_then(|v| match v {
+            Value::Map(hm) => Some(hm.read().unwrap().clone()),
+            _ => None,
+        });
+        opts.query = guard
+            .get("query")
+            .or_else(|| guard.get("params"))
+            .and_then(|v| match v {
+                Value::Map(qm) => Some(qm.read().unwrap().clone()),
+                _ => None,
+            });
+        opts.json = guard.get("json").cloned();
+        opts.timeout_ms = guard.get("timeout_ms").and_then(|v| match v {
+            Value::Int(n) if *n > 0 => Some(*n as u64),
+            Value::Number(n) if *n > 0.0 => Some(*n as u64),
+            Value::Float(n) if *n > 0.0 => Some(*n as u64),
+            _ => None,
+        });
+    }
+    opts
+}
+
 pub(crate) fn execute_http_request(
     method: &str,
     url: &str,
     headers_opt: Option<&IndexMap<String, Value>>,
     body_opt: Option<&Value>,
+    query_opt: Option<&IndexMap<String, Value>>,
     timeout_ms: Option<u64>,
     span: Span,
 ) -> Result<Value, RuntimeError> {
@@ -981,6 +1037,33 @@ pub(crate) fn execute_http_request(
     .build()
     .map_err(|e| RuntimeError::new(format!("http: client initialization error: {}", e)).at(span))?;
 
+    let final_url = if let Some(query) = query_opt {
+        if query.is_empty() {
+            url.to_string()
+        } else {
+            let mut qs = String::new();
+            for (i, (k, v)) in query.iter().enumerate() {
+                if i > 0 {
+                    qs.push('&');
+                }
+                let val_str = match v {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                qs.push_str(&url_encode_component(k));
+                qs.push('=');
+                qs.push_str(&url_encode_component(&val_str));
+            }
+            if url.contains('?') {
+                format!("{}&{}", url, qs)
+            } else {
+                format!("{}?{}", url, qs)
+            }
+        }
+    } else {
+        url.to_string()
+    };
+
     let method_upper = method.to_uppercase();
     let req_method = match method_upper.as_str() {
         "POST" => reqwest::Method::POST,
@@ -988,13 +1071,18 @@ pub(crate) fn execute_http_request(
         "DELETE" => reqwest::Method::DELETE,
         "PATCH" => reqwest::Method::PATCH,
         "HEAD" => reqwest::Method::HEAD,
+        "OPTIONS" => reqwest::Method::OPTIONS,
         _ => reqwest::Method::GET,
     };
 
-    let mut req = client.request(req_method, url);
+    let mut req = client.request(req_method, &final_url);
 
+    let mut content_type_set = false;
     if let Some(headers) = headers_opt {
         for (k, v) in headers {
+            if k.eq_ignore_ascii_case("content-type") {
+                content_type_set = true;
+            }
             let val_str = match v {
                 Value::String(s) => s.clone(),
                 other => other.to_string(),
@@ -1004,16 +1092,19 @@ pub(crate) fn execute_http_request(
     }
 
     if let Some(b) = body_opt {
-        let body_str = match b {
-            Value::String(s) => s.clone(),
-            Value::Map(_) | Value::Array(_) => b.to_json().to_string(),
-            other => other.to_string(),
+        let (body_str, is_json) = match b {
+            Value::String(s) => (s.clone(), false),
+            Value::Map(_) | Value::Array(_) => (b.to_json().to_string(), true),
+            other => (other.to_string(), false),
         };
+        if is_json && !content_type_set {
+            req = req.header("Content-Type", "application/json");
+        }
         req = req.body(body_str);
     }
 
     let response = req.send().map_err(|e| {
-        RuntimeError::new(format!("http: request to '{}' failed: {}", url, e)).at(span)
+        RuntimeError::new(format!("http: request to '{}' failed: {}", final_url, e)).at(span)
     })?;
 
     let status = response.status().as_u16() as i64;
@@ -1032,6 +1123,10 @@ pub(crate) fn execute_http_request(
     }
 
     let body_text = response.text().unwrap_or_default();
+    let parsed_json = serde_json::from_str::<serde_json::Value>(&body_text)
+        .ok()
+        .map(|j| Value::from_json(&j))
+        .unwrap_or(Value::Null);
 
     let mut out = IndexMap::new();
     out.insert("status".to_string(), Value::Int(status));
@@ -1041,7 +1136,9 @@ pub(crate) fn execute_http_request(
         "headers".to_string(),
         Value::Map(Arc::new(RwLock::new(resp_headers))),
     );
-    out.insert("body".to_string(), Value::String(body_text));
+    out.insert("body".to_string(), Value::String(body_text.clone()));
+    out.insert("text".to_string(), Value::String(body_text));
+    out.insert("json".to_string(), parsed_json);
 
     Ok(Value::Map(Arc::new(RwLock::new(out))))
 }
@@ -1054,27 +1151,16 @@ fn http_get(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, 
         Value::String(u) => u.as_str(),
         _ => return Err(RuntimeError::new("http.get expects a string url".into()).at(span)),
     };
-    let (headers_opt, timeout_ms) = if args.len() > 1 {
-        match &args[1] {
-            Value::Map(m) => {
-                let guard = m.read().unwrap();
-                let headers = guard.get("headers").and_then(|v| match v {
-                    Value::Map(hm) => Some(hm.read().unwrap().clone()),
-                    _ => None,
-                });
-                let timeout = guard.get("timeout_ms").and_then(|v| match v {
-                    Value::Int(n) if *n > 0 => Some(*n as u64),
-                    Value::Number(n) if *n > 0.0 => Some(*n as u64),
-                    _ => None,
-                });
-                (headers, timeout)
-            }
-            _ => (None, None),
-        }
-    } else {
-        (None, None)
-    };
-    execute_http_request("GET", url, headers_opt.as_ref(), None, timeout_ms, span)
+    let opts = extract_http_options(args.get(1));
+    execute_http_request(
+        "GET",
+        url,
+        opts.headers.as_ref(),
+        opts.json.as_ref(),
+        opts.query.as_ref(),
+        opts.timeout_ms,
+        span,
+    )
 }
 
 fn http_post(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
@@ -1086,32 +1172,19 @@ fn http_post(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value,
         _ => return Err(RuntimeError::new("http.post expects a string url".into()).at(span)),
     };
     let body = &args[1];
-    let (headers_opt, timeout_ms) = if args.len() > 2 {
-        match &args[2] {
-            Value::Map(m) => {
-                let guard = m.read().unwrap();
-                let headers = guard.get("headers").and_then(|v| match v {
-                    Value::Map(hm) => Some(hm.read().unwrap().clone()),
-                    _ => None,
-                });
-                let timeout = guard.get("timeout_ms").and_then(|v| match v {
-                    Value::Int(n) if *n > 0 => Some(*n as u64),
-                    Value::Number(n) if *n > 0.0 => Some(*n as u64),
-                    _ => None,
-                });
-                (headers, timeout)
-            }
-            _ => (None, None),
-        }
+    let opts = extract_http_options(args.get(2));
+    let effective_body = if matches!(body, Value::Null) && opts.json.is_some() {
+        opts.json.as_ref()
     } else {
-        (None, None)
+        Some(body)
     };
     execute_http_request(
         "POST",
         url,
-        headers_opt.as_ref(),
-        Some(body),
-        timeout_ms,
+        opts.headers.as_ref(),
+        effective_body,
+        opts.query.as_ref(),
+        opts.timeout_ms,
         span,
     )
 }
@@ -1125,32 +1198,19 @@ fn http_put(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, 
         _ => return Err(RuntimeError::new("http.put expects a string url".into()).at(span)),
     };
     let body = &args[1];
-    let (headers_opt, timeout_ms) = if args.len() > 2 {
-        match &args[2] {
-            Value::Map(m) => {
-                let guard = m.read().unwrap();
-                let headers = guard.get("headers").and_then(|v| match v {
-                    Value::Map(hm) => Some(hm.read().unwrap().clone()),
-                    _ => None,
-                });
-                let timeout = guard.get("timeout_ms").and_then(|v| match v {
-                    Value::Int(n) if *n > 0 => Some(*n as u64),
-                    Value::Number(n) if *n > 0.0 => Some(*n as u64),
-                    _ => None,
-                });
-                (headers, timeout)
-            }
-            _ => (None, None),
-        }
+    let opts = extract_http_options(args.get(2));
+    let effective_body = if matches!(body, Value::Null) && opts.json.is_some() {
+        opts.json.as_ref()
     } else {
-        (None, None)
+        Some(body)
     };
     execute_http_request(
         "PUT",
         url,
-        headers_opt.as_ref(),
-        Some(body),
-        timeout_ms,
+        opts.headers.as_ref(),
+        effective_body,
+        opts.query.as_ref(),
+        opts.timeout_ms,
         span,
     )
 }
@@ -1163,27 +1223,16 @@ fn http_delete(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Valu
         Value::String(u) => u.as_str(),
         _ => return Err(RuntimeError::new("http.delete expects a string url".into()).at(span)),
     };
-    let (headers_opt, timeout_ms) = if args.len() > 1 {
-        match &args[1] {
-            Value::Map(m) => {
-                let guard = m.read().unwrap();
-                let headers = guard.get("headers").and_then(|v| match v {
-                    Value::Map(hm) => Some(hm.read().unwrap().clone()),
-                    _ => None,
-                });
-                let timeout = guard.get("timeout_ms").and_then(|v| match v {
-                    Value::Int(n) if *n > 0 => Some(*n as u64),
-                    Value::Number(n) if *n > 0.0 => Some(*n as u64),
-                    _ => None,
-                });
-                (headers, timeout)
-            }
-            _ => (None, None),
-        }
-    } else {
-        (None, None)
-    };
-    execute_http_request("DELETE", url, headers_opt.as_ref(), None, timeout_ms, span)
+    let opts = extract_http_options(args.get(1));
+    execute_http_request(
+        "DELETE",
+        url,
+        opts.headers.as_ref(),
+        opts.json.as_ref(),
+        opts.query.as_ref(),
+        opts.timeout_ms,
+        span,
+    )
 }
 
 fn http_patch(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
@@ -1195,34 +1244,61 @@ fn http_patch(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value
         _ => return Err(RuntimeError::new("http.patch expects a string url".into()).at(span)),
     };
     let body = &args[1];
-    let (headers_opt, timeout_ms) = if args.len() > 2 {
-        match &args[2] {
-            Value::Map(m) => {
-                let guard = m.read().unwrap();
-                let headers = guard.get("headers").and_then(|v| match v {
-                    Value::Map(hm) => Some(hm.read().unwrap().clone()),
-                    _ => None,
-                });
-                let timeout = guard.get("timeout_ms").and_then(|v| match v {
-                    Value::Int(n) if *n > 0 => Some(*n as u64),
-                    Value::Number(n) if *n > 0.0 => Some(*n as u64),
-                    _ => None,
-                });
-                (headers, timeout)
-            }
-            _ => (None, None),
-        }
+    let opts = extract_http_options(args.get(2));
+    let effective_body = if matches!(body, Value::Null) && opts.json.is_some() {
+        opts.json.as_ref()
     } else {
-        (None, None)
+        Some(body)
     };
     execute_http_request(
         "PATCH",
         url,
-        headers_opt.as_ref(),
-        Some(body),
-        timeout_ms,
+        opts.headers.as_ref(),
+        effective_body,
+        opts.query.as_ref(),
+        opts.timeout_ms,
         span,
     )
+}
+
+fn http_head(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(RuntimeError::new("http.head expects (url, [opts])".into()).at(span));
+    }
+    let url = match &args[0] {
+        Value::String(u) => u.as_str(),
+        _ => return Err(RuntimeError::new("http.head expects a string url".into()).at(span)),
+    };
+    let opts = extract_http_options(args.get(1));
+    execute_http_request(
+        "HEAD",
+        url,
+        opts.headers.as_ref(),
+        None,
+        opts.query.as_ref(),
+        opts.timeout_ms,
+        span,
+    )
+}
+
+fn http_get_json(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    let res = http_get(ev, args, span)?;
+    if let Value::Map(m) = res {
+        let guard = m.read().unwrap();
+        Ok(guard.get("json").cloned().unwrap_or(Value::Null))
+    } else {
+        Ok(Value::Null)
+    }
+}
+
+fn http_post_json(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    let res = http_post(ev, args, span)?;
+    if let Value::Map(m) = res {
+        let guard = m.read().unwrap();
+        Ok(guard.get("json").cloned().unwrap_or(Value::Null))
+    } else {
+        Ok(Value::Null)
+    }
 }
 
 fn http_request(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
@@ -1250,10 +1326,19 @@ fn http_request(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
                 Value::Map(hm) => Some(hm.read().unwrap().clone()),
                 _ => None,
             });
-            let body_opt = guard.get("body");
+            let query_opt =
+                guard
+                    .get("query")
+                    .or_else(|| guard.get("params"))
+                    .and_then(|v| match v {
+                        Value::Map(qm) => Some(qm.read().unwrap().clone()),
+                        _ => None,
+                    });
+            let body_opt = guard.get("body").or_else(|| guard.get("json"));
             let timeout_ms = guard.get("timeout_ms").and_then(|v| match v {
                 Value::Int(n) if *n > 0 => Some(*n as u64),
                 Value::Number(n) if *n > 0.0 => Some(*n as u64),
+                Value::Float(n) if *n > 0.0 => Some(*n as u64),
                 _ => None,
             });
             execute_http_request(
@@ -1261,6 +1346,7 @@ fn http_request(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
                 url,
                 headers_opt.as_ref(),
                 body_opt,
+                query_opt.as_ref(),
                 timeout_ms,
                 span,
             )
@@ -1276,8 +1362,13 @@ fn build_http_module() -> Value {
         ("put", http_put),
         ("delete", http_delete),
         ("patch", http_patch),
+        ("head", http_head),
         ("request", http_request),
         ("fetch", http_get),
+        ("get_json", http_get_json),
+        ("getJson", http_get_json),
+        ("post_json", http_post_json),
+        ("postJson", http_post_json),
     ])
 }
 

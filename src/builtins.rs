@@ -1268,21 +1268,33 @@ fn builtin_fetch(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
                     Value::Map(hm) => Some(hm.read().unwrap().clone()),
                     _ => None,
                 });
-                let body_opt = guard.get("body").cloned();
+                let query_opt = guard
+                    .get("query")
+                    .or_else(|| guard.get("params"))
+                    .and_then(|v| match v {
+                        Value::Map(qm) => Some(qm.read().unwrap().clone()),
+                        _ => None,
+                    });
+                let body_opt = guard
+                    .get("body")
+                    .cloned()
+                    .or_else(|| guard.get("json").cloned());
                 let timeout_ms = guard.get("timeout_ms").and_then(|v| match v {
                     Value::Int(n) if *n > 0 => Some(*n as u64),
                     Value::Number(n) if *n > 0.0 => Some(*n as u64),
+                    Value::Float(n) if *n > 0.0 => Some(*n as u64),
                     _ => None,
                 });
-                (method, headers_opt, body_opt, timeout_ms)
+                (method, headers_opt, body_opt, query_opt, timeout_ms)
             }
-            _ => ("GET".to_string(), None, None, None),
+            _ => ("GET".to_string(), None, None, None, None),
         };
         crate::stdlib::execute_http_request(
             &method,
             url,
             headers_opt.as_ref(),
             body_opt.as_ref(),
+            query_opt.as_ref(),
             timeout_ms,
             span,
         )
