@@ -17,7 +17,7 @@ fn run_shae(code: &str) -> Value {
 #[test]
 fn test_csv_parse_and_stringify_basic() {
     let script = r#"
-import "std:csv"
+let csv = use "std:csv"
 
 let raw = "name,age,active,score\nAlice,30,true,95.5\nBob,25,false,82.0\nCharlie,40,true,99.25\n"
 let rows = csv.parse(raw)
@@ -55,7 +55,7 @@ let re_parsed = csv.parse(back_to_csv)
 #[test]
 fn test_csv_rfc4180_escaping_and_multiline() {
     let script = r#"
-import "std:csv"
+let csv = use "std:csv"
 
 let complex_csv = "id,desc,quote\n1,\"Line 1\nLine 2\",\"He said \"\"hello\"\"\"\n2,\"Simple\",None\n"
 let parsed = csv.parse(complex_csv, { typed: false })
@@ -86,7 +86,7 @@ let re_quote1 = re_parsed[0]["quote"]
 #[test]
 fn test_csv_headerless_arrays() {
     let script = r#"
-import "std:csv"
+let csv = use "std:csv"
 
 let csv_text = "10;20;30\n40;50;60\n"
 let table = csv.parse(csv_text, { headers: false, delimiter: ";" })
@@ -111,7 +111,7 @@ let s = csv.stringify(table, { delimiter: ";" })
 #[test]
 fn test_sqlite_in_memory_crud() {
     let script = r#"
-import "std:sqlite"
+let sqlite = use "std:sqlite"
 
 let db = sqlite.open(":memory:")
 
@@ -166,8 +166,8 @@ sqlite.close(db)
 #[test]
 fn test_sqlite_object_methods_and_csv_export() {
     let script = r#"
-import "std:sqlite"
-import "std:csv"
+let sqlite = use "std:sqlite"
+let csv = use "std:csv"
 
 let db = sqlite.open(":memory:")
 db.execute("CREATE TABLE metrics (service TEXT, p99 REAL, errors INTEGER)")

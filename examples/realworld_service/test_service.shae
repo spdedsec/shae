@@ -1,5 +1,5 @@
-import "std:sqlite"
-import "std:csv"
+let sqlite = use "std:sqlite"
+let csv = use "std:csv"
 
 print("🧪 Testing Real-World SQLite & CSV integration directly...")
 

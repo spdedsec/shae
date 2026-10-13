@@ -1,7 +1,7 @@
-import "std:sqlite"
-import "std:csv"
-import "std:time"
-import "std:sys"
+let sqlite = use "std:sqlite"
+let csv = use "std:csv"
+let time = use "std:time"
+let sys = use "std:sys"
 
 print("=======================================================")
 print("  Shae Production Microservice: SQLite & CSV Analytics ")
