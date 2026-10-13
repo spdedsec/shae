@@ -515,8 +515,8 @@ let res = rec_fib(12)
 fn test_jit_array_indexing_direct() {
     let script = r#"
 fn sum_arr(arr, len) {
-    let mut sum = 0
-    let mut i = 0
+    let sum = 0
+    let i = 0
     while i < len {
         sum = sum + arr[i]
         i = i + 1
@@ -607,8 +607,8 @@ fn get_elem(arr, idx) {
 fn test_jit_array_vm_integration() {
     let script = r#"
 fn sum_arr(arr, len) {
-    let mut sum = 0
-    let mut i = 0
+    let sum = 0
+    let i = 0
     while i < len {
         sum = sum + arr[i]
         i = i + 1
