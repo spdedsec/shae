@@ -652,5 +652,5 @@ get_at([10, 20], 99)
 
     let res = vm.interpret(chunk);
     // When JIT bails out on index 99, VM fallback executes and generates bounds error
-    assert_eq!(res, InterpretResult::RuntimeError);
+    assert!(matches!(res, InterpretResult::RuntimeError(_)));
 }
