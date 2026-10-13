@@ -1254,7 +1254,7 @@ fn builtin_fetch(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
             Err(e) => Err(RuntimeError::new(format!("Failed to fetch '{}': {}", url, e)).at(span)),
         }
     } else {
-        let (method, headers_opt, body_opt, timeout_ms) = match &args[1] {
+        let (method, headers_opt, body_opt, query_opt, timeout_ms) = match &args[1] {
             Value::Map(m) => {
                 let guard = m.read().unwrap();
                 let method = guard
