@@ -13,7 +13,7 @@ sqlite.execute(db, "INSERT INTO test_telemetry (service, latency_ms, status_code
 
 // Query and verify
 let rows = sqlite.query(db, "SELECT * FROM test_telemetry ORDER BY id ASC")
-print("✅ Query returned " + str(rows.len()) + " rows from SQLite")
+print("✅ Query returned " + str(len(rows)) + " rows from SQLite")
 
 // Export to CSV
 let csv_out = csv.stringify(rows)
@@ -21,9 +21,9 @@ print("✅ Exported to CSV:\n" + csv_out)
 
 // Parse CSV back
 let parsed = csv.parse(csv_out)
-print("✅ Re-parsed " + str(parsed.len()) + " rows from CSV")
+print("✅ Re-parsed " + str(len(parsed)) + " rows from CSV")
 
-if parsed.len() == 3 and parsed[0]["service"] == "api-gateway" {
+if len(parsed) == 3 and parsed[0]["service"] == "api-gateway" {
     print("🎉 All Real-World Service components verified successfully!")
 } else {
     print("❌ Verification failed!")

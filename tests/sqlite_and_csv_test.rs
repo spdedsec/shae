@@ -31,7 +31,7 @@ let score = first["score"]
 let back_to_csv = csv.stringify(rows)
 let re_parsed = csv.parse(back_to_csv)
 
-[rows.len(), name, age, active, score, re_parsed.len()]
+[len(rows), name, age, active, score, len(re_parsed)]
 "#;
 
     let res = run_shae(script);
@@ -92,7 +92,7 @@ let csv_text = "10;20;30\n40;50;60\n"
 let table = csv.parse(csv_text, { headers: false, delimiter: ";" })
 let s = csv.stringify(table, { delimiter: ";" })
 
-[table.len(), table[0][1], table[1][2], s]
+[len(table), table[0][1], table[1][2], s]
 "#;
 
     let res = run_shae(script);
@@ -124,7 +124,7 @@ sqlite.execute(db, "INSERT INTO products (name, price, stock) VALUES (?, ?, ?)",
 let id2 = sqlite.last_insert_id(db)
 
 let rows = sqlite.query(db, "SELECT * FROM products ORDER BY id ASC")
-let count = rows.len()
+let count = len(rows)
 
 let p1 = rows[0]
 let p1_name = p1["name"]
@@ -182,7 +182,7 @@ db.close()
 let csv_export = csv.stringify(records)
 let re_imported = csv.parse(csv_export)
 
-[records.len(), re_imported.len(), re_imported[0]["service"], re_imported[0]["p99"]]
+[len(records), len(re_imported), re_imported[0]["service"], re_imported[0]["p99"]]
 "#;
 
     let res = run_shae(script);
