@@ -1,10 +1,8 @@
 use crate::opcode::OpCode;
 use crate::value::{CompiledFunction, Value};
-use cranelift_codegen::ir::{
-    condcodes::IntCC, types, AbiParam, Block, InstBuilder, MachMemFlags,
-};
-use cranelift_codegen::settings::{self, Configurable};
 use cranelift_codegen::Context;
+use cranelift_codegen::ir::{AbiParam, Block, InstBuilder, MachMemFlags, condcodes::IntCC, types};
+use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, default_libcall_names};

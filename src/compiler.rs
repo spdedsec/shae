@@ -116,7 +116,8 @@ impl Compiler {
             })
             .collect();
 
-        let compiled = CompiledFunction::new(params.len(), child.chunk, name, upvalue_descs, is_async);
+        let compiled =
+            CompiledFunction::new(params.len(), child.chunk, name, upvalue_descs, is_async);
 
         *self = *child.enclosing.unwrap();
 
