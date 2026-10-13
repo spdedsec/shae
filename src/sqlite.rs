@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::ffi::{c_char, c_int, c_uchar, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int, c_uchar};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
@@ -118,8 +118,7 @@ fn init_sqlite_api() -> Result<SqliteApi, String> {
             let changes: Result<Symbol<Sqlite3Changes>, _> = lib.get(b"sqlite3_changes\0");
             let last_insert_rowid: Result<Symbol<Sqlite3LastInsertRowId>, _> =
                 lib.get(b"sqlite3_last_insert_rowid\0");
-            let bind_int64: Result<Symbol<Sqlite3BindInt64>, _> =
-                lib.get(b"sqlite3_bind_int64\0");
+            let bind_int64: Result<Symbol<Sqlite3BindInt64>, _> = lib.get(b"sqlite3_bind_int64\0");
             let bind_double: Result<Symbol<Sqlite3BindDouble>, _> =
                 lib.get(b"sqlite3_bind_double\0");
             let bind_text: Result<Symbol<Sqlite3BindText>, _> = lib.get(b"sqlite3_bind_text\0");
@@ -280,36 +279,45 @@ pub fn sqlite_open(path: &str) -> Result<u64, String> {
     Ok(handle)
 }
 
-fn bind_params(
-    api: &SqliteApi,
-    stmt: Sqlite3Stmt,
-    params: &[Value],
-) -> Result<(), String> {
+fn bind_params(api: &SqliteApi, stmt: Sqlite3Stmt, params: &[Value]) -> Result<(), String> {
     for (i, p) in params.iter().enumerate() {
         let idx = (i + 1) as c_int;
         let rc = match p {
             Value::Int(n) => unsafe { (api.bind_int64)(stmt, idx, *n) },
             Value::Float(f) | Value::Number(f) => unsafe { (api.bind_double)(stmt, idx, *f) },
-            Value::Bool(b) => unsafe {
-                (api.bind_int64)(stmt, idx, if *b { 1 } else { 0 })
-            },
+            Value::Bool(b) => unsafe { (api.bind_int64)(stmt, idx, if *b { 1 } else { 0 }) },
             Value::Null => unsafe { (api.bind_null)(stmt, idx) },
             Value::String(s) => {
                 let c_str = CString::new(s.as_str()).map_err(|e| e.to_string())?;
                 unsafe {
-                    (api.bind_text)(stmt, idx, c_str.as_ptr(), s.len() as c_int, SQLITE_TRANSIENT)
+                    (api.bind_text)(
+                        stmt,
+                        idx,
+                        c_str.as_ptr(),
+                        s.len() as c_int,
+                        SQLITE_TRANSIENT,
+                    )
                 }
             }
             other => {
                 let s = other.to_display();
                 let c_str = CString::new(s.as_str()).map_err(|e| e.to_string())?;
                 unsafe {
-                    (api.bind_text)(stmt, idx, c_str.as_ptr(), s.len() as c_int, SQLITE_TRANSIENT)
+                    (api.bind_text)(
+                        stmt,
+                        idx,
+                        c_str.as_ptr(),
+                        s.len() as c_int,
+                        SQLITE_TRANSIENT,
+                    )
                 }
             }
         };
         if rc != SQLITE_OK {
-            return Err(format!("Failed to bind parameter at index {}: code {}", idx, rc));
+            return Err(format!(
+                "Failed to bind parameter at index {}: code {}",
+                idx, rc
+            ));
         }
     }
     Ok(())
@@ -463,8 +471,7 @@ pub fn sqlite_query(handle: u64, sql: &str, params: &[Value]) -> Result<Value, S
                         if text_ptr.is_null() || bytes_len == 0 {
                             Value::String(String::new())
                         } else {
-                            let slice =
-                                unsafe { std::slice::from_raw_parts(text_ptr, bytes_len) };
+                            let slice = unsafe { std::slice::from_raw_parts(text_ptr, bytes_len) };
                             Value::String(String::from_utf8_lossy(slice).into_owned())
                         }
                     }

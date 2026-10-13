@@ -1218,7 +1218,8 @@ impl VM {
                                 && matches!(
                                     property.as_str(),
                                     "execute" | "query" | "close" | "changes" | "last_insert_id"
-                                )) {
+                                ))
+                            {
                                 self.stack.push(Value::BoundMethod {
                                     object: Box::new(target.clone()),
                                     method: property,

@@ -1908,19 +1908,25 @@ fn build_ffi_module() -> Value {
 // std:csv
 // -------------------------------------------------------------
 fn build_csv_module() -> Value {
-    make_map(vec![
-        ("parse", csv_parse),
-        ("stringify", csv_stringify),
-    ])
+    make_map(vec![("parse", csv_parse), ("stringify", csv_stringify)])
 }
 
 fn csv_parse(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     if args.is_empty() {
-        return Err(RuntimeError::new("csv.parse(text, [options]) expects at least 1 argument".into()).at(span));
+        return Err(RuntimeError::new(
+            "csv.parse(text, [options]) expects at least 1 argument".into(),
+        )
+        .at(span));
     }
     let input = match &args[0] {
         Value::String(s) => s.as_str(),
-        other => return Err(RuntimeError::new(format!("csv.parse expects string input, got {}", other.type_name())).at(span)),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "csv.parse expects string input, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
     };
 
     let mut has_headers = true;
@@ -1950,7 +1956,10 @@ fn csv_parse(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value,
 
 fn csv_stringify(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     if args.is_empty() {
-        return Err(RuntimeError::new("csv.stringify(rows, [options]) expects at least 1 argument".into()).at(span));
+        return Err(RuntimeError::new(
+            "csv.stringify(rows, [options]) expects at least 1 argument".into(),
+        )
+        .at(span));
     }
     let rows_val = &args[0];
 
@@ -1999,13 +2008,17 @@ fn extract_sqlite_handle(val: &Value, span: Span) -> Result<u64, RuntimeError> {
             let guard = m.read().unwrap();
             match guard.get("_sqlite_handle") {
                 Some(Value::Int(n)) if *n > 0 => Ok(*n as u64),
-                _ => Err(RuntimeError::new("Invalid SQLite connection map: missing '_sqlite_handle'".into()).at(span)),
+                _ => Err(RuntimeError::new(
+                    "Invalid SQLite connection map: missing '_sqlite_handle'".into(),
+                )
+                .at(span)),
             }
         }
         other => Err(RuntimeError::new(format!(
             "Expected SQLite connection or handle integer, got {}",
             other.type_name()
-        )).at(span)),
+        ))
+        .at(span)),
     }
 }
 
@@ -2013,7 +2026,13 @@ fn sqlite_open(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Valu
     expect_args("sqlite.open", 1, &args, span)?;
     let path = match &args[0] {
         Value::String(s) => s.as_str(),
-        other => return Err(RuntimeError::new(format!("sqlite.open expects string path, got {}", other.type_name())).at(span)),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "sqlite.open expects string path, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
     };
 
     let handle = crate::sqlite::sqlite_open(path)
@@ -2026,14 +2045,27 @@ fn sqlite_open(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Valu
     Ok(Value::Map(Arc::new(RwLock::new(map))))
 }
 
-fn sqlite_execute(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn sqlite_execute(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.len() < 2 {
-        return Err(RuntimeError::new("sqlite.execute(conn, sql, [params]) expects at least 2 arguments".into()).at(span));
+        return Err(RuntimeError::new(
+            "sqlite.execute(conn, sql, [params]) expects at least 2 arguments".into(),
+        )
+        .at(span));
     }
     let handle = extract_sqlite_handle(&args[0], span)?;
     let sql = match &args[1] {
         Value::String(s) => s.as_str(),
-        other => return Err(RuntimeError::new(format!("sqlite.execute expects SQL string, got {}", other.type_name())).at(span)),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "sqlite.execute expects SQL string, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
     };
     let params: Vec<Value> = if args.len() > 2 {
         match &args[2] {
@@ -2052,12 +2084,21 @@ fn sqlite_execute(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<V
 
 fn sqlite_query(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     if args.len() < 2 {
-        return Err(RuntimeError::new("sqlite.query(conn, sql, [params]) expects at least 2 arguments".into()).at(span));
+        return Err(RuntimeError::new(
+            "sqlite.query(conn, sql, [params]) expects at least 2 arguments".into(),
+        )
+        .at(span));
     }
     let handle = extract_sqlite_handle(&args[0], span)?;
     let sql = match &args[1] {
         Value::String(s) => s.as_str(),
-        other => return Err(RuntimeError::new(format!("sqlite.query expects SQL string, got {}", other.type_name())).at(span)),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "sqlite.query expects SQL string, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
     };
     let params: Vec<Value> = if args.len() > 2 {
         match &args[2] {
@@ -2072,7 +2113,11 @@ fn sqlite_query(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
         .map_err(|e| RuntimeError::new(format!("sqlite.query error: {}", e)).at(span))
 }
 
-fn sqlite_last_insert_id(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn sqlite_last_insert_id(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("sqlite.last_insert_id", 1, &args, span)?;
     let handle = extract_sqlite_handle(&args[0], span)?;
     let id = crate::sqlite::sqlite_last_insert_id(handle)
@@ -2080,7 +2125,11 @@ fn sqlite_last_insert_id(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> R
     Ok(Value::Int(id))
 }
 
-fn sqlite_changes(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn sqlite_changes(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("sqlite.changes", 1, &args, span)?;
     let handle = extract_sqlite_handle(&args[0], span)?;
     let count = crate::sqlite::sqlite_changes(handle)
@@ -2095,4 +2144,3 @@ fn sqlite_close(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
         .map_err(|e| RuntimeError::new(format!("sqlite.close error: {}", e)).at(span))?;
     Ok(Value::Null)
 }
-

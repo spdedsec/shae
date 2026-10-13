@@ -1,5 +1,5 @@
 use shae::compiler::Compiler;
-use shae::parser::parse_source;
+use shae::parse_source;
 use shae::value::Value;
 use shae::vm::{InterpretResult, VM};
 
@@ -10,7 +10,7 @@ fn run_shae(code: &str) -> Value {
     match vm.interpret(chunk) {
         InterpretResult::Ok(val) => val,
         InterpretResult::RuntimeError(err) => panic!("Shae runtime error: {:?}", err),
-        InterpretResult::CompileError(err) => panic!("Shae compile error: {:?}", err),
+        InterpretResult::CompileError => panic!("Shae compile error"),
     }
 }
 

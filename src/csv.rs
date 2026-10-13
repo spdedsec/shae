@@ -116,10 +116,7 @@ pub fn parse_csv(
     } else {
         let mut result_rows = Vec::with_capacity(raw_rows.len());
         for row in raw_rows {
-            let cells: Vec<Value> = row
-                .into_iter()
-                .map(|s| coerce_value(&s, typed))
-                .collect();
+            let cells: Vec<Value> = row.into_iter().map(|s| coerce_value(&s, typed)).collect();
             result_rows.push(Value::Array(Arc::new(RwLock::new(cells))));
         }
         Ok(Value::Array(Arc::new(RwLock::new(result_rows))))
@@ -181,10 +178,7 @@ pub fn stringify_csv(
                 let map_guard = m.read().unwrap();
                 let mut row_fields = Vec::with_capacity(headers.len());
                 for h in &headers {
-                    let cell_str = map_guard
-                        .get(h)
-                        .map(|v| v.to_display())
-                        .unwrap_or_default();
+                    let cell_str = map_guard.get(h).map(|v| v.to_display()).unwrap_or_default();
                     row_fields.push(escape_csv_field(&cell_str, delimiter));
                 }
                 out.push_str(&row_fields.join(&delimiter.to_string()));

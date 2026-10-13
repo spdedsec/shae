@@ -367,9 +367,7 @@ impl JitEngine {
                         match &chunk.constants[idx] {
                             Value::Float(f) | Value::Number(f) => builder.ins().f64const(*f),
                             Value::Int(n) => builder.ins().f64const(*n as f64),
-                            Value::Bool(b) => {
-                                builder.ins().f64const(if *b { 1.0 } else { 0.0 })
-                            }
+                            Value::Bool(b) => builder.ins().f64const(if *b { 1.0 } else { 0.0 }),
                             _ => builder.ins().f64const(0.0),
                         }
                     } else {
@@ -393,9 +391,7 @@ impl JitEngine {
                         match &chunk.constants[idx] {
                             Value::Float(f) | Value::Number(f) => builder.ins().f64const(*f),
                             Value::Int(n) => builder.ins().f64const(*n as f64),
-                            Value::Bool(b) => {
-                                builder.ins().f64const(if *b { 1.0 } else { 0.0 })
-                            }
+                            Value::Bool(b) => builder.ins().f64const(if *b { 1.0 } else { 0.0 }),
                             _ => builder.ins().f64const(0.0),
                         }
                     } else {

@@ -1351,7 +1351,8 @@ impl Evaluator {
                             && matches!(
                                 property.as_str(),
                                 "execute" | "query" | "close" | "changes" | "last_insert_id"
-                            )) {
+                            ))
+                        {
                             Ok(Some(Value::BoundMethod {
                                 object: Box::new(Value::Map(m.clone())),
                                 method: property.clone(),
@@ -2728,8 +2729,8 @@ impl Evaluator {
                         } else {
                             Vec::new()
                         };
-                        let changes = crate::sqlite::sqlite_execute(handle, sql, &params)
-                            .map_err(|e| {
+                        let changes =
+                            crate::sqlite::sqlite_execute(handle, sql, &params).map_err(|e| {
                                 self.depth -= 1;
                                 RuntimeError::new(e).at(span)
                             })?;
