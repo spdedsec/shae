@@ -2101,9 +2101,11 @@ impl VM {
                             if name == "gc" {
                                 let is_minor = match args.first() {
                                     Some(Value::String(s)) => s == "minor",
-                                    Some(Value::GcString(r)) => {
-                                        self.heap.as_string(*r).map(|s| s == "minor").unwrap_or(false)
-                                    }
+                                    Some(Value::GcString(r)) => self
+                                        .heap
+                                        .as_string(*r)
+                                        .map(|s| s == "minor")
+                                        .unwrap_or(false),
                                     _ => false,
                                 };
                                 let stats = if is_minor {
@@ -2501,9 +2503,11 @@ impl VM {
                             if name == "gc" {
                                 let is_minor = match args.first() {
                                     Some(Value::String(s)) => s == "minor",
-                                    Some(Value::GcString(r)) => {
-                                        self.heap.as_string(*r).map(|s| s == "minor").unwrap_or(false)
-                                    }
+                                    Some(Value::GcString(r)) => self
+                                        .heap
+                                        .as_string(*r)
+                                        .map(|s| s == "minor")
+                                        .unwrap_or(false),
                                     _ => false,
                                 };
                                 let stats = if is_minor {

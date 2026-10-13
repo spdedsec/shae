@@ -7,7 +7,7 @@ use cranelift_codegen::settings::{self, Configurable};
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{default_libcall_names, Linkage, Module};
+use cranelift_module::{Linkage, Module, default_libcall_names};
 use cranelift_native;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -346,9 +346,7 @@ impl JitEngine {
                     let idx = chunk.code.get(offset + 1).copied().unwrap_or(0) as usize;
                     let val = match &chunk.constants[idx] {
                         Value::Int(n) => builder.ins().iconst(types::I64, *n),
-                        Value::Bool(b) => {
-                            builder.ins().iconst(types::I64, if *b { 1 } else { 0 })
-                        }
+                        Value::Bool(b) => builder.ins().iconst(types::I64, if *b { 1 } else { 0 }),
                         _ => builder.ins().iconst(types::I64, 0),
                     };
                     builder.def_var(var(cur_sp), val);
@@ -361,9 +359,7 @@ impl JitEngine {
                     let idx = (hi << 8) | lo;
                     let val = match &chunk.constants[idx] {
                         Value::Int(n) => builder.ins().iconst(types::I64, *n),
-                        Value::Bool(b) => {
-                            builder.ins().iconst(types::I64, if *b { 1 } else { 0 })
-                        }
+                        Value::Bool(b) => builder.ins().iconst(types::I64, if *b { 1 } else { 0 }),
                         _ => builder.ins().iconst(types::I64, 0),
                     };
                     builder.def_var(var(cur_sp), val);

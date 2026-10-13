@@ -375,4 +375,3 @@ gc("minor")
     let result = vm.interpret(chunk);
     assert_eq!(result, shae::vm::InterpretResult::Ok(Value::Int(0)));
 }
-
