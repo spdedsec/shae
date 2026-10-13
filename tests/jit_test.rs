@@ -1,5 +1,5 @@
 use shae::compiler::Compiler;
-use shae::jit::{JIT_THRESHOLD, JitEngine};
+use shae::jit::{JIT_THRESHOLD, JitEngine, ShaeJitArray};
 use shae::parse_source;
 use shae::value::Value;
 use shae::vm::{InterpretResult, VM};
@@ -509,4 +509,148 @@ let res = rec_fib(12)
         }
         _ => panic!("Expected array result, got {:?}", res),
     }
+}
+
+#[test]
+fn test_jit_array_indexing_direct() {
+    let script = r#"
+fn sum_arr(arr, len) {
+    let mut sum = 0
+    let mut i = 0
+    while i < len {
+        sum = sum + arr[i]
+        i = i + 1
+    }
+    return sum
+}
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+
+    let func = chunk
+        .constants
+        .iter()
+        .find_map(|v| match v {
+            Value::CompiledFunction(f) => Some(f.clone()),
+            _ => None,
+        })
+        .expect("CompiledFunction not found");
+
+    assert!(JitEngine::can_compile(&func));
+
+    let mut engine = JitEngine::new().expect("Init JitEngine");
+    let jit_fn = engine
+        .compile_function(&func)
+        .expect("JIT compile array sum");
+
+    let elements = [10i64, 25i64, 40i64, 15i64];
+    let buf = ShaeJitArray::create_buffer(&elements);
+    let args = [buf.as_ptr() as i64, elements.len() as i64];
+    let mut out: i64 = 0;
+    let status = unsafe { jit_fn(args.as_ptr(), args.len(), &mut out) };
+
+    assert_eq!(status, 0);
+    // 10 + 25 + 40 + 15 = 90
+    assert_eq!(out, 90);
+}
+
+#[test]
+fn test_jit_array_bounds_check_bailout() {
+    let script = r#"
+fn get_elem(arr, idx) {
+    return arr[idx]
+}
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+
+    let func = chunk
+        .constants
+        .iter()
+        .find_map(|v| match v {
+            Value::CompiledFunction(f) => Some(f.clone()),
+            _ => None,
+        })
+        .expect("CompiledFunction not found");
+
+    assert!(JitEngine::can_compile(&func));
+
+    let mut engine = JitEngine::new().expect("Init JitEngine");
+    let jit_fn = engine
+        .compile_function(&func)
+        .expect("JIT compile get_elem");
+
+    let elements = [42i64, 99i64];
+    let buf = ShaeJitArray::create_buffer(&elements);
+
+    // Valid index 0
+    let args0 = [buf.as_ptr() as i64, 0i64];
+    let mut out0: i64 = 0;
+    let status0 = unsafe { jit_fn(args0.as_ptr(), args0.len(), &mut out0) };
+    assert_eq!(status0, 0);
+    assert_eq!(out0, 42);
+
+    // Out-of-bounds index 5 -> should bailout with status 1
+    let args_oob = [buf.as_ptr() as i64, 5i64];
+    let mut out_oob: i64 = 0;
+    let status_oob = unsafe { jit_fn(args_oob.as_ptr(), args_oob.len(), &mut out_oob) };
+    assert_eq!(status_oob, 1);
+
+    // Negative index -1 -> unsigned comparison catches it, bailouts with status 1
+    let args_neg = [buf.as_ptr() as i64, -1i64];
+    let mut out_neg: i64 = 0;
+    let status_neg = unsafe { jit_fn(args_neg.as_ptr(), args_neg.len(), &mut out_neg) };
+    assert_eq!(status_neg, 1);
+}
+
+#[test]
+fn test_jit_array_vm_integration() {
+    let script = r#"
+fn sum_arr(arr, len) {
+    let mut sum = 0
+    let mut i = 0
+    while i < len {
+        sum = sum + arr[i]
+        i = i + 1
+    }
+    return sum
+}
+
+let compiled = jit("compile", sum_arr)
+let total = sum_arr([5, 15, 30, 50], 4)
+
+[compiled, total]
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+
+    let res = vm.interpret(chunk);
+    match res {
+        InterpretResult::Ok(Value::Array(arr)) => {
+            let guard = arr.read().unwrap();
+            assert_eq!(guard[0], Value::Bool(true));
+            assert_eq!(guard[1], Value::Int(100));
+        }
+        _ => panic!("Expected array result, got {:?}", res),
+    }
+}
+
+#[test]
+fn test_jit_array_vm_deopt_fallback_on_oob() {
+    let script = r#"
+fn get_at(arr, i) {
+    return arr[i]
+}
+
+jit("compile", get_at)
+get_at([10, 20], 99)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+
+    let res = vm.interpret(chunk);
+    // When JIT bails out on index 99, VM fallback executes and generates bounds error
+    assert_eq!(res, InterpretResult::RuntimeError);
 }

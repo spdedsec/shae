@@ -173,15 +173,63 @@ impl VM {
                     }
                 }
             } else {
-                let is_all_int = args_slice.iter().all(|v| matches!(v, Value::Int(_)));
-                if is_all_int {
-                    let int_args: Vec<i64> = args_slice
-                        .iter()
-                        .map(|v| match v {
-                            Value::Int(i) => *i,
-                            _ => 0,
-                        })
-                        .collect();
+                let mut int_args: Vec<i64> = Vec::with_capacity(args_slice.len());
+                let mut array_buffers: Vec<Vec<i64>> = Vec::new();
+                let mut can_run = true;
+
+                for v in args_slice {
+                    match v {
+                        Value::Int(i) => int_args.push(*i),
+                        Value::Array(arr) => {
+                            if let Ok(guard) = arr.read() {
+                                if guard.iter().all(|elem| matches!(elem, Value::Int(_))) {
+                                    let mut buf = Vec::with_capacity(1 + guard.len());
+                                    buf.push(guard.len() as i64);
+                                    for elem in guard.iter() {
+                                        if let Value::Int(n) = elem {
+                                            buf.push(*n);
+                                        }
+                                    }
+                                    array_buffers.push(buf);
+                                    int_args.push(array_buffers.last().unwrap().as_ptr() as i64);
+                                } else {
+                                    can_run = false;
+                                    break;
+                                }
+                            } else {
+                                can_run = false;
+                                break;
+                            }
+                        }
+                        Value::GcArray(r) => {
+                            if let Some(guard) = self.heap.as_array(*r) {
+                                if guard.iter().all(|elem| matches!(elem, Value::Int(_))) {
+                                    let mut buf = Vec::with_capacity(1 + guard.len());
+                                    buf.push(guard.len() as i64);
+                                    for elem in guard.iter() {
+                                        if let Value::Int(n) = elem {
+                                            buf.push(*n);
+                                        }
+                                    }
+                                    array_buffers.push(buf);
+                                    int_args.push(array_buffers.last().unwrap().as_ptr() as i64);
+                                } else {
+                                    can_run = false;
+                                    break;
+                                }
+                            } else {
+                                can_run = false;
+                                break;
+                            }
+                        }
+                        _ => {
+                            can_run = false;
+                            break;
+                        }
+                    }
+                }
+
+                if can_run {
                     let mut out_res: i64 = 0;
                     let status = unsafe { jit_fn(int_args.as_ptr(), int_args.len(), &mut out_res) };
                     if status == 0 {

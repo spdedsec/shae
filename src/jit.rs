@@ -87,6 +87,7 @@ impl JitEngine {
                 | OpCode::JumpIfFalse
                 | OpCode::Loop
                 | OpCode::Call
+                | OpCode::IndexGet
         )
     }
 
@@ -96,6 +97,10 @@ impl JitEngine {
         }
 
         let chunk = &func.chunk;
+        if func.is_float_candidate() && chunk.code.iter().any(|&b| b == OpCode::IndexGet as u8) {
+            return false;
+        }
+
         let mut offset = 0;
         while offset < chunk.code.len() {
             let op_byte = chunk.code[offset];
@@ -333,9 +338,10 @@ impl JitEngine {
         let call_args_slot = builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
             ((arity.max(16)) * 8) as u32,
+            3,
         ));
         let call_out_slot =
-            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8));
+            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
 
         let first_block = blocks[&0];
         builder
@@ -790,7 +796,7 @@ impl JitEngine {
                     let status_ok =
                         builder
                             .ins()
-                            .icmp_imm(IntCC::Equal, status, expected_status as i64);
+                            .icmp_imm_s(IntCC::Equal, status, expected_status as i64);
 
                     let next_block = builder.create_block();
                     builder
@@ -805,6 +811,52 @@ impl JitEngine {
                     builder.def_var(var(callee_slot), ret_val);
                     cur_sp = callee_slot + 1;
                     offset += 2;
+                }
+                OpCode::IndexGet => {
+                    if cur_sp < 2 {
+                        builder.ins().jump(bailout_block, &[]);
+                        block_terminated = true;
+                        break;
+                    }
+
+                    let index_val = builder.use_var(var(cur_sp - 1));
+                    let target_val = builder.use_var(var(cur_sp - 2));
+
+                    // Check for null array pointer
+                    let zero_ptr = builder.ins().iconst(pointer_type, 0);
+                    let is_null = builder.ins().icmp(IntCC::Equal, target_val, zero_ptr);
+                    let not_null_block = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(is_null, bailout_block, &[], not_null_block, &[]);
+
+                    builder.switch_to_block(not_null_block);
+                    builder.seal_block(not_null_block);
+
+                    // Load array length from offset 0
+                    let array_len = builder.ins().load(pointer_type, mem_flags(), target_val, 0);
+
+                    // Bounds check: unsigned >= length catches both negative index and index >= len
+                    let oob =
+                        builder
+                            .ins()
+                            .icmp(IntCC::UnsignedGreaterThanOrEqual, index_val, array_len);
+                    let in_bounds_block = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(oob, bailout_block, &[], in_bounds_block, &[]);
+
+                    builder.switch_to_block(in_bounds_block);
+                    builder.seal_block(in_bounds_block);
+
+                    // Address computation: target_val + 8 + (index_val * 8)
+                    let index_bytes = builder.ins().ishl_imm(index_val, 3);
+                    let elem_addr = builder.ins().iadd(target_val, index_bytes);
+                    let loaded_val = builder.ins().load(val_type, mem_flags(), elem_addr, 8);
+
+                    builder.def_var(var(cur_sp - 2), loaded_val);
+                    cur_sp -= 1;
+                    offset += 1;
                 }
                 OpCode::Return => {
                     let ret_val = if cur_sp > 0 {
@@ -865,5 +917,24 @@ impl JitEngine {
         let code_ptr = self.module.get_finalized_function(func_id);
         let fn_ptr: JitFnPtr = unsafe { std::mem::transmute(code_ptr) };
         Ok(fn_ptr)
+    }
+}
+
+/// Native contiguous array buffer for high-performance JIT execution.
+/// Memory layout:
+/// - Offset 0: `len: i64` (number of elements)
+/// - Offset 8 + (i * 8): `data[i]: i64` (contiguous 64-bit element values)
+#[repr(C)]
+pub struct ShaeJitArray {
+    pub len: i64,
+    pub data: [i64; 0],
+}
+
+impl ShaeJitArray {
+    pub fn create_buffer(elements: &[i64]) -> Vec<i64> {
+        let mut buf = Vec::with_capacity(1 + elements.len());
+        buf.push(elements.len() as i64);
+        buf.extend_from_slice(elements);
+        buf
     }
 }
