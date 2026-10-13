@@ -65,6 +65,7 @@ pub fn register(env: &mut Environment) {
         ("assert", builtin_assert),
         ("assert_eq", builtin_assert_eq),
         ("gc", builtin_gc),
+        ("jit", builtin_jit),
     ];
     for (name, func) in builtins {
         env.define(
@@ -77,8 +78,20 @@ pub fn register(env: &mut Environment) {
     }
 }
 
-fn builtin_gc(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+fn builtin_gc(
+    _ev: &mut Evaluator,
+    _args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
     Ok(Value::Int(0))
+}
+
+fn builtin_jit(
+    _ev: &mut Evaluator,
+    _args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
+    Ok(Value::String("enabled".to_string()))
 }
 
 fn builtin_print(

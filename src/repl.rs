@@ -38,7 +38,9 @@ impl ReplState {
             .vm
             .globals
             .iter()
-            .filter(|(k, _)| k.as_str() != "gc" && !dummy_env.contains_key(*k))
+            .filter(|(k, _)| {
+                k.as_str() != "gc" && k.as_str() != "jit" && !dummy_env.contains_key(*k)
+            })
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));
