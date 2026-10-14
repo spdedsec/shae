@@ -13,11 +13,11 @@
 **A modern, strict, and ergonomic systems scripting language with Cranelift JIT compilation.**  
 *Zero ceremony, native machine code JIT, embedded SQLite, RFC 4180 CSV, built-in TLS servers, channels, package manager, and standalone binary bundler.*
 
-[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](Cargo.toml)
-[![Tests](https://img.shields.io/badge/tests-239%2B%20passing-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/version-0.3.1-blue.svg)](Cargo.toml)
+[![Tests](https://img.shields.io/badge/tests-255%2B%20passing-brightgreen.svg)]()
 [![Rust](https://img.shields.io/badge/built%20with-Rust%202024-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![VS Code](https://img.shields.io/badge/VS%20Code-v0.3.0-purple.svg)](editors/vscode)
+[![VS Code](https://img.shields.io/badge/VS%20Code-v0.3.1-purple.svg)](editors/vscode)
 
 </div>
 
@@ -29,6 +29,10 @@ Shae is designed to hit the sweet spot between safety, ergonomics, raw utility, 
 
 - 🚫 **Zero Ceremony & No Semicolons**: Clean, expressive syntax without unnecessary punctuation or parentheses around conditions.
 - ⚡ **Cranelift JIT SSA Backend**: Native machine code generation (x86_64, aarch64) for hot mathematical loops, recursive functions, `f64` float SSA math, and direct fast-path array indexing with safe deoptimization bailouts.
+- 🔒 **Industrial Hash-DoS Hardening**: Cryptographic SipHash-2-4 keyed hashing with randomized per-process seeds to neutralize algorithmic complexity attacks on maps and first-class sets.
+- 🔤 **UAX #29 Unicode & Rune Safety (`std:unicode`)**: True unicode extended grapheme clustering (`.graphemes()`, `.grapheme_len()`, `.slice_graphemes()`, `.runes()`, `.codepoints()`), eliminating multi-byte slice truncation panics on complex emojis and combining characters.
+- 🚦 **Cross-Platform OS Signal Handling (`std:sys`)**: Trap OS interrupts (`SIGINT`, `SIGTERM`), register callbacks, and cleanly drain server pools and active connections.
+- 🧮 **High-Performance Collections (`std:collections`)**: First-class `Set` collection with O(N) deduplication, union, intersection, and set difference.
 - 🗄️ **Embedded SQLite Database (`std:sqlite`)**: Production-ready SQL storage out of the box with zero-dependency runtime dynamic linking across Linux, macOS, and Windows.
 - 📊 **RFC 4180 CSV Engine (`std:csv`)**: High-throughput tabular data parsing and serialization with quoted multiline strings and escape handling.
 - 🌐 **Modern HTTP Client & Server**:
@@ -188,9 +192,28 @@ use { is_match, replace_all } from "std:regex"
 let valid_email = is_match(r"^[\w\.-]+@[\w\.-]+\.\w+$", "user@shae.dev")
 let cleaned = replace_all(r"\s+", " ", "multiple   spaces")
 
-// Environment & System
-let env = use "std:env"
+// Collections & Sets (Hash-DoS Hardened)
+let collections = use "std:collections"
+let unique = collections.Set(["apple", "banana", "apple", "grape"])
+unique.add("mango")
+println("Has banana?", unique.has("banana"))
+let other = collections.Set(["mango", "kiwi", "orange"])
+let combined = unique.union(other)
+
+// Unicode & UAX #29 Grapheme Clustering
+let unicode = use "std:unicode"
+let text = "Hi 👨‍👩‍👧‍👦, welcome to 🇺🇸!"
+println("Graphemes count:", text.grapheme_len()) // Correctly counts 👨‍👩‍👧‍👦 and 🇺🇸 as 1 cluster
+println("Flag slice:", text.slice_graphemes(17, 18))
+
+// OS Signals & Graceful Teardown
 let sys = use "std:sys"
+sys.on_signal("SIGINT", fn(sig) {
+    println("Caught interrupt signal:", sig, "- shutting down gracefully")
+})
+
+// Environment & Platform
+let env = use "std:env"
 env.load_dotenv(".env")
 println("Running on:", sys.platform(), sys.arch())
 ```
@@ -202,6 +225,9 @@ println("Running on:", sys.platform(), sys.arch())
 Explore ready-to-run examples in the [`examples/`](examples) directory:
 
 - 🚀 [**Production Microservice Showcase**](examples/realworld_service/): Complete real-world HTTP microservice integrating SQLite telemetry persistence and CSV bulk import/export.
+- 🔤 [**Unicode & Grapheme Demo**](examples/unicode_demo.shae): Extended grapheme clusters, emoji sequences, and rune slicing.
+- 🚦 [**OS Signals Demo**](examples/signals_demo.shae): Cross-platform interrupt handling and graceful server teardown.
+- 🧮 [**Collections & Set Demo**](examples/collections_demo.shae): SipHash-2-4 backed Set operations and algebraic set theory.
 - 🗄️ [**SQLite Demo**](examples/sqlite_demo.shae): In-memory database initialization, parameter binding, CRUD, and aggregations.
 - 📊 [**CSV Demo**](examples/csv_demo.shae): Parsing RFC 4180 multiline records, table mutations, and serialization.
 - 🌐 [**HTTP Client Demo**](examples/http_demo.shae): GET with query params, POST with automatic JSON serialization.
@@ -236,11 +262,11 @@ Shae ships with an all-in-one developer toolchain:
 ## 🎨 VS Code Extension
 
 Shae provides an official VS Code extension located at [`editors/vscode`](editors/vscode):
-- **TextMate Syntax Highlighting**: Full grammar for raw strings, radix numbers, JIT keywords, and standard modules.
+- **TextMate Syntax Highlighting**: Full grammar for raw strings, radix numbers, JIT keywords, sets, and standard modules.
 - **Language Server Protocol Integration**: Real-time compiler diagnostics, completions, and formatting powered by `shae lsp`.
 - **Install**:
   ```bash
-  code --install-extension editors/vscode/shae-vscode-0.3.0.vsix
+  code --install-extension editors/vscode/shae-vscode-0.3.1.vsix
   ```
 
 ---
@@ -256,22 +282,26 @@ The output executable embeds all imported dependencies and executes directly wit
 
 ---
 
-## 🔮 Upcoming Features (Roadmap)
+## 🔮 Upcoming Features & Horizon Roadmap
 
-Shae is evolving toward industrial enterprise stability. The next phase introduces:
+Shae is advancing toward an enterprise-scale systems ecosystem. Upcoming major phases:
 
-1. **Hash-DoS Resilience (Milestone 3.1)**:
-   - Randomly-seeded SipHash-2-4 keying for `Map` and `Set` tables to guarantee immunity against algorithmic collision attacks.
-2. **UTF-8 Rune & Grapheme Cluster Safety (Milestone 3.2)**:
-   - Unicode grapheme and codepoint safety for string indexing and slicing, eliminating multi-byte slice panics.
-3. **Graceful OS Signal Handling (Milestone 3.3)**:
-   - `std:sys.on_signal("SIGINT", handler)` to intercept OS signals, drain HTTP keep-alive pools gracefully, and close database handles cleanly.
+1. **Phase 4: Actor-Based Concurrency & Distributed Mailboxes**:
+   - Lightweight isolated actors with unbounded mailboxes and message passing.
+   - Supervision trees (`OneForOne`, `AllForOne`) with automatic process restart policies.
+   - Remote node discovery and cluster channel serialization.
+2. **Phase 5: Self-Hosting Shae Compiler & Direct Native Linker**:
+   - Lexer, parser, type checker, and Cranelift backend rewritten in pure Shae.
+   - Direct ELF, Mach-O, and PE object emission with zero external compiler dependencies.
+3. **Phase 6: WebAssembly & Edge Runtime Target**:
+   - First-class compilation to `wasm32-wasi` and browser-embeddable WebAssembly runtimes.
+   - High-throughput serverless function cold starts (<1ms).
 
 ---
 
 ## 🧪 Running Tests
 
-Shae contains 239+ comprehensive integration and multi-platform test suites:
+Shae contains 255+ comprehensive integration and multi-platform test suites:
 ```bash
 cargo test
 cargo check --tests
@@ -282,3 +312,4 @@ cargo check --tests
 ## 📄 License
 
 Distributed under the [MIT License](LICENSE). Copyright (c) 2026 Satya Prakash (spdedsec).
+

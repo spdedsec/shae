@@ -123,7 +123,7 @@
         },
         {
           "name": "keyword.other.concurrency.shae",
-          "match": "\\b(spawn|channel|serve|serve_tls|async|await)\\b"
+          "match": "\\b(spawn|channel|serve|serve_tls|async|await|jit)\\b"
         }
       ]
     },
@@ -203,7 +203,7 @@
         },
         {
           "name": "support.type.primitive.shae",
-          "match": "\\b(int|float|string|bool|array|map)\\b"
+          "match": "\\b(int|float|string|bool|array|map|set)\\b"
         }
       ]
     },
