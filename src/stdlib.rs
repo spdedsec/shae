@@ -433,7 +433,11 @@ fn sys_on_signal(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
 
     let callback = args[1].clone();
     match &callback {
-        Value::Function { .. } | Value::NativeFunction { .. } => {}
+        Value::Function { .. }
+        | Value::CompiledFunction(_)
+        | Value::Closure(_)
+        | Value::Builtin { .. }
+        | Value::BoundMethod { .. } => {}
         _ => {
             return Err(RuntimeError::new(
                 "sys.on_signal expects callable function or closure as second argument".into(),
@@ -508,7 +512,7 @@ fn sys_clear_signals(
         map.clear();
     } else if let Value::String(sig) = &args[0] {
         let norm = normalize_signal_name(sig);
-        map.remove(&norm);
+        map.shift_remove(&norm);
     } else {
         return Err(RuntimeError::new(
             "sys.clear_signals expects optional signal name as string".into(),
