@@ -515,7 +515,6 @@ impl<R: Read, W: Write> LspServer<R, W> {
                     }
                 }
             }
-        }
 
         items
     }

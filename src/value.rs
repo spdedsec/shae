@@ -211,6 +211,7 @@ impl Value {
             Value::Channel(_) => "channel",
             Value::FfiLibrary(_) => "ffi_library",
             Value::FfiFunction(_) => "ffi_function",
+        }
     }
 
     pub fn is_callable(&self) -> bool {

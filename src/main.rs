@@ -1086,7 +1086,8 @@ fn start_static_dev_server(dir_path: &str, host: &str, port: u16) {
             let raw_url = parts.next().unwrap_or("/");
 
             if method != "GET" && method != "HEAD" {
-                let _ = stream.write_all(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n");
+                let _ = stream
+                    .write_all(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n");
                 return;
             }
 
@@ -1103,7 +1104,11 @@ fn start_static_dev_server(dir_path: &str, host: &str, port: u16) {
             }
 
             if target_file.is_dir() {
-                let dir_name = target_file.strip_prefix(&*root).unwrap_or(&target_file).display().to_string();
+                let dir_name = target_file
+                    .strip_prefix(&*root)
+                    .unwrap_or(&target_file)
+                    .display()
+                    .to_string();
                 let html = render_dir_listing(&target_file, &dir_name, &decoded_path);
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1145,7 +1150,9 @@ fn start_static_dev_server(dir_path: &str, host: &str, port: u16) {
                     println!("GET {} -> 200 OK ({} bytes)", raw_url, content.len());
                 }
                 Err(_) => {
-                    let _ = stream.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n",
+                    );
                 }
             }
         });
@@ -1214,7 +1221,10 @@ fn render_dir_listing(dir: &Path, dir_name: &str, url_path: &str) -> String {
             let size_str = if is_dir {
                 "-".to_string()
             } else {
-                entry.metadata().map(|m| format!("{} B", m.len())).unwrap_or("-".into())
+                entry
+                    .metadata()
+                    .map(|m| format!("{} B", m.len()))
+                    .unwrap_or("-".into())
             };
             let icon = if is_dir { "📁" } else { "📄" };
             let href = format!("{}{}", base_url, name);
