@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use ring::rand::SecureRandom;
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
     let clean_name = name
@@ -306,6 +306,15 @@ fn build_sys_module() -> Value {
         ("arch", sys_arch),
         ("cwd", sys_cwd),
         ("exit", sys_exit),
+        ("on_signal", sys_on_signal),
+        ("onSignal", sys_on_signal),
+        ("trigger_signal", sys_trigger_signal),
+        ("triggerSignal", sys_trigger_signal),
+        ("clear_signals", sys_clear_signals),
+        ("clearSignals", sys_clear_signals),
+        ("poll_signals", sys_poll_signals),
+        ("pollSignals", sys_poll_signals),
+        ("signals", sys_signals),
     ])
 }
 
@@ -370,6 +379,193 @@ fn sys_exit(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, 
         return Err(RuntimeError::new("sys.exit expects an integer exit code".into()).at(span));
     };
     std::process::exit(code);
+}
+
+fn get_signal_handlers() -> &'static RwLock<IndexMap<String, Vec<Value>>> {
+    static HANDLERS: OnceLock<RwLock<IndexMap<String, Vec<Value>>>> = OnceLock::new();
+    HANDLERS.get_or_init(|| RwLock::new(IndexMap::new()))
+}
+
+fn get_pending_signals() -> &'static Mutex<Vec<String>> {
+    static PENDING: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn init_os_signal_hook() {
+    static HOOK: OnceLock<()> = OnceLock::new();
+    HOOK.get_or_init(|| {
+        let _ = ctrlc::set_handler(move || {
+            if let Ok(mut pending) = get_pending_signals().lock() {
+                pending.push("SIGINT".to_string());
+                pending.push("SIGTERM".to_string());
+            }
+        });
+    });
+}
+
+fn normalize_signal_name(sig: &str) -> String {
+    let clean = sig.trim().to_uppercase();
+    match clean.as_str() {
+        "INT" | "SIGINT" | "INTERRUPT" => "SIGINT".to_string(),
+        "TERM" | "SIGTERM" | "TERMINATE" | "TERMINATION" => "SIGTERM".to_string(),
+        "HUP" | "SIGHUP" | "HANGUP" => "SIGHUP".to_string(),
+        other => {
+            if !other.starts_with("SIG") {
+                format!("SIG{}", other)
+            } else {
+                other.to_string()
+            }
+        }
+    }
+}
+
+fn sys_on_signal(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("on_signal", 2, &args, span)?;
+    let sig_name = match &args[0] {
+        Value::String(s) => normalize_signal_name(s),
+        _ => {
+            return Err(RuntimeError::new(
+                "sys.on_signal expects signal name as string (e.g. 'SIGINT' or 'SIGTERM')".into(),
+            )
+            .at(span));
+        }
+    };
+
+    let callback = args[1].clone();
+    match &callback {
+        Value::Function { .. } | Value::NativeFunction { .. } => {}
+        _ => {
+            return Err(RuntimeError::new(
+                "sys.on_signal expects callable function or closure as second argument".into(),
+            )
+            .at(span));
+        }
+    }
+
+    {
+        let handlers = get_signal_handlers();
+        let mut map = handlers.write().unwrap();
+        map.entry(sig_name).or_default().push(callback);
+    }
+
+    init_os_signal_hook();
+
+    Ok(Value::Bool(true))
+}
+
+fn sys_trigger_signal(
+    ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("trigger_signal", 1, &args, span)?;
+    let sig_name = match &args[0] {
+        Value::String(s) => normalize_signal_name(s),
+        _ => {
+            return Err(RuntimeError::new(
+                "sys.trigger_signal expects signal name as string".into(),
+            )
+            .at(span));
+        }
+    };
+
+    let handlers_to_run = {
+        let handlers = get_signal_handlers();
+        let map = handlers.read().unwrap();
+        map.get(&sig_name).cloned().unwrap_or_default()
+    };
+
+    if handlers_to_run.is_empty() {
+        return Ok(Value::Bool(false));
+    }
+
+    let mut last_res = Value::Bool(true);
+    for handler in handlers_to_run {
+        let call_args = match &handler {
+            Value::Function { params, .. } if params.is_empty() => vec![],
+            _ => vec![Value::String(sig_name.clone())],
+        };
+        match ev.call_value(&handler, call_args, span) {
+            Ok(v) => last_res = v,
+            Err(e) if e.message.contains("expects 0 arguments") => {
+                last_res = ev.call_value(&handler, vec![], span)?;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    Ok(last_res)
+}
+
+fn sys_clear_signals(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    let handlers = get_signal_handlers();
+    let mut map = handlers.write().unwrap();
+    if args.is_empty() {
+        map.clear();
+    } else if let Value::String(sig) = &args[0] {
+        let norm = normalize_signal_name(sig);
+        map.remove(&norm);
+    } else {
+        return Err(RuntimeError::new(
+            "sys.clear_signals expects optional signal name as string".into(),
+        )
+        .at(span));
+    }
+    Ok(Value::Bool(true))
+}
+
+fn sys_poll_signals(
+    ev: &mut Evaluator,
+    _args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    let pending: Vec<String> = {
+        if let Ok(mut lock) = get_pending_signals().lock() {
+            let drained: Vec<String> = lock.drain(..).collect();
+            drained
+        } else {
+            Vec::new()
+        }
+    };
+
+    let mut invoked_count: i64 = 0;
+    for sig in pending {
+        let handlers_to_run = {
+            let handlers = get_signal_handlers();
+            let map = handlers.read().unwrap();
+            map.get(&sig).cloned().unwrap_or_default()
+        };
+
+        for handler in handlers_to_run {
+            invoked_count += 1;
+            let call_args = match &handler {
+                Value::Function { params, .. } if params.is_empty() => vec![],
+                _ => vec![Value::String(sig.clone())],
+            };
+            match ev.call_value(&handler, call_args, span) {
+                Ok(_) => {}
+                Err(e) if e.message.contains("expects 0 arguments") => {
+                    let _ = ev.call_value(&handler, vec![], span);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    Ok(Value::Int(invoked_count))
+}
+
+fn sys_signals(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+    let sigs = vec![
+        Value::String("SIGINT".to_string()),
+        Value::String("SIGTERM".to_string()),
+        Value::String("SIGHUP".to_string()),
+    ];
+    Ok(Value::Array(Arc::new(RwLock::new(sigs))))
 }
 
 // -------------------------------------------------------------

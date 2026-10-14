@@ -560,7 +560,7 @@ impl<R: Read, W: Write> LspServer<R, W> {
                 "**std:path**\n\nFile path manipulation (join, dirname, basename, extname, isAbsolute)."
             }
             "std:sys" => {
-                "**std:sys**\n\nSystem utilities: platform, arch, cwd, exit, and system metadata."
+                "**std:sys**\n\nSystem utilities: platform, arch, cwd, exit, and cross-platform OS signal handling (on_signal, trigger_signal, clear_signals, poll_signals, signals)."
             }
             "std:time" => {
                 "**std:time**\n\nDate, time, monotonic clocks, and thread sleeping utilities (now, nowMs, sleep)."
