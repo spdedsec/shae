@@ -1344,6 +1344,12 @@ impl Evaluator {
                             Ok(Some(v.clone()))
                         } else if property == "len" {
                             Ok(Some(Value::Int(map.len() as i64)))
+                        } else if property == "size" && map.contains_key("_is_set") {
+                            if let Some(Value::Array(arr)) = map.get("items") {
+                                Ok(Some(Value::Int(arr.read().unwrap().len() as i64)))
+                            } else {
+                                Ok(Some(Value::Int(0)))
+                            }
                         } else if matches!(
                             property.as_str(),
                             "keys" | "values" | "has" | "contains" | "get" | "delete"
@@ -1352,6 +1358,20 @@ impl Evaluator {
                                 property.as_str(),
                                 "execute" | "query" | "close" | "changes" | "last_insert_id"
                             ))
+                            || (map.contains_key("_is_set")
+                                && matches!(
+                                    property.as_str(),
+                                    "add"
+                                        | "has"
+                                        | "contains"
+                                        | "delete"
+                                        | "size"
+                                        | "to_array"
+                                        | "clear"
+                                        | "union"
+                                        | "intersect"
+                                        | "difference"
+                                ))
                         {
                             Ok(Some(Value::BoundMethod {
                                 object: Box::new(Value::Map(m.clone())),
@@ -2647,8 +2667,20 @@ impl Evaluator {
                         if args.len() != 1 {
                             self.depth -= 1;
                             return Err(
-                                RuntimeError::new("has() expects 1 argument (key)".into()).at(span)
+                                RuntimeError::new("has() expects 1 argument".into()).at(span)
                             );
+                        }
+                        if m.read().unwrap().contains_key("_is_set") {
+                            let item = &args[0];
+                            let guard = m.read().unwrap();
+                            if let Some(Value::Array(arr)) = guard.get("items") {
+                                let arr_guard = arr.read().unwrap();
+                                let set: indexmap::IndexSet<Value> =
+                                    arr_guard.iter().cloned().collect();
+                                return Ok(Value::Bool(set.contains(item)));
+                            } else {
+                                return Ok(Value::Bool(false));
+                            }
                         }
                         let key = match &args[0] {
                             Value::String(s) => s.clone(),
@@ -2679,10 +2711,23 @@ impl Evaluator {
                     (Value::Map(m), "delete") => {
                         if args.len() != 1 {
                             self.depth -= 1;
-                            return Err(RuntimeError::new(
-                                "delete() expects 1 argument (key)".into(),
-                            )
-                            .at(span));
+                            return Err(
+                                RuntimeError::new("delete() expects 1 argument".into()).at(span)
+                            );
+                        }
+                        if m.read().unwrap().contains_key("_is_set") {
+                            let item = &args[0];
+                            let guard = m.read().unwrap();
+                            if let Some(Value::Array(arr)) = guard.get("items") {
+                                let mut arr_guard = arr.write().unwrap();
+                                let mut set: indexmap::IndexSet<Value> =
+                                    arr_guard.drain(..).collect();
+                                let removed = set.shift_remove(item);
+                                *arr_guard = set.into_iter().collect();
+                                return Ok(Value::Bool(removed));
+                            } else {
+                                return Ok(Value::Bool(false));
+                            }
                         }
                         let key = match &args[0] {
                             Value::String(s) => s.clone(),
@@ -2690,6 +2735,142 @@ impl Evaluator {
                         };
                         let prev = m.write().unwrap().shift_remove(&key).unwrap_or(Value::Null);
                         Ok(prev)
+                    }
+                    (Value::Map(m), "add") if m.read().unwrap().contains_key("_is_set") => {
+                        if args.len() != 1 {
+                            self.depth -= 1;
+                            return Err(
+                                RuntimeError::new("add() expects 1 argument".into()).at(span)
+                            );
+                        }
+                        let item = args[0].clone();
+                        let guard = m.read().unwrap();
+                        if let Some(Value::Array(arr)) = guard.get("items") {
+                            let mut arr_guard = arr.write().unwrap();
+                            let mut set: indexmap::IndexSet<Value> = arr_guard.drain(..).collect();
+                            let inserted = set.insert(item);
+                            *arr_guard = set.into_iter().collect();
+                            Ok(Value::Bool(inserted))
+                        } else {
+                            Ok(Value::Bool(false))
+                        }
+                    }
+                    (Value::Map(m), "size") if m.read().unwrap().contains_key("_is_set") => {
+                        let guard = m.read().unwrap();
+                        if let Some(Value::Array(arr)) = guard.get("items") {
+                            Ok(Value::Int(arr.read().unwrap().len() as i64))
+                        } else {
+                            Ok(Value::Int(0))
+                        }
+                    }
+                    (Value::Map(m), "to_array") if m.read().unwrap().contains_key("_is_set") => {
+                        let guard = m.read().unwrap();
+                        if let Some(Value::Array(arr)) = guard.get("items") {
+                            Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
+                                arr.read().unwrap().clone(),
+                            ))))
+                        } else {
+                            Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
+                                Vec::new(),
+                            ))))
+                        }
+                    }
+                    (Value::Map(m), "clear") if m.read().unwrap().contains_key("_is_set") => {
+                        let guard = m.read().unwrap();
+                        if let Some(Value::Array(arr)) = guard.get("items") {
+                            arr.write().unwrap().clear();
+                        }
+                        Ok(Value::Null)
+                    }
+                    (Value::Map(m), "union") if m.read().unwrap().contains_key("_is_set") => {
+                        let items_a = match m.read().unwrap().get("items") {
+                            Some(Value::Array(a)) => a.read().unwrap().clone(),
+                            _ => Vec::new(),
+                        };
+                        let items_b = if !args.is_empty() {
+                            match &args[0] {
+                                Value::Array(b) => b.read().unwrap().clone(),
+                                Value::Map(other_m)
+                                    if other_m.read().unwrap().contains_key("_is_set") =>
+                                {
+                                    match other_m.read().unwrap().get("items") {
+                                        Some(Value::Array(b)) => b.read().unwrap().clone(),
+                                        _ => Vec::new(),
+                                    }
+                                }
+                                _ => Vec::new(),
+                            }
+                        } else {
+                            Vec::new()
+                        };
+                        let mut set: indexmap::IndexSet<Value> =
+                            items_a.into_iter().chain(items_b.into_iter()).collect();
+                        let res: Vec<Value> = set.into_iter().collect();
+                        Ok(crate::stdlib::make_set_instance(res))
+                    }
+                    (Value::Map(m), "intersect") if m.read().unwrap().contains_key("_is_set") => {
+                        let items_a = match m.read().unwrap().get("items") {
+                            Some(Value::Array(a)) => a.read().unwrap().clone(),
+                            _ => Vec::new(),
+                        };
+                        let set_b: indexmap::IndexSet<Value> = if !args.is_empty() {
+                            match &args[0] {
+                                Value::Array(b) => b.read().unwrap().iter().cloned().collect(),
+                                Value::Map(other_m)
+                                    if other_m.read().unwrap().contains_key("_is_set") =>
+                                {
+                                    match other_m.read().unwrap().get("items") {
+                                        Some(Value::Array(b)) => {
+                                            b.read().unwrap().iter().cloned().collect()
+                                        }
+                                        _ => indexmap::IndexSet::new(),
+                                    }
+                                }
+                                _ => indexmap::IndexSet::new(),
+                            }
+                        } else {
+                            indexmap::IndexSet::new()
+                        };
+                        let mut out = indexmap::IndexSet::new();
+                        for item in items_a {
+                            if set_b.contains(&item) {
+                                out.insert(item);
+                            }
+                        }
+                        let res: Vec<Value> = out.into_iter().collect();
+                        Ok(crate::stdlib::make_set_instance(res))
+                    }
+                    (Value::Map(m), "difference") if m.read().unwrap().contains_key("_is_set") => {
+                        let items_a = match m.read().unwrap().get("items") {
+                            Some(Value::Array(a)) => a.read().unwrap().clone(),
+                            _ => Vec::new(),
+                        };
+                        let set_b: indexmap::IndexSet<Value> = if !args.is_empty() {
+                            match &args[0] {
+                                Value::Array(b) => b.read().unwrap().iter().cloned().collect(),
+                                Value::Map(other_m)
+                                    if other_m.read().unwrap().contains_key("_is_set") =>
+                                {
+                                    match other_m.read().unwrap().get("items") {
+                                        Some(Value::Array(b)) => {
+                                            b.read().unwrap().iter().cloned().collect()
+                                        }
+                                        _ => indexmap::IndexSet::new(),
+                                    }
+                                }
+                                _ => indexmap::IndexSet::new(),
+                            }
+                        } else {
+                            indexmap::IndexSet::new()
+                        };
+                        let mut out = indexmap::IndexSet::new();
+                        for item in items_a {
+                            if !set_b.contains(&item) {
+                                out.insert(item);
+                            }
+                        }
+                        let res: Vec<Value> = out.into_iter().collect();
+                        Ok(crate::stdlib::make_set_instance(res))
                     }
                     (Value::Map(m), "execute")
                         if m.read().unwrap().contains_key("_sqlite_handle") =>

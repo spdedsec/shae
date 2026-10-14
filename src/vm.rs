@@ -1259,6 +1259,13 @@ impl VM {
                                 self.stack.push(v);
                             } else if property == "len" {
                                 self.stack.push(Value::Int(map.len() as i64));
+                            } else if property == "size" && map.contains_key("_is_set") {
+                                if let Some(Value::Array(arr)) = map.get("items") {
+                                    self.stack
+                                        .push(Value::Int(arr.read().unwrap().len() as i64));
+                                } else {
+                                    self.stack.push(Value::Int(0));
+                                }
                             } else if matches!(
                                 property.as_str(),
                                 "keys" | "values" | "has" | "contains" | "get" | "delete"
@@ -1267,6 +1274,20 @@ impl VM {
                                     property.as_str(),
                                     "execute" | "query" | "close" | "changes" | "last_insert_id"
                                 ))
+                                || (map.contains_key("_is_set")
+                                    && matches!(
+                                        property.as_str(),
+                                        "add"
+                                            | "has"
+                                            | "contains"
+                                            | "delete"
+                                            | "size"
+                                            | "to_array"
+                                            | "clear"
+                                            | "union"
+                                            | "intersect"
+                                            | "difference"
+                                    ))
                             {
                                 self.stack.push(Value::BoundMethod {
                                     object: Box::new(target.clone()),

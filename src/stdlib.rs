@@ -449,6 +449,10 @@ fn build_crypto_module() -> Value {
         ("uuidV4", crypto_uuid),
         ("random_uuid", crypto_uuid),
         ("randomUuid", crypto_uuid),
+        ("siphash", crypto_siphash),
+        ("siphash64", crypto_siphash),
+        ("siphash_hex", crypto_siphash_hex),
+        ("siphashHex", crypto_siphash_hex),
     ])
 }
 
@@ -591,6 +595,133 @@ fn crypto_uuid(_ev: &mut Evaluator, _args: Vec<Value>, span: Span) -> Result<Val
         buf[15]
     );
     Ok(Value::String(uuid))
+}
+
+pub fn siphash_2_4(key: [u8; 16], data: &[u8]) -> u64 {
+    let k0 = u64::from_le_bytes(key[0..8].try_into().unwrap());
+    let k1 = u64::from_le_bytes(key[8..16].try_into().unwrap());
+
+    let mut v0 = k0 ^ 0x736f6d6570736575;
+    let mut v1 = k1 ^ 0x646f72616e646f6d;
+    let mut v2 = k0 ^ 0x6c7967656e657261;
+    let mut v3 = k1 ^ 0x7465646279746573;
+
+    let len = data.len();
+    let chunks = data.chunks_exact(8);
+    let remainder = chunks.remainder();
+
+    for chunk in chunks {
+        let m = u64::from_le_bytes(chunk.try_into().unwrap());
+        v3 ^= m;
+        for _ in 0..2 {
+            sip_round(&mut v0, &mut v1, &mut v2, &mut v3);
+        }
+        v0 ^= m;
+    }
+
+    let mut b: u64 = ((len as u64) & 0xff) << 56;
+    for (i, &byte) in remainder.iter().enumerate() {
+        b |= (byte as u64) << (8 * i);
+    }
+
+    v3 ^= b;
+    for _ in 0..2 {
+        sip_round(&mut v0, &mut v1, &mut v2, &mut v3);
+    }
+    v0 ^= b;
+
+    v2 ^= 0xff;
+    for _ in 0..4 {
+        sip_round(&mut v0, &mut v1, &mut v2, &mut v3);
+    }
+
+    v0 ^ v1 ^ v2 ^ v3
+}
+
+#[inline(always)]
+fn sip_round(v0: &mut u64, v1: &mut u64, v2: &mut u64, v3: &mut u64) {
+    *v0 = v0.wrapping_add(*v1);
+    *v1 = v1.rotate_left(13);
+    *v1 ^= *v0;
+    *v0 = v0.rotate_left(32);
+
+    *v2 = v2.wrapping_add(*v3);
+    *v3 = v3.rotate_left(16);
+    *v3 ^= *v2;
+
+    *v0 = v0.wrapping_add(*v3);
+    *v3 = v3.rotate_left(21);
+    *v3 ^= *v0;
+
+    *v2 = v2.wrapping_add(*v1);
+    *v1 = v1.rotate_left(17);
+    *v1 ^= *v2;
+    *v2 = v2.rotate_left(32);
+}
+
+fn parse_siphash_key(val: &Value) -> [u8; 16] {
+    let mut key = [0u8; 16];
+    match val {
+        Value::String(s) => {
+            let bytes = s.as_bytes();
+            let copy_len = bytes.len().min(16);
+            key[..copy_len].copy_from_slice(&bytes[..copy_len]);
+        }
+        Value::Int(n) => {
+            let b = n.to_le_bytes();
+            key[0..8].copy_from_slice(&b);
+            key[8..16].copy_from_slice(&b);
+        }
+        Value::Float(f) | Value::Number(f) => {
+            let b = f.to_bits().to_le_bytes();
+            key[0..8].copy_from_slice(&b);
+            key[8..16].copy_from_slice(&b);
+        }
+        Value::Array(arr) => {
+            let guard = arr.read().unwrap();
+            for (i, v) in guard.iter().take(16).enumerate() {
+                if let Value::Int(b) = v {
+                    key[i] = *b as u8;
+                }
+            }
+        }
+        _ => {}
+    }
+    key
+}
+
+fn crypto_siphash(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("crypto.siphash", 2, &args, span)?;
+    let key = parse_siphash_key(&args[0]);
+    let h = match &args[1] {
+        Value::String(s) => siphash_2_4(key, s.as_bytes()),
+        other => {
+            let s = other.to_string();
+            siphash_2_4(key, s.as_bytes())
+        }
+    };
+    Ok(Value::Int(h as i64))
+}
+
+fn crypto_siphash_hex(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("crypto.siphash_hex", 2, &args, span)?;
+    let key = parse_siphash_key(&args[0]);
+    let h = match &args[1] {
+        Value::String(s) => siphash_2_4(key, s.as_bytes()),
+        other => {
+            let s = other.to_string();
+            siphash_2_4(key, s.as_bytes())
+        }
+    };
+    Ok(Value::String(format!("{:016x}", h)))
 }
 
 // -------------------------------------------------------------
@@ -1610,16 +1741,54 @@ fn build_cli_module() -> Value {
 // -------------------------------------------------------------
 // std:collections / std:set
 // -------------------------------------------------------------
+pub fn make_set_instance(items: Vec<Value>) -> Value {
+    let mut map = IndexMap::new();
+    let mut set = indexmap::IndexSet::new();
+    for item in items {
+        set.insert(item);
+    }
+    let unique_items: Vec<Value> = set.into_iter().collect();
+    map.insert("_is_set".to_string(), Value::Bool(true));
+    map.insert(
+        "items".to_string(),
+        Value::Array(Arc::new(RwLock::new(unique_items))),
+    );
+    Value::Map(Arc::new(RwLock::new(map)))
+}
+
+fn col_set_new(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    let mut initial = Vec::new();
+    if !args.is_empty() {
+        match &args[0] {
+            Value::Array(arr) => {
+                initial = arr.read().unwrap().clone();
+            }
+            Value::Map(m) if m.read().unwrap().contains_key("_is_set") => {
+                if let Some(Value::Array(arr)) = m.read().unwrap().get("items") {
+                    initial = arr.read().unwrap().clone();
+                }
+            }
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "collections.set expects array, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        }
+    }
+    Ok(make_set_instance(initial))
+}
+
 fn col_unique(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     expect_args("collections.unique", 1, &args, span)?;
     if let Value::Array(arr) = &args[0] {
         let guard = arr.read().unwrap();
-        let mut unique_items = Vec::new();
+        let mut set = indexmap::IndexSet::new();
         for item in guard.iter() {
-            if !unique_items.contains(item) {
-                unique_items.push(item.clone());
-            }
+            set.insert(item.clone());
         }
+        let unique_items: Vec<Value> = set.into_iter().collect();
         Ok(Value::Array(Arc::new(RwLock::new(unique_items))))
     } else {
         Err(RuntimeError::new("collections.unique expects array".into()).at(span))
@@ -1631,12 +1800,11 @@ fn col_union(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value,
     if let (Value::Array(a), Value::Array(b)) = (&args[0], &args[1]) {
         let a_guard = a.read().unwrap();
         let b_guard = b.read().unwrap();
-        let mut out = Vec::new();
+        let mut set = indexmap::IndexSet::new();
         for item in a_guard.iter().chain(b_guard.iter()) {
-            if !out.contains(item) {
-                out.push(item.clone());
-            }
+            set.insert(item.clone());
         }
+        let out: Vec<Value> = set.into_iter().collect();
         Ok(Value::Array(Arc::new(RwLock::new(out))))
     } else {
         Err(RuntimeError::new("collections.union expects (array, array)".into()).at(span))
@@ -1648,13 +1816,15 @@ fn col_intersect(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
     if let (Value::Array(a), Value::Array(b)) = (&args[0], &args[1]) {
         let a_guard = a.read().unwrap();
         let b_guard = b.read().unwrap();
-        let mut out = Vec::new();
+        let b_set: indexmap::IndexSet<Value> = b_guard.iter().cloned().collect();
+        let mut out = indexmap::IndexSet::new();
         for item in a_guard.iter() {
-            if b_guard.contains(item) && !out.contains(item) {
-                out.push(item.clone());
+            if b_set.contains(item) {
+                out.insert(item.clone());
             }
         }
-        Ok(Value::Array(Arc::new(RwLock::new(out))))
+        let res: Vec<Value> = out.into_iter().collect();
+        Ok(Value::Array(Arc::new(RwLock::new(res))))
     } else {
         Err(RuntimeError::new("collections.intersect expects (array, array)".into()).at(span))
     }
@@ -1669,13 +1839,15 @@ fn col_difference(
     if let (Value::Array(a), Value::Array(b)) = (&args[0], &args[1]) {
         let a_guard = a.read().unwrap();
         let b_guard = b.read().unwrap();
-        let mut out = Vec::new();
+        let b_set: indexmap::IndexSet<Value> = b_guard.iter().cloned().collect();
+        let mut out = indexmap::IndexSet::new();
         for item in a_guard.iter() {
-            if !b_guard.contains(item) && !out.contains(item) {
-                out.push(item.clone());
+            if !b_set.contains(item) {
+                out.insert(item.clone());
             }
         }
-        Ok(Value::Array(Arc::new(RwLock::new(out))))
+        let res: Vec<Value> = out.into_iter().collect();
+        Ok(Value::Array(Arc::new(RwLock::new(res))))
     } else {
         Err(RuntimeError::new("collections.difference expects (array, array)".into()).at(span))
     }
@@ -1729,6 +1901,9 @@ fn build_collections_module() -> Value {
         ("difference", col_difference),
         ("chunk", col_chunk),
         ("zip", col_zip),
+        ("set", col_set_new),
+        ("new_set", col_set_new),
+        ("Set", col_set_new),
         ("set_from_array", col_unique),
         ("set_union", col_union),
         ("set_intersect", col_intersect),

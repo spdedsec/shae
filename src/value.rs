@@ -7,6 +7,7 @@ use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::RwLock;
@@ -535,6 +536,171 @@ impl PartialEq for Value {
             (Value::GcString(a), Value::GcString(b)) => a == b,
             (Value::GcInstance(a), Value::GcInstance(b)) => a == b,
             _ => false,
+        }
+    }
+}
+
+impl Eq for Value {}
+
+impl Hash for Value {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Value::Null => {
+                0u8.hash(state);
+            }
+            Value::Bool(b) => {
+                1u8.hash(state);
+                b.hash(state);
+            }
+            Value::Int(i) => {
+                let f = *i as f64;
+                if (f as i64) == *i && f.fract() == 0.0 {
+                    2u8.hash(state);
+                    f.to_bits().hash(state);
+                } else {
+                    3u8.hash(state);
+                    i.hash(state);
+                }
+            }
+            Value::Float(f) | Value::Number(f) => {
+                let normalized = if *f == 0.0 { 0.0 } else { *f };
+                if normalized.fract() == 0.0
+                    && normalized >= (i64::MIN as f64)
+                    && normalized <= (i64::MAX as f64)
+                    && (normalized as i64 as f64) == normalized
+                {
+                    2u8.hash(state);
+                    normalized.to_bits().hash(state);
+                } else {
+                    4u8.hash(state);
+                    normalized.to_bits().hash(state);
+                }
+            }
+            Value::String(s) => {
+                5u8.hash(state);
+                s.hash(state);
+            }
+            Value::Array(a) => {
+                6u8.hash(state);
+                if let Ok(guard) = a.read() {
+                    guard.len().hash(state);
+                    for item in guard.iter() {
+                        item.hash(state);
+                    }
+                }
+            }
+            Value::Map(m) => {
+                7u8.hash(state);
+                if let Ok(guard) = m.read() {
+                    guard.len().hash(state);
+                    for (k, v) in guard.iter() {
+                        k.hash(state);
+                        v.hash(state);
+                    }
+                }
+            }
+            Value::CompiledFunction(f) => {
+                8u8.hash(state);
+                f.name.hash(state);
+                f.arity.hash(state);
+            }
+            Value::Closure(c) => {
+                9u8.hash(state);
+                c.function.name.hash(state);
+                c.function.arity.hash(state);
+            }
+            Value::GcArray(r) => {
+                10u8.hash(state);
+                r.hash(state);
+            }
+            Value::GcMap(r) => {
+                11u8.hash(state);
+                r.hash(state);
+            }
+            Value::GcClosure(r) => {
+                12u8.hash(state);
+                r.hash(state);
+            }
+            Value::GcString(r) => {
+                13u8.hash(state);
+                r.hash(state);
+            }
+            Value::GcInstance(r) => {
+                14u8.hash(state);
+                r.hash(state);
+            }
+            Value::Function { name, .. } => {
+                15u8.hash(state);
+                name.hash(state);
+            }
+            Value::Builtin { name, .. } => {
+                16u8.hash(state);
+                name.hash(state);
+            }
+            Value::BoundMethod { object, method } => {
+                17u8.hash(state);
+                object.hash(state);
+                method.hash(state);
+            }
+            Value::StructDef { name, fields } => {
+                18u8.hash(state);
+                name.hash(state);
+                fields.hash(state);
+            }
+            Value::StructInstance { name, fields } => {
+                19u8.hash(state);
+                name.hash(state);
+                if let Ok(guard) = fields.read() {
+                    for (k, v) in guard.iter() {
+                        k.hash(state);
+                        v.hash(state);
+                    }
+                }
+            }
+            Value::EnumDef { name, variants } => {
+                20u8.hash(state);
+                name.hash(state);
+                for (k, v) in variants.iter() {
+                    k.hash(state);
+                    v.hash(state);
+                }
+            }
+            Value::EnumConstructor {
+                enum_name,
+                variant_name,
+                params,
+            } => {
+                21u8.hash(state);
+                enum_name.hash(state);
+                variant_name.hash(state);
+                params.hash(state);
+            }
+            Value::EnumInstance {
+                enum_name,
+                variant_name,
+                values,
+            } => {
+                22u8.hash(state);
+                enum_name.hash(state);
+                variant_name.hash(state);
+                values.hash(state);
+            }
+            Value::Task(t) => {
+                23u8.hash(state);
+                Arc::as_ptr(t).hash(state);
+            }
+            Value::Channel(c) => {
+                24u8.hash(state);
+                Arc::as_ptr(c).hash(state);
+            }
+            Value::FfiLibrary(l) => {
+                25u8.hash(state);
+                l.path.hash(state);
+            }
+            Value::FfiFunction(f) => {
+                26u8.hash(state);
+                f.name.hash(state);
+            }
         }
     }
 }
