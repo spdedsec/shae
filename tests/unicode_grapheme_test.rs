@@ -18,12 +18,13 @@ fn run_shae(code: &str) -> Value {
 #[test]
 fn test_unicode_uax29_graphemes_and_runes() {
     let script = r#"
+let u = use "std:unicode"
 // Family ZWJ sequence (man + ZWJ + woman + ZWJ + girl + ZWJ + boy)
 let family = "👨‍👩‍👧‍👦"
 // Thumbs up + medium skin tone modifier
 let thumbs = "👍🏽"
 // Combining accent: e + combining acute accent
-let e_acute = "e\u{0301}"
+let e_acute = u.from_codepoints([101, 769])
 // Flag sequence: US
 let flag = "🇺🇸"
 
@@ -69,7 +70,7 @@ let text = "Hi 👨‍👩‍👧‍👦, welcome to 🇺🇸! Great 👍🏽 jo
 // Slicing by grapheme indices without splitting emojis
 let part1 = text.slice_graphemes(0, 4)
 let emoji_only = text.slice_graphemes(3, 4)
-let flag_only = text.slice_graphemes(16, 17)
+let flag_only = text.slice_graphemes(17, 18)
 let tail = text.slice_graphemes(-5)
 
 [
