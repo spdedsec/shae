@@ -2575,7 +2575,7 @@ impl Evaluator {
                             )
                             .at(span));
                         }
-                        let items: Vec<Value> = crate::unicode::graphemes(s)
+                        let items: Vec<Value> = crate::unicode::graphemes(&s)
                             .into_iter()
                             .map(|g| Value::String(g.to_string()))
                             .collect();
@@ -2591,7 +2591,7 @@ impl Evaluator {
                             )
                             .at(span));
                         }
-                        Ok(Value::Int(crate::unicode::grapheme_len(s) as i64))
+                        Ok(Value::Int(crate::unicode::grapheme_len(&s) as i64))
                     }
                     (Value::String(s), "byte_len") | (Value::String(s), "byteLen") => {
                         if !args.is_empty() {
@@ -2609,7 +2609,7 @@ impl Evaluator {
                                 RuntimeError::new("runes() expects 0 arguments".into()).at(span)
                             );
                         }
-                        let items: Vec<Value> = crate::unicode::runes(s)
+                        let items: Vec<Value> = crate::unicode::runes(&s)
                             .into_iter()
                             .map(Value::String)
                             .collect();
@@ -2625,7 +2625,7 @@ impl Evaluator {
                             )
                             .at(span));
                         }
-                        let items: Vec<Value> = crate::unicode::codepoints(s)
+                        let items: Vec<Value> = crate::unicode::codepoints(&s)
                             .into_iter()
                             .map(Value::Int)
                             .collect();
@@ -2640,7 +2640,7 @@ impl Evaluator {
                                 RuntimeError::new("is_ascii() expects 0 arguments".into()).at(span)
                             );
                         }
-                        Ok(Value::Bool(crate::unicode::is_ascii(s)))
+                        Ok(Value::Bool(crate::unicode::is_ascii(&s)))
                     }
                     (Value::String(s), "slice_graphemes")
                     | (Value::String(s), "sliceGraphemes") => {
@@ -2676,7 +2676,7 @@ impl Evaluator {
                             None
                         };
                         Ok(Value::String(crate::unicode::slice_graphemes(
-                            s, start, end,
+                            &s, start, end,
                         )))
                     }
                     (Value::Task(t), "join") | (Value::Task(t), "wait") => {
