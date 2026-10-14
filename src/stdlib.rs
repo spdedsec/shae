@@ -485,13 +485,20 @@ fn sys_trigger_signal(
 
     let mut last_res = Value::Bool(true);
     for handler in handlers_to_run {
-        let call_args = match &handler {
-            Value::Function { params, .. } if params.is_empty() => vec![],
-            _ => vec![Value::String(sig_name.clone())],
+        let arity = match &handler {
+            Value::Function { params, .. } => params.len(),
+            Value::Closure(c) => c.function.arity,
+            Value::CompiledFunction(f) => f.arity,
+            _ => 1,
+        };
+        let call_args = if arity == 0 {
+            vec![]
+        } else {
+            vec![Value::String(sig_name.clone())]
         };
         match ev.call_value(&handler, call_args, span) {
             Ok(v) => last_res = v,
-            Err(e) if e.message.contains("expects 0 arguments") => {
+            Err(e) if e.message.to_lowercase().contains("0 arguments") => {
                 last_res = ev.call_value(&handler, vec![], span)?;
             }
             Err(e) => return Err(e),
@@ -546,13 +553,20 @@ fn sys_poll_signals(
 
         for handler in handlers_to_run {
             invoked_count += 1;
-            let call_args = match &handler {
-                Value::Function { params, .. } if params.is_empty() => vec![],
-                _ => vec![Value::String(sig.clone())],
+            let arity = match &handler {
+                Value::Function { params, .. } => params.len(),
+                Value::Closure(c) => c.function.arity,
+                Value::CompiledFunction(f) => f.arity,
+                _ => 1,
+            };
+            let call_args = if arity == 0 {
+                vec![]
+            } else {
+                vec![Value::String(sig.clone())]
             };
             match ev.call_value(&handler, call_args, span) {
                 Ok(_) => {}
-                Err(e) if e.message.contains("expects 0 arguments") => {
+                Err(e) if e.message.to_lowercase().contains("0 arguments") => {
                     let _ = ev.call_value(&handler, vec![], span);
                 }
                 Err(e) => return Err(e),
