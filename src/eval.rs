@@ -2922,7 +2922,7 @@ impl Evaluator {
                         } else {
                             Vec::new()
                         };
-                        let mut set: indexmap::IndexSet<Value> =
+                        let set: indexmap::IndexSet<Value> =
                             items_a.into_iter().chain(items_b.into_iter()).collect();
                         let res: Vec<Value> = set.into_iter().collect();
                         Ok(crate::stdlib::make_set_instance(res))

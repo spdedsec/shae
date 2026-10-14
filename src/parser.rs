@@ -69,10 +69,8 @@ impl Parser {
         }
 
         while !self.is_at_end() {
-            if matches!(
-                self.tokens.get(self.cursor.saturating_sub(1)).map(|t| &t.token),
-                Some(Token::Newline) | Some(Token::Semicolon)
-            ) {
+            let prev = &self.tokens[self.cursor.saturating_sub(1)];
+            if prev.token == Token::Semicolon || self.peek().line > prev.line {
                 return;
             }
 
