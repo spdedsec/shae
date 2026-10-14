@@ -273,7 +273,7 @@ impl<R: Read, W: Write> LspServer<R, W> {
                         }));
                     }
                 }
-            },
+            }
         }
 
         let notif = json!({
@@ -455,66 +455,66 @@ impl<R: Read, W: Write> LspServer<R, W> {
                 if let Ok(tokens) = crate::lexer::tokenize(source) {
                     let (program, _) = crate::parser::parse_with_recovery(tokens);
                     for stmt in &program.statements {
-                            match &stmt.kind {
-                                crate::ast::StmtKind::FnDef {
-                                    name,
-                                    params,
-                                    return_type,
-                                    ..
-                                } => {
-                                    let p_str = params
-                                        .iter()
-                                        .map(|p| {
-                                            if let Some(ann) = &p.type_ann {
-                                                format!("{}: {}", p.name, ann)
-                                            } else {
-                                                p.name.clone()
-                                            }
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join(", ");
-                                    let ret_str = if let Some(ret) = return_type {
-                                        format!(" -> {}", ret)
-                                    } else {
-                                        String::new()
-                                    };
-                                    items.push(json!({
-                                        "label": name,
-                                        "kind": 3, // Function
-                                        "detail": format!("fn {}({}){}", name, p_str, ret_str)
-                                    }));
-                                }
-                                crate::ast::StmtKind::StructDef { name, fields } => {
-                                    let f_str = fields
-                                        .iter()
-                                        .map(|f| {
-                                            if let Some(ann) = &f.type_ann {
-                                                format!("{}: {}", f.name, ann)
-                                            } else {
-                                                f.name.clone()
-                                            }
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join(", ");
-                                    items.push(json!({
-                                        "label": name,
-                                        "kind": 22, // Struct
-                                        "detail": format!("struct {} {{ {} }}", name, f_str)
-                                    }));
-                                }
-                                crate::ast::StmtKind::EnumDef { name, .. } => {
-                                    items.push(json!({
-                                        "label": name,
-                                        "kind": 13, // Enum
-                                        "detail": format!("enum {}", name)
-                                    }));
-                                }
-                                _ => {}
+                        match &stmt.kind {
+                            crate::ast::StmtKind::FnDef {
+                                name,
+                                params,
+                                return_type,
+                                ..
+                            } => {
+                                let p_str = params
+                                    .iter()
+                                    .map(|p| {
+                                        if let Some(ann) = &p.type_ann {
+                                            format!("{}: {}", p.name, ann)
+                                        } else {
+                                            p.name.clone()
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                let ret_str = if let Some(ret) = return_type {
+                                    format!(" -> {}", ret)
+                                } else {
+                                    String::new()
+                                };
+                                items.push(json!({
+                                    "label": name,
+                                    "kind": 3, // Function
+                                    "detail": format!("fn {}({}){}", name, p_str, ret_str)
+                                }));
                             }
+                            crate::ast::StmtKind::StructDef { name, fields } => {
+                                let f_str = fields
+                                    .iter()
+                                    .map(|f| {
+                                        if let Some(ann) = &f.type_ann {
+                                            format!("{}: {}", f.name, ann)
+                                        } else {
+                                            f.name.clone()
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                items.push(json!({
+                                    "label": name,
+                                    "kind": 22, // Struct
+                                    "detail": format!("struct {} {{ {} }}", name, f_str)
+                                }));
+                            }
+                            crate::ast::StmtKind::EnumDef { name, .. } => {
+                                items.push(json!({
+                                    "label": name,
+                                    "kind": 13, // Enum
+                                    "detail": format!("enum {}", name)
+                                }));
+                            }
+                            _ => {}
                         }
                     }
                 }
             }
+        }
 
         items
     }
