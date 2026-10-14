@@ -182,7 +182,11 @@ fn test_lsp_completion_and_hover_and_formatting() {
     let labels: Vec<&str> = items.iter().filter_map(|i| i["label"].as_str()).collect();
     assert!(labels.contains(&"fn"));
     assert!(labels.contains(&"serve"));
+    assert!(labels.contains(&"jit"));
     assert!(labels.contains(&"std:crypto"));
+    assert!(labels.contains(&"std:sqlite"));
+    assert!(labels.contains(&"std:csv"));
+    assert!(labels.contains(&"std:http"));
     assert!(labels.contains(&"compute")); // in-document symbol
 
     // 2. Hover

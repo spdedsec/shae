@@ -2,7 +2,7 @@
   "name": "shae-vscode",
   "displayName": "Shae",
   "description": "Official VS Code extension for the Shae programming language, featuring syntax highlighting and language server protocol (LSP) support.",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "publisher": "spdedsec",
   "author": {
     "name": "Satya Prakash",

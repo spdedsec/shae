@@ -369,6 +369,11 @@ impl<R: Read, W: Write> LspServer<R, W> {
                 "assert_eq(actual, expected) - Assert equality",
                 3,
             ),
+            (
+                "jit",
+                "jit(action, [target]) - JIT compilation control (status, enable, disable, compile)",
+                3,
+            ),
         ];
         for (name, detail, kind) in builtins {
             items.push(json!({
@@ -401,6 +406,34 @@ impl<R: Read, W: Write> LspServer<R, W> {
             (
                 "std:regex",
                 "Regular expressions (is_match, find, find_all, replace, split)",
+            ),
+            (
+                "std:http",
+                "HTTP client & requests (get, post, put, delete, request, url_encode)",
+            ),
+            (
+                "std:env",
+                "Environment variables & .env loading (get, set, has, remove, all, load_dotenv)",
+            ),
+            (
+                "std:cli",
+                "CLI argument parsing and terminal styling (args, style)",
+            ),
+            (
+                "std:collections",
+                "High-performance data structures and sets (Set, new, add, remove, contains)",
+            ),
+            (
+                "std:ffi",
+                "Foreign Function Interface for dynamic native C libraries (.so, .dylib, .dll)",
+            ),
+            (
+                "std:csv",
+                "RFC 4180 CSV parser and serializer (parse, stringify)",
+            ),
+            (
+                "std:sqlite",
+                "Embedded SQLite database engine (open, execute, query, close)",
             ),
         ];
         for (mod_name, doc) in std_modules {
@@ -517,7 +550,21 @@ impl<R: Read, W: Write> LspServer<R, W> {
             "route_match" => {
                 "**route_match(pattern, path)**\n\nMatches parameterized route patterns (e.g. `\"/users/:id\"`) and returns captured parameters."
             }
-            "std:fs" => "**std:fs**\n\nStandard library module for file system operations.",
+            "jit" => {
+                "**jit(action, [target])**\n\nControls Cranelift JIT compilation (`\"status\"`, `\"enable\"`, `\"disable\"`, `\"compile\"`). Hot functions automatically compile to native x86_64/arm64 machine code."
+            }
+            "std:fs" => {
+                "**std:fs**\n\nStandard library module for file system operations (read, write, append, mkdir, exists, readDir)."
+            }
+            "std:path" => {
+                "**std:path**\n\nFile path manipulation (join, dirname, basename, extname, isAbsolute)."
+            }
+            "std:sys" => {
+                "**std:sys**\n\nSystem utilities: platform, arch, cwd, exit, and system metadata."
+            }
+            "std:time" => {
+                "**std:time**\n\nDate, time, monotonic clocks, and thread sleeping utilities (now, nowMs, sleep)."
+            }
             "std:crypto" => {
                 "**std:crypto**\n\nCryptographic functions: SHA-256, SHA-512, HMAC, secure random bytes, and UUID v4."
             }
@@ -526,6 +573,27 @@ impl<R: Read, W: Write> LspServer<R, W> {
             }
             "std:codec" => {
                 "**std:codec**\n\nEncoding/decoding codecs: Base64, URL percent-encoding, and Hex."
+            }
+            "std:http" => {
+                "**std:http**\n\nHTTP client module supporting GET, POST, PUT, DELETE, query parameter encoding, and automatic JSON serialization."
+            }
+            "std:env" => {
+                "**std:env**\n\nEnvironment variable management (get, set, has, remove, all) and .env file loading."
+            }
+            "std:cli" => {
+                "**std:cli**\n\nCommand-line arguments and terminal ANSI styling utilities (args, style)."
+            }
+            "std:collections" => {
+                "**std:collections**\n\nHigh-performance data structures including HashSets and collections."
+            }
+            "std:ffi" => {
+                "**std:ffi**\n\nForeign Function Interface (FFI) to link and call C functions dynamically from shared libraries (.so, .dylib, .dll)."
+            }
+            "std:csv" => {
+                "**std:csv**\n\nRFC 4180 compliant CSV parsing and serialization module (parse, stringify)."
+            }
+            "std:sqlite" => {
+                "**std:sqlite**\n\nSQLite database bindings for fast, embedded relational storage and querying (open, execute, query, close)."
             }
             "fn" => "**fn keyword**\n\nDeclares a named function or lambda.",
             "let" => "**let keyword**\n\nBinds variables with optional destructuring.",

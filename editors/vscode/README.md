@@ -7,8 +7,8 @@ Official Visual Studio Code extension for the **Shae** programming language (`.s
 - 🎨 **Syntax Highlighting**: Full TextMate grammar supporting keywords, raw strings (`r"..."`), radix literals (`0x`, `0b`, `0o`), pattern matching, control flow, and operators.
 - ⚡ **Language Server Protocol (LSP)**: Powered directly by the built-in `shae lsp` daemon.
   - **Live Diagnostics**: Real-time syntax errors and static analysis linter warnings (unused variables, unreachable code, variable shadowing).
-  - **IntelliSense & Autocompletion**: Auto-complete keywords, standard library modules (`std:crypto`, `std:regex`, `std:codec`, `std:fs`, etc.), builtins, and in-file symbols.
-  - **Hover Documentation**: Detailed documentation for keywords and built-in functions.
+  - **IntelliSense & Autocompletion**: Auto-complete keywords, standard library modules (`std:sqlite`, `std:csv`, `std:http`, `std:crypto`, `std:regex`, `std:codec`, `std:fs`, `std:ffi`, `std:env`, `std:cli`, `std:collections`), builtins (including `jit`), and in-file symbols.
+  - **Hover Documentation**: Detailed documentation for keywords, builtins, and standard library modules.
   - **Document Formatting**: Canonical AST formatting integrated with `shae fmt`.
 - 🚀 **Run Active File**: Command to execute the current `.shae` file in the integrated terminal.
 

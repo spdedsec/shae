@@ -1,0 +1,36 @@
+// Shae std:csv Showcase
+// RFC 4180 compliant tabular data parser and serializer
+
+let csv = use "std:csv"
+
+print("--- Shae CSV Demo ---")
+
+// 1. Raw CSV input string with escaped quotes, commas, and newlines
+let raw_csv = "id,name,role,notes\n1,\"Doe, Jane\",\"Engineering Lead\",\"Specialist in \"\"systems\"\" & JIT\"\n2,John Smith,Designer,\"Designs UI/UX\"\n3,Alice,DevOps,\"Kubernetes, CI/CD\""
+
+print("Raw CSV Input:")
+print(raw_csv)
+print("-----------------------")
+
+// 2. Parse CSV string into 2D table
+let table = csv.parse(raw_csv)
+print("Parsed Table rows:", len(table))
+
+let headers = table[0]
+print("Headers:", headers)
+
+let i = 1
+while i < len(table) {
+    let row = table[i]
+    print("Record", i, "-> ID:", row[0], "| Name:", row[1], "| Role:", row[2], "| Notes:", row[3])
+    i += 1
+}
+
+// 3. Modify table and serialize back to RFC 4180 CSV
+let new_row = ["4", "Bob Dylan", "Security Researcher", "Audits crypto & memory safety"]
+table.push(new_row)
+
+let stringified = csv.stringify(table)
+print("-----------------------")
+print("Serialized Output CSV:")
+print(stringified)

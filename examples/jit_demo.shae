@@ -1,0 +1,50 @@
+// Shae Cranelift JIT SSA Showcase
+// Machine-code compilation for mathematical routines, recursion, and fast array indexing
+
+print("--- Shae Cranelift JIT Demo ---")
+
+// 1. Inspect JIT Engine Status
+let status = jit("status")
+print("Shae JIT Compiler Status:", status)
+
+// 2. Recursive Fibonacci
+fn fib(n) {
+    if n <= 1 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+// Explicitly compile fib to native machine code ahead-of-time
+let compiled = jit("compile", fib)
+print("Explicit JIT compilation for fib():", compiled)
+
+print("Computing fib(28) natively...")
+let result = fib(28)
+print("fib(28) =", result)
+
+// 3. Native Float Math (f64 SSA CodeGen)
+fn calculate_hypot(a, b) {
+    let sum_sq = a * a + b * b
+    return sum_sq
+}
+
+jit("compile", calculate_hypot)
+let dist_sq = calculate_hypot(12.5, 30.0)
+print("calculate_hypot(12.5, 30.0) =", dist_sq)
+
+// 4. Native Array Fast-Path Indexing
+fn sum_array(arr, count) {
+    let sum = 0
+    let i = 0
+    while i < count {
+        sum = sum + arr[i]
+        i = i + 1
+    }
+    return sum
+}
+
+jit("compile", sum_array)
+let numbers = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+let total = sum_array(numbers, 10)
+print("sum_array([10..100]) natively =", total)

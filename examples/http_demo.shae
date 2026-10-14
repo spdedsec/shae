@@ -1,0 +1,38 @@
+// Shae std:http Showcase
+// High-level HTTP client with query parameter encoding and automatic JSON body handling
+
+let http = use "std:http"
+
+print("--- Shae HTTP Client Demo ---")
+
+// 1. HTTP GET with query parameters
+print("Sending GET request...")
+let get_res = http.get("https://httpbin.org/get", {
+    query: {
+        "lang": "shae",
+        "version": "0.3.0"
+    },
+    timeout_ms: 10000
+})
+
+print("Status Code:", get_res.status)
+print("Is Success :", get_res.ok)
+if get_res.ok and get_res.json != null {
+    print("Parsed JSON args:", get_res.json["args"])
+}
+
+// 2. HTTP POST with automatic JSON serialization
+print("-----------------------")
+print("Sending POST request with JSON payload...")
+let post_res = http.post_json("https://httpbin.org/post", {
+    title: "Shae 0.3.0 Released",
+    features: ["Cranelift JIT SSA", "std:sqlite", "std:csv", "std:http"],
+    ready: true
+}, {
+    timeout_ms: 10000
+})
+
+print("POST Status Code:", post_res.status)
+if post_res.ok and post_res.json != null {
+    print("Echoed JSON Data:", post_res.json["json"])
+}

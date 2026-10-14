@@ -1,0 +1,45 @@
+// Shae std:sqlite Showcase
+// Embedded, dynamic SQLite3 database driver with parameter binding
+
+let sqlite = use "std:sqlite"
+
+print("--- Shae SQLite Demo ---")
+
+// Open an in-memory database or a file on disk
+let db = sqlite.open(":memory:")
+print("Database connection opened successfully.")
+
+// 1. Create table
+sqlite.execute(db, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, score REAL)")
+print("Created 'users' table.")
+
+// 2. Insert records with prepared parameter binding
+let users_to_add = [
+    ["Alice Smith", "alice@example.com", 98.5],
+    ["Bob Jones", "bob@example.com", 84.0],
+    ["Charlie Brown", "charlie@example.com", 91.2]
+]
+
+for u in users_to_add {
+    sqlite.execute(db, "INSERT INTO users (name, email, score) VALUES (?, ?, ?)", u)
+}
+print("Inserted 3 user records.")
+
+// 3. Query records back
+let rows = sqlite.query(db, "SELECT id, name, email, score FROM users WHERE score > ? ORDER BY score DESC", [85.0])
+print("Users with score > 85.0:")
+for row in rows {
+    print("  ID:", row["id"], "| Name:", row["name"], "| Score:", row["score"])
+}
+
+// 4. Update a record
+sqlite.execute(db, "UPDATE users SET score = ? WHERE name = ?", [99.9, "Alice Smith"])
+
+// 5. Query aggregate metrics
+let stats = sqlite.query(db, "SELECT count(*) as total, avg(score) as average, max(score) as top_score FROM users")
+let first = stats[0]
+print("Aggregates -> Total:", first["total"], "| Avg Score:", first["average"], "| Top Score:", first["top_score"])
+
+// 6. Close database handle
+sqlite.close(db)
+print("Database connection closed cleanly.")
