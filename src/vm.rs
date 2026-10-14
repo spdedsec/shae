@@ -1428,6 +1428,17 @@ impl VM {
                                     | "slice"
                                     | "chars"
                                     | "lines"
+                                    | "graphemes"
+                                    | "grapheme_len"
+                                    | "graphemeLen"
+                                    | "byte_len"
+                                    | "byteLen"
+                                    | "runes"
+                                    | "codepoints"
+                                    | "is_ascii"
+                                    | "isAscii"
+                                    | "slice_graphemes"
+                                    | "sliceGraphemes"
                             ) {
                                 self.stack.push(Value::BoundMethod {
                                     object: Box::new(target.clone()),

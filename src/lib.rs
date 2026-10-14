@@ -27,6 +27,7 @@ pub mod stdlib;
 pub mod suggest;
 pub mod token;
 pub mod typecheck;
+pub mod unicode;
 pub mod value;
 pub mod vm;
 

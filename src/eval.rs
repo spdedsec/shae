@@ -1453,19 +1453,32 @@ impl Evaluator {
                     Value::String(s) => {
                         if property == "len" {
                             Ok(Some(Value::Int(s.chars().count() as i64)))
-                        } else if property == "trim"
-                            || property == "upper"
-                            || property == "lower"
-                            || property == "split"
-                            || property == "replace"
-                            || property == "starts_with"
-                            || property == "ends_with"
-                            || property == "contains"
-                            || property == "pad_start"
-                            || property == "lines"
-                            || property == "chars"
-                            || property == "slice"
-                        {
+                        } else if matches!(
+                            property.as_str(),
+                            "trim"
+                                | "upper"
+                                | "lower"
+                                | "split"
+                                | "replace"
+                                | "starts_with"
+                                | "ends_with"
+                                | "contains"
+                                | "pad_start"
+                                | "lines"
+                                | "chars"
+                                | "slice"
+                                | "graphemes"
+                                | "grapheme_len"
+                                | "graphemeLen"
+                                | "byte_len"
+                                | "byteLen"
+                                | "runes"
+                                | "codepoints"
+                                | "is_ascii"
+                                | "isAscii"
+                                | "slice_graphemes"
+                                | "sliceGraphemes"
+                        ) {
                             Ok(Some(Value::BoundMethod {
                                 object: Box::new(Value::String(s.clone())),
                                 method: property.clone(),
@@ -2553,6 +2566,118 @@ impl Evaluator {
                             String::new()
                         };
                         Ok(Value::String(sliced))
+                    }
+                    (Value::String(s), "graphemes") => {
+                        if !args.is_empty() {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new(
+                                "graphemes() expects 0 arguments".into(),
+                            )
+                            .at(span));
+                        }
+                        let items: Vec<Value> = crate::unicode::graphemes(s)
+                            .into_iter()
+                            .map(|g| Value::String(g.to_string()))
+                            .collect();
+                        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
+                            items,
+                        ))))
+                    }
+                    (Value::String(s), "grapheme_len") | (Value::String(s), "graphemeLen") => {
+                        if !args.is_empty() {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new(
+                                "grapheme_len() expects 0 arguments".into(),
+                            )
+                            .at(span));
+                        }
+                        Ok(Value::Int(crate::unicode::grapheme_len(s) as i64))
+                    }
+                    (Value::String(s), "byte_len") | (Value::String(s), "byteLen") => {
+                        if !args.is_empty() {
+                            self.depth -= 1;
+                            return Err(
+                                RuntimeError::new("byte_len() expects 0 arguments".into()).at(span)
+                            );
+                        }
+                        Ok(Value::Int(s.len() as i64))
+                    }
+                    (Value::String(s), "runes") => {
+                        if !args.is_empty() {
+                            self.depth -= 1;
+                            return Err(
+                                RuntimeError::new("runes() expects 0 arguments".into()).at(span)
+                            );
+                        }
+                        let items: Vec<Value> = crate::unicode::runes(s)
+                            .into_iter()
+                            .map(Value::String)
+                            .collect();
+                        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
+                            items,
+                        ))))
+                    }
+                    (Value::String(s), "codepoints") => {
+                        if !args.is_empty() {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new(
+                                "codepoints() expects 0 arguments".into(),
+                            )
+                            .at(span));
+                        }
+                        let items: Vec<Value> = crate::unicode::codepoints(s)
+                            .into_iter()
+                            .map(Value::Int)
+                            .collect();
+                        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
+                            items,
+                        ))))
+                    }
+                    (Value::String(s), "is_ascii") | (Value::String(s), "isAscii") => {
+                        if !args.is_empty() {
+                            self.depth -= 1;
+                            return Err(
+                                RuntimeError::new("is_ascii() expects 0 arguments".into()).at(span)
+                            );
+                        }
+                        Ok(Value::Bool(crate::unicode::is_ascii(s)))
+                    }
+                    (Value::String(s), "slice_graphemes")
+                    | (Value::String(s), "sliceGraphemes") => {
+                        if args.is_empty() || args.len() > 2 {
+                            self.depth -= 1;
+                            return Err(RuntimeError::new(
+                                "slice_graphemes() expects 1 or 2 arguments (start, [end])".into(),
+                            )
+                            .at(span));
+                        }
+                        let start = match to_i64_val(&args[0]) {
+                            Some(n) => n,
+                            None => {
+                                self.depth -= 1;
+                                return Err(RuntimeError::new(
+                                    "slice_graphemes() start index must be an integer".into(),
+                                )
+                                .at(span));
+                            }
+                        };
+                        let end = if args.len() >= 2 {
+                            match to_i64_val(&args[1]) {
+                                Some(n) => Some(n),
+                                None => {
+                                    self.depth -= 1;
+                                    return Err(RuntimeError::new(
+                                        "slice_graphemes() end index must be an integer".into(),
+                                    )
+                                    .at(span));
+                                }
+                            }
+                        } else {
+                            None
+                        };
+                        Ok(Value::String(crate::unicode::slice_graphemes(
+                            s, start, end,
+                        )))
                     }
                     (Value::Task(t), "join") | (Value::Task(t), "wait") => {
                         let mut guard = t.lock().unwrap();

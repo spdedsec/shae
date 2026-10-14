@@ -31,6 +31,7 @@ cranelift-frontend = "0.136.2"
 cranelift-module = "0.136.2"
 cranelift-native = "0.136.2"
 cranelift-jit = "0.136.2"
+unicode-segmentation = "1.12"
 
 [dev-dependencies]
 rcgen = "0.13"

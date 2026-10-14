@@ -32,8 +32,9 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "ffi" => Ok(build_ffi_module()),
         "csv" => Ok(build_csv_module()),
         "sqlite" | "sql" => Ok(build_sqlite_module()),
+        "unicode" => Ok(build_unicode_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode",
             clean_name
         ))
         .at(span)),
@@ -2409,4 +2410,286 @@ fn sqlite_close(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
     crate::sqlite::sqlite_close(handle)
         .map_err(|e| RuntimeError::new(format!("sqlite.close error: {}", e)).at(span))?;
     Ok(Value::Null)
+}
+
+// -------------------------------------------------------------
+// std:unicode
+// -------------------------------------------------------------
+fn build_unicode_module() -> Value {
+    make_map(vec![
+        ("graphemes", unicode_graphemes),
+        ("grapheme_len", unicode_grapheme_len),
+        ("graphemeLen", unicode_grapheme_len),
+        ("byte_len", unicode_byte_len),
+        ("byteLen", unicode_byte_len),
+        ("slice", unicode_slice_graphemes),
+        ("slice_graphemes", unicode_slice_graphemes),
+        ("sliceGraphemes", unicode_slice_graphemes),
+        ("runes", unicode_runes),
+        ("codepoints", unicode_codepoints),
+        ("from_codepoints", unicode_from_codepoints),
+        ("fromCodepoints", unicode_from_codepoints),
+        ("is_ascii", unicode_is_ascii),
+        ("isAscii", unicode_is_ascii),
+        ("category", unicode_category),
+    ])
+}
+
+fn unicode_graphemes(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("unicode.graphemes", 1, &args, span)?;
+    let s = match &args[0] {
+        Value::String(s) => s.as_str(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "unicode.graphemes expects string, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    let items: Vec<Value> = crate::unicode::graphemes(s)
+        .into_iter()
+        .map(|g| Value::String(g.to_string()))
+        .collect();
+    Ok(Value::Array(Arc::new(RwLock::new(items))))
+}
+
+fn unicode_grapheme_len(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("unicode.grapheme_len", 1, &args, span)?;
+    let s = match &args[0] {
+        Value::String(s) => s.as_str(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "unicode.grapheme_len expects string, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    Ok(Value::Int(crate::unicode::grapheme_len(s) as i64))
+}
+
+fn unicode_byte_len(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("unicode.byte_len", 1, &args, span)?;
+    let s = match &args[0] {
+        Value::String(s) => s.as_str(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "unicode.byte_len expects string, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    Ok(Value::Int(s.len() as i64))
+}
+
+fn unicode_slice_graphemes(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.len() < 2 || args.len() > 3 {
+        return Err(
+            RuntimeError::new("unicode.slice expects (string, start, [end])".into()).at(span),
+        );
+    }
+    let s = match &args[0] {
+        Value::String(s) => s.as_str(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "unicode.slice expects string target, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    let start = match &args[1] {
+        Value::Int(n) => *n,
+        Value::Float(f) | Value::Number(f) => *f as i64,
+        other => {
+            return Err(RuntimeError::new(format!(
+                "unicode.slice expects integer start, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    let end = if args.len() == 3 {
+        match &args[2] {
+            Value::Int(n) => Some(*n),
+            Value::Float(f) | Value::Number(f) => Some(*f as i64),
+            Value::Null => None,
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "unicode.slice expects integer end, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        }
+    } else {
+        None
+    };
+    Ok(Value::String(crate::unicode::slice_graphemes(
+        s, start, end,
+    )))
+}
+
+fn unicode_runes(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("unicode.runes", 1, &args, span)?;
+    let s = match &args[0] {
+        Value::String(s) => s.as_str(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "unicode.runes expects string, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    let items: Vec<Value> = crate::unicode::runes(s)
+        .into_iter()
+        .map(Value::String)
+        .collect();
+    Ok(Value::Array(Arc::new(RwLock::new(items))))
+}
+
+fn unicode_codepoints(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("unicode.codepoints", 1, &args, span)?;
+    let s = match &args[0] {
+        Value::String(s) => s.as_str(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "unicode.codepoints expects string, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    let items: Vec<Value> = crate::unicode::codepoints(s)
+        .into_iter()
+        .map(Value::Int)
+        .collect();
+    Ok(Value::Array(Arc::new(RwLock::new(items))))
+}
+
+fn unicode_from_codepoints(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("unicode.from_codepoints", 1, &args, span)?;
+    let cps = match &args[0] {
+        Value::Array(arr) => {
+            let guard = arr.read().unwrap();
+            let mut list = Vec::with_capacity(guard.len());
+            for v in guard.iter() {
+                match v {
+                    Value::Int(n) => list.push(*n),
+                    Value::Float(f) | Value::Number(f) => list.push(*f as i64),
+                    other => {
+                        return Err(RuntimeError::new(format!(
+                            "unicode.from_codepoints array must contain integers, got {}",
+                            other.type_name()
+                        ))
+                        .at(span));
+                    }
+                }
+            }
+            list
+        }
+        other => {
+            return Err(RuntimeError::new(format!(
+                "unicode.from_codepoints expects array of codepoints, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    crate::unicode::from_codepoints(&cps)
+        .map(Value::String)
+        .map_err(|e| RuntimeError::new(e).at(span))
+}
+
+fn unicode_is_ascii(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("unicode.is_ascii", 1, &args, span)?;
+    let s = match &args[0] {
+        Value::String(s) => s.as_str(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "unicode.is_ascii expects string, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    Ok(Value::Bool(crate::unicode::is_ascii(s)))
+}
+
+fn unicode_category(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("unicode.category", 1, &args, span)?;
+    let ch = match &args[0] {
+        Value::String(s) => {
+            if let Some(c) = s.chars().next() {
+                c
+            } else {
+                return Err(
+                    RuntimeError::new("unicode.category expects non-empty string".into()).at(span),
+                );
+            }
+        }
+        Value::Int(n) => {
+            if *n >= 0 && *n <= 0x10FFFF {
+                match char::from_u32(*n as u32) {
+                    Some(c) => c,
+                    None => {
+                        return Err(RuntimeError::new(format!(
+                            "Invalid Unicode codepoint {:#x}",
+                            n
+                        ))
+                        .at(span));
+                    }
+                }
+            } else {
+                return Err(
+                    RuntimeError::new(format!("Unicode codepoint {:#x} out of range", n)).at(span),
+                );
+            }
+        }
+        other => {
+            return Err(RuntimeError::new(format!(
+                "unicode.category expects character string or integer codepoint, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    Ok(Value::String(
+        crate::unicode::unicode_category(ch).to_string(),
+    ))
 }
