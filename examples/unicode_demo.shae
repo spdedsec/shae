@@ -1,0 +1,46 @@
+// Shae Unicode & UAX #29 Grapheme Demo
+// Demonstrates extended grapheme clustering, rune slicing, codepoint conversion, and std:unicode.
+
+let unicode = use "std:unicode"
+
+println("=== Shae Unicode & UAX #29 Grapheme Demo ===")
+
+// 1. Multi-codepoint Emojis & Combining Characters
+let family = "👨‍👩‍👧‍👦"
+let flag = "🇺🇸"
+let greeting = "Hello 🦀 World!"
+let text_with_accents = "Café résumé"
+
+println("\n--- Cluster Inspection ---")
+println("Family emoji: " + family)
+println("  - Grapheme cluster length: " + str(family.grapheme_len()))
+println("  - UTF-8 byte length:       " + str(family.byte_len()))
+println("  - Unicode codepoints:      " + str(len(family.codepoints())))
+
+println("\nFlag emoji: " + flag)
+println("  - Grapheme cluster length: " + str(flag.grapheme_len()))
+println("  - UTF-8 byte length:       " + str(flag.byte_len()))
+
+// 2. Safe Slicing by Graphemes (Never splits multi-byte UTF-8 or emoji clusters)
+println("\n--- Grapheme Slicing ---")
+let sentence = "Hi 👨‍👩‍👧‍👦, welcome to 🇺🇸! Great 👍🏽 job!"
+println("Full sentence: " + sentence)
+println("Slice [0..4]:  '" + sentence.slice_graphemes(0, 4) + "'")
+println("Slice [17..18] (Flag): '" + sentence.slice_graphemes(17, 18) + "'")
+println("Tail [-5..end]:        '" + sentence.slice_graphemes(-5) + "'")
+
+// 3. Codepoint Reconstruction
+println("\n--- Codepoint Reconstruction ---")
+let cps = greeting.codepoints()
+println("Greeting codepoints count: " + str(len(cps)))
+let reconstructed = unicode.from_codepoints(cps)
+println("Reconstructed: " + reconstructed)
+
+// 4. Character Categories
+println("\n--- Unicode General Categories ---")
+println("Category of 'A': " + unicode.category("A"))
+println("Category of '9': " + unicode.category("9"))
+println("Category of '!': " + unicode.category("!"))
+println("Category of '🦀': " + unicode.category("🦀"))
+println("Is 'hello' ASCII? " + str(unicode.is_ascii("hello")))
+println("Is 'hello🦀' ASCII? " + str(unicode.is_ascii("hello🦀")))

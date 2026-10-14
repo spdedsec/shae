@@ -1,0 +1,51 @@
+// Shae OS Signals & Graceful Teardown Demo
+// Demonstrates cross-platform signal trapping, normalized handlers, and graceful server draining.
+
+let sys = use "std:sys"
+
+println("=== Shae OS Signals & Graceful Teardown Demo ===")
+
+// Clear existing handlers
+sys.clear_signals()
+
+// Display supported signals
+let available = sys.signals()
+println("Supported OS Signals: " + str(available))
+
+// Mock application state
+let app = {
+    "name": "ShaeProductionWorker",
+    "running": true,
+    "active_jobs": 3,
+    "cleaned_up": false
+}
+
+// 1. Register signal handler for SIGINT (Ctrl-C)
+sys.on_signal("SIGINT", fn(sig) {
+    println("\n[!] Received interrupt signal: " + sig)
+    println("[*] Stopping worker loop...")
+    app.running = false
+})
+
+// 2. Register signal handler for SIGTERM (kill / orchestrator termination)
+sys.on_signal("SIGTERM", fn(sig) {
+    println("\n[!] Received termination signal: " + sig)
+    println("[*] Draining active jobs (" + str(app.active_jobs) + " remaining)...")
+    app.active_jobs = 0
+    app.cleaned_up = true
+    println("[✓] All active jobs drained successfully.")
+})
+
+// 3. Programmatic trigger demonstration
+println("\n--- Programmatic Signal Trigger Simulation ---")
+println("Initial state: running=" + str(app.running) + ", active_jobs=" + str(app.active_jobs))
+
+println("Simulating incoming 'SIGINT'...")
+sys.trigger_signal("int")
+println("State after SIGINT: running=" + str(app.running))
+
+println("Simulating incoming 'SIGTERM'...")
+sys.trigger_signal("term")
+println("State after SIGTERM: active_jobs=" + str(app.active_jobs) + ", cleaned_up=" + str(app.cleaned_up))
+
+println("\n[✓] Graceful shutdown lifecycle completed safely.")

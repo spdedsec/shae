@@ -1,6 +1,9 @@
 use shae::parse_source;
 use shae::value::Value;
 use shae::vm::{InterpretResult, VM};
+use std::sync::Mutex;
+
+static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 fn run_shae(code: &str) -> Value {
     let program = parse_source(code).expect("Parse error in test script");
@@ -17,6 +20,7 @@ fn run_shae(code: &str) -> Value {
 
 #[test]
 fn test_sys_signals_list() {
+    let _lock = TEST_MUTEX.lock().unwrap();
     let script = r#"
 let sys = use "std:sys"
 let sigs = sys.signals()
@@ -41,6 +45,7 @@ let sigs = sys.signals()
 
 #[test]
 fn test_sys_signal_registration_and_trigger() {
+    let _lock = TEST_MUTEX.lock().unwrap();
     let script = r#"
 let sys = use "std:sys"
 sys.clear_signals()
@@ -84,6 +89,7 @@ let term_res = sys.trigger_signal("SIGTERM")
 
 #[test]
 fn test_sys_signal_clear() {
+    let _lock = TEST_MUTEX.lock().unwrap();
     let script = r#"
 let sys = use "std:sys"
 sys.clear_signals()
@@ -125,6 +131,7 @@ sys.trigger_signal("SIGTERM")
 
 #[test]
 fn test_sys_graceful_shutdown_pattern() {
+    let _lock = TEST_MUTEX.lock().unwrap();
     let script = r#"
 let sys = use "std:sys"
 sys.clear_signals()

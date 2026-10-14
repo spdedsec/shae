@@ -1,0 +1,40 @@
+// Shae Collections & Hash-DoS Resilient Set Demo
+// Demonstrates SipHash-2-4 backed Set collection, O(N) operations, and set mathematics.
+
+let collections = use "std:collections"
+
+println("=== Shae Collections & Set Demo ===")
+
+// 1. Initialize Set from array with automatic deduplication
+let fruits = collections.Set(["apple", "banana", "orange", "apple", "banana", "grape"])
+println("Fruits Set size (after dedup): " + str(fruits.size()))
+println("Fruits array: " + str(fruits.to_array()))
+
+// 2. Element Membership and Insertion
+println("Has 'banana'? " + str(fruits.has("banana")))
+println("Has 'mango'?  " + str(fruits.has("mango")))
+
+fruits.add("mango")
+println("Added 'mango'. New size: " + str(fruits.size()))
+
+fruits.delete("banana")
+println("Deleted 'banana'. Has 'banana'? " + str(fruits.has("banana")))
+
+// 3. Set Algebraic Operations
+let set_a = collections.Set([1, 2, 3, 4, 5])
+let set_b = collections.Set([4, 5, 6, 7, 8])
+
+let union_set = set_a.union(set_b)
+println("\nSet A: " + str(set_a.to_array()))
+println("Set B: " + str(set_b.to_array()))
+println("A ∪ B (Union):        " + str(union_set.to_array()))
+
+let intersect_set = set_a.intersect(set_b)
+println("A ∩ B (Intersection): " + str(intersect_set.to_array()))
+
+let diff_set = set_a.difference(set_b)
+println("A \\ B (Difference):   " + str(diff_set.to_array()))
+
+// 4. Standalone Module Utilities
+let deduped = collections.dedup(["x", "y", "x", "z", "y", "w"])
+println("\nStandalone collections.dedup: " + str(deduped))
