@@ -13,7 +13,7 @@ print(raw_csv)
 print("-----------------------")
 
 // 2. Parse CSV string into 2D table
-let table = csv.parse(raw_csv)
+let table = csv.parse(raw_csv, { headers: false })
 print("Parsed Table rows:", len(table))
 
 let headers = table[0]

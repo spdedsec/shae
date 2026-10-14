@@ -36,5 +36,5 @@ let diff_set = set_a.difference(set_b)
 println("A \\ B (Difference):   " + str(diff_set.to_array()))
 
 // 4. Standalone Module Utilities
-let deduped = collections.dedup(["x", "y", "x", "z", "y", "w"])
-println("\nStandalone collections.dedup: " + str(deduped))
+let deduped = collections.unique(["x", "y", "x", "z", "y", "w"])
+println("\nStandalone collections.unique: " + str(deduped))

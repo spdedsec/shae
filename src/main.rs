@@ -43,6 +43,7 @@ fn show_help() {
     println!("  shae dap                   Start Debug Adapter Protocol (DAP) server");
     println!("  shae debug <file.shae>     Start interactive step debugger");
     println!("  shae profile <file.shae>   Profile CPU execution time and opcodes (--folded)");
+    println!("  shae serve [dir]           Start instant static HTTP dev server (--port, --host)");
     println!("  shae --joke                Print a programming joke");
     println!("  shae --tip                 Print a Shae tip");
     println!("  shae --version, -V         Show version information");
@@ -508,6 +509,9 @@ fn main() {
         "repl" => {
             let use_vm = should_use_vm(&args);
             run_repl(use_vm);
+        }
+        "serve" => {
+            run_serve_command(&args[2..]);
         }
         "--joke" => show_joke(),
         "--tip" => show_tip(),
@@ -979,4 +983,250 @@ fn format_target(target: &str, check_only: bool, force: bool) {
     } else {
         println!("Successfully formatted {} file(s).", formatted_count);
     }
+}
+
+fn run_serve_command(args: &[String]) {
+    let mut dir = ".".to_string();
+    let mut port: u16 = 8080;
+    let mut host = "127.0.0.1".to_string();
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--port" | "-p" => {
+                if i + 1 < args.len() {
+                    port = args[i + 1].parse().unwrap_or(8080);
+                    i += 1;
+                }
+            }
+            "--host" | "-H" => {
+                if i + 1 < args.len() {
+                    host = args[i + 1].clone();
+                    i += 1;
+                }
+            }
+            "--help" | "-h" => {
+                println!("Shae Built-in HTTP Static File Server\n");
+                println!("Usage: shae serve [DIRECTORY] [--port <PORT>] [--host <HOST>]\n");
+                println!("Options:");
+                println!("  -p, --port <PORT>  Port to bind (default: 8080)");
+                println!("  -H, --host <HOST>  Host address to bind (default: 127.0.0.1)");
+                println!("  -h, --help         Show this help message");
+                return;
+            }
+            arg if !arg.starts_with('-') => {
+                dir = arg.to_string();
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    start_static_dev_server(&dir, &host, port);
+}
+
+fn start_static_dev_server(dir_path: &str, host: &str, port: u16) {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let root_path = match fs::canonicalize(dir_path) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Error: Cannot access directory '{}': {}", dir_path, e);
+            process::exit(1);
+        }
+    };
+
+    if !root_path.is_dir() {
+        eprintln!("Error: Path '{}' is not a directory.", root_path.display());
+        process::exit(1);
+    }
+
+    let bind_addr = format!("{}:{}", host, port);
+    let listener = match TcpListener::bind(&bind_addr) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("Error: Could not bind server to {}: {}", bind_addr, e);
+            eprintln!("Tip: Specify another port with `shae serve --port <PORT>`");
+            process::exit(1);
+        }
+    };
+
+    let display_host = if host == "0.0.0.0" || host == "127.0.0.1" {
+        "localhost"
+    } else {
+        host
+    };
+
+    println!("⚡ Shae Development Server");
+    println!("📂 Serving: {}", root_path.display());
+    println!("🔗 Local:   http://{}:{}", display_host, port);
+    println!("🛑 Press Ctrl+C to stop\n");
+
+    let root_arc = std::sync::Arc::new(root_path);
+
+    for stream in listener.incoming() {
+        let mut stream = match stream {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        let root = root_arc.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            let n = match stream.read(&mut buf) {
+                Ok(n) if n > 0 => n,
+                _ => return,
+            };
+
+            let req_str = String::from_utf8_lossy(&buf[..n]);
+            let first_line = req_str.lines().next().unwrap_or("");
+            let mut parts = first_line.split_whitespace();
+            let method = parts.next().unwrap_or("GET");
+            let raw_url = parts.next().unwrap_or("/");
+
+            if method != "GET" && method != "HEAD" {
+                let _ = stream.write_all(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n");
+                return;
+            }
+
+            let path_part = raw_url.split('?').next().unwrap_or("/");
+            let decoded_path = urlencoding_decode(path_part);
+            let rel_path = decoded_path.trim_start_matches('/');
+
+            let mut target_file = root.join(rel_path);
+            if target_file.is_dir() {
+                let index_file = target_file.join("index.html");
+                if index_file.is_file() {
+                    target_file = index_file;
+                }
+            }
+
+            if target_file.is_dir() {
+                let dir_name = target_file.strip_prefix(&*root).unwrap_or(&target_file).display().to_string();
+                let html = render_dir_listing(&target_file, &dir_name, &decoded_path);
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    html.len(),
+                    html
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                println!("GET {} -> 200 Directory Listing", raw_url);
+                return;
+            }
+
+            if !target_file.exists() || !target_file.starts_with(&*root) {
+                let not_found_body = format!(
+                    "<!DOCTYPE html><html><head><title>404 Not Found</title></head><body style=\"font-family:system-ui,sans-serif;padding:40px;\"><h1>404 Not Found</h1><p>Cannot find <code>{}</code></p><hr><small>Shae Dev Server</small></body></html>",
+                    decoded_path
+                );
+                let resp = format!(
+                    "HTTP/1.1 404 Not Found\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    not_found_body.len(),
+                    not_found_body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                println!("GET {} -> 404 Not Found", raw_url);
+                return;
+            }
+
+            match fs::read(&target_file) {
+                Ok(content) => {
+                    let mime = mime_for_path(&target_file);
+                    let resp_header = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        mime,
+                        content.len()
+                    );
+                    let _ = stream.write_all(resp_header.as_bytes());
+                    if method != "HEAD" {
+                        let _ = stream.write_all(&content);
+                    }
+                    println!("GET {} -> 200 OK ({} bytes)", raw_url, content.len());
+                }
+                Err(_) => {
+                    let _ = stream.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+                }
+            }
+        });
+    }
+}
+
+fn mime_for_path(path: &Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "application/javascript; charset=utf-8",
+        "json" => "application/json; charset=utf-8",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "wasm" => "application/wasm",
+        "pdf" => "application/pdf",
+        "xml" => "application/xml",
+        "txt" | "md" | "shae" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
+
+fn urlencoding_decode(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '%' {
+            let hex: String = chars.by_ref().take(2).collect();
+            if hex.len() == 2 {
+                if let Ok(b) = u8::from_str_radix(&hex, 16) {
+                    out.push(b as char);
+                    continue;
+                }
+            }
+            out.push('%');
+            out.push_str(&hex);
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn render_dir_listing(dir: &Path, dir_name: &str, url_path: &str) -> String {
+    let mut entries_html = String::new();
+    let base_url = if url_path.ends_with('/') {
+        url_path.to_string()
+    } else {
+        format!("{}/", url_path)
+    };
+
+    if url_path != "/" && !url_path.is_empty() {
+        entries_html.push_str("<tr><td>📁 <a href=\"..\">..</a></td><td>-</td></tr>\n");
+    }
+
+    if let Ok(read_dir) = fs::read_dir(dir) {
+        let mut list: Vec<_> = read_dir.filter_map(|e| e.ok()).collect();
+        list.sort_by_key(|e| e.file_name());
+
+        for entry in list {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            let size_str = if is_dir {
+                "-".to_string()
+            } else {
+                entry.metadata().map(|m| format!("{} B", m.len())).unwrap_or("-".into())
+            };
+            let icon = if is_dir { "📁" } else { "📄" };
+            let href = format!("{}{}", base_url, name);
+            entries_html.push_str(&format!(
+                "<tr><td>{} <a href=\"{}\">{}</a></td><td>{}</td></tr>\n",
+                icon, href, name, size_str
+            ));
+        }
+    }
+
+    format!(
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Index of {0}</title><style>body {{ font-family: system-ui, sans-serif; padding: 24px; max-width: 800px; margin: 0 auto; }} table {{ width: 100%; border-collapse: collapse; }} th, td {{ text-align: left; padding: 8px 12px; border-bottom: 1px solid #e2e8f0; }} tr:hover {{ background: #f8fafc; }} a {{ color: #4f46e5; text-decoration: none; }} a:hover {{ text-decoration: underline; }}</style></head><body><h2>Index of {0}</h2><table><thead><tr><th>Name</th><th>Size</th></tr></thead><tbody>{1}</tbody></table><hr style=\"margin-top:24px;border:none;border-top:1px solid #e2e8f0\"><small style=\"color:#64748b\">Shae Development Server</small></body></html>",
+        dir_name, entries_html
+    )
 }

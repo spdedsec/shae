@@ -199,9 +199,10 @@ impl<R: Read, W: Write> LspServer<R, W> {
                     "message": e.to_string()
                 }));
             }
-            Ok(tokens) => match crate::parser::parse(tokens) {
-                Err(pe) => {
-                    let (line, col) = match &pe {
+            Ok(tokens) => {
+                let (program, parse_errors) = crate::parser::parse_with_recovery(tokens.clone());
+                for pe in &parse_errors {
+                    let (line, col) = match pe {
                         crate::parser::ParserError::UnexpectedToken { line, col, .. } => {
                             (*line, *col)
                         }
@@ -220,7 +221,8 @@ impl<R: Read, W: Write> LspServer<R, W> {
                         "message": pe.to_string()
                     }));
                 }
-                Ok(program) => {
+
+                if !program.statements.is_empty() {
                     let mut linter = crate::linter::Linter::new();
                     let lints = linter.lint_program(&program);
                     for diag in lints {
@@ -451,8 +453,8 @@ impl<R: Read, W: Write> LspServer<R, W> {
         {
             if let Some(source) = self.documents.get(uri) {
                 if let Ok(tokens) = crate::lexer::tokenize(source) {
-                    if let Ok(program) = crate::parser::parse(tokens) {
-                        for stmt in &program.statements {
+                    let (program, _) = crate::parser::parse_with_recovery(tokens);
+                    for stmt in &program.statements {
                             match &stmt.kind {
                                 crate::ast::StmtKind::FnDef {
                                     name,

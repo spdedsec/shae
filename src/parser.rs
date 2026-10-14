@@ -48,6 +48,52 @@ impl Parser {
         Ok(Program { statements })
     }
 
+    pub fn parse_with_recovery(&mut self) -> (Program, Vec<ParserError>) {
+        let mut statements = Vec::new();
+        let mut errors = Vec::new();
+        while !self.is_at_end() {
+            match self.parse_statement() {
+                Ok(stmt) => statements.push(stmt),
+                Err(err) => {
+                    errors.push(err);
+                    self.synchronize();
+                }
+            }
+        }
+        (Program { statements }, errors)
+    }
+
+    fn synchronize(&mut self) {
+        if !self.is_at_end() {
+            self.advance();
+        }
+
+        while !self.is_at_end() {
+            if matches!(
+                self.tokens.get(self.cursor.saturating_sub(1)).map(|t| &t.token),
+                Some(Token::Newline) | Some(Token::Semicolon)
+            ) {
+                return;
+            }
+
+            match self.peek().token {
+                Token::Fn
+                | Token::Let
+                | Token::For
+                | Token::If
+                | Token::While
+                | Token::Return
+                | Token::Struct
+                | Token::Enum
+                | Token::Try
+                | Token::Use => return,
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+    }
+
     fn peek(&self) -> &SpannedToken {
         &self.tokens[self.cursor]
     }
@@ -1999,4 +2045,8 @@ impl Parser {
 }
 pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program, ParserError> {
     Parser::new(tokens).parse()
+}
+
+pub fn parse_with_recovery(tokens: Vec<SpannedToken>) -> (Program, Vec<ParserError>) {
+    Parser::new(tokens).parse_with_recovery()
 }

@@ -452,10 +452,7 @@ fn builtin_serve(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
     };
 
     let handler = args[1].clone();
-    if !matches!(
-        handler,
-        Value::Function { .. } | Value::Builtin { .. } | Value::Map(_)
-    ) {
+    if !handler.is_callable() && !matches!(handler, Value::Map(_) | Value::GcMap(_)) {
         return Err(RuntimeError::new(
             "Second argument to serve must be a function or route map".into(),
         )
@@ -658,10 +655,7 @@ fn builtin_serve_tls(
         }
     };
 
-    if !matches!(
-        handler,
-        Value::Function { .. } | Value::Builtin { .. } | Value::Map(_)
-    ) {
+    if !handler.is_callable() && !matches!(handler, Value::Map(_) | Value::GcMap(_)) {
         return Err(
             RuntimeError::new("serve_tls handler must be a function or route map".into()).at(span),
         );

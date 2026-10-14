@@ -211,7 +211,18 @@ impl Value {
             Value::Channel(_) => "channel",
             Value::FfiLibrary(_) => "ffi_library",
             Value::FfiFunction(_) => "ffi_function",
-        }
+    }
+
+    pub fn is_callable(&self) -> bool {
+        matches!(
+            self,
+            Value::Function { .. }
+                | Value::Builtin { .. }
+                | Value::BoundMethod { .. }
+                | Value::CompiledFunction(_)
+                | Value::Closure(_)
+                | Value::GcClosure(_)
+        )
     }
 
     pub fn is_truthy(&self) -> bool {

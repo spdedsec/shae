@@ -130,8 +130,73 @@ async function startLanguageServer(context: vscode.ExtensionContext) {
     }
 }
 
+class ShaeCodeLensProvider implements vscode.CodeLensProvider {
+    provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
+        if (document.languageId !== 'shae') {
+            return [];
+        }
+        const topOfFile = new vscode.Range(0, 0, 0, 0);
+        return [
+            new vscode.CodeLens(topOfFile, {
+                title: '▶ Run File',
+                command: 'shae.runFile',
+                arguments: [document.uri]
+            }),
+            new vscode.CodeLens(topOfFile, {
+                title: '🐞 Debug File',
+                command: 'workbench.action.debug.start',
+                arguments: []
+            })
+        ];
+    }
+}
+
+async function checkToolchainVersion(context: vscode.ExtensionContext) {
+    const binPath = resolveShaeBinary() || 'shae';
+    cp.exec(`"${binPath}" --version`, (err, stdout) => {
+        if (err) {
+            vscode.window.showWarningMessage(
+                'Shae toolchain executable was not found on PATH. Some features may be unavailable.',
+                'Install / Update Shae'
+            ).then((choice) => {
+                if (choice === 'Install / Update Shae') {
+                    vscode.commands.executeCommand('shae.updateBinary');
+                }
+            });
+            return;
+        }
+
+        const match = stdout.match(/shae\s+(\d+\.\d+\.\d+)/);
+        if (match) {
+            const detected = match[1];
+            const parts = detected.split('.').map(Number);
+            // Require at least 0.3.1
+            if (parts[0] === 0 && (parts[1] < 3 || (parts[1] === 3 && parts[2] < 1))) {
+                vscode.window.showInformationMessage(
+                    `Shae toolchain is outdated (detected v${detected}, v0.3.1+ required). Would you like to update?`,
+                    'Update Now',
+                    'Later'
+                ).then((choice) => {
+                    if (choice === 'Update Now') {
+                        vscode.commands.executeCommand('shae.updateBinary');
+                    }
+                });
+            }
+        }
+    });
+}
+
 export async function activate(context: vscode.ExtensionContext) {
     await startLanguageServer(context);
+    checkToolchainVersion(context);
+
+    // Register CodeLens provider
+    context.subscriptions.push(
+        vscode.languages.registerCodeLensProvider(
+            { language: 'shae', scheme: 'file' },
+            new ShaeCodeLensProvider()
+        )
+    );
 
     // Watch for trace configuration changes
     context.subscriptions.push(
@@ -155,20 +220,51 @@ export async function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    // Register update binary command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('shae.updateBinary', async () => {
+            const isWin = process.platform === 'win32';
+            const isMac = process.platform === 'darwin';
+            const isArm = process.arch === 'arm64';
+
+            let assetName = 'shae-v0.3.1-linux-x86_64.tar.gz';
+            if (isWin) {
+                assetName = 'shae-v0.3.1-windows-x86_64.zip';
+            } else if (isMac) {
+                assetName = isArm ? 'shae-v0.3.1-macos-arm64.tar.gz' : 'shae-v0.3.1-macos-x86_64.tar.gz';
+            }
+
+            const downloadUrl = `https://github.com/spdedsec/shae/releases/download/v0.3.1/${assetName}`;
+            vscode.window.showInformationMessage(
+                `Downloading latest Shae toolchain (${assetName})...`
+            );
+
+            // Open download in browser or run curl command
+            vscode.env.openExternal(vscode.Uri.parse(downloadUrl));
+        })
+    );
+
     // Register run active file command
     context.subscriptions.push(
-        vscode.commands.registerCommand('shae.runFile', () => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor || editor.document.languageId !== 'shae') {
-                vscode.window.showWarningMessage('No active Shae file found.');
-                return;
+        vscode.commands.registerCommand('shae.runFile', async (uri?: vscode.Uri) => {
+            let targetUri = uri;
+            if (!targetUri) {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor || editor.document.languageId !== 'shae') {
+                    vscode.window.showWarningMessage('No active Shae file found.');
+                    return;
+                }
+                if (editor.document.isDirty) {
+                    await editor.document.save();
+                }
+                targetUri = editor.document.uri;
             }
 
             const binPath = resolveShaeBinary() || 'shae';
-            const filePath = editor.document.uri.fsPath;
-            const terminal = vscode.window.activeTerminal || vscode.window.createTerminal('Shae');
+            const filePath = targetUri.fsPath;
+            const terminal = vscode.window.terminals.find(t => t.name === 'Shae') || vscode.window.createTerminal('Shae');
             terminal.show();
-            terminal.sendText(`"${binPath}" "${filePath}"`);
+            terminal.sendText(`"${binPath}" run "${filePath}"`);
         })
     );
 

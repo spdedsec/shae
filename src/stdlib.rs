@@ -2111,6 +2111,7 @@ fn col_zip(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, R
 fn build_collections_module() -> Value {
     make_map(vec![
         ("unique", col_unique),
+        ("dedup", col_unique),
         ("union", col_union),
         ("intersect", col_intersect),
         ("difference", col_difference),
