@@ -2,6 +2,4 @@
 *.tar.gz
 *.vsix
 node_modules/
-website/dist/
-website/node_modules/
 editors/vscode/out/
