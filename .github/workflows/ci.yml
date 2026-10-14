@@ -89,7 +89,10 @@ jobs:
     needs: [test, clippy, stress-test, vscode-extension]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
