@@ -12,7 +12,7 @@ fn run_shae(code: &str) -> Value {
     match vm.interpret(chunk) {
         InterpretResult::Ok(val) => val,
         InterpretResult::RuntimeError(e) => panic!("Runtime error: {:?}", e),
-        InterpretResult::CompileError(e) => panic!("Compile error: {:?}", e),
+        InterpretResult::CompileError => panic!("Compile error"),
     }
 }
 

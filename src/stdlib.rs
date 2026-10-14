@@ -607,10 +607,9 @@ pub fn siphash_2_4(key: [u8; 16], data: &[u8]) -> u64 {
     let mut v3 = k1 ^ 0x7465646279746573;
 
     let len = data.len();
-    let chunks = data.chunks_exact(8);
-    let remainder = chunks.remainder();
-
-    for chunk in chunks {
+    let num_words = len / 8;
+    for i in 0..num_words {
+        let chunk = &data[i * 8..(i + 1) * 8];
         let m = u64::from_le_bytes(chunk.try_into().unwrap());
         v3 ^= m;
         for _ in 0..2 {
@@ -619,6 +618,7 @@ pub fn siphash_2_4(key: [u8; 16], data: &[u8]) -> u64 {
         v0 ^= m;
     }
 
+    let remainder = &data[num_words * 8..];
     let mut b: u64 = ((len as u64) & 0xff) << 56;
     for (i, &byte) in remainder.iter().enumerate() {
         b |= (byte as u64) << (8 * i);
