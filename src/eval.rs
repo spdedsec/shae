@@ -1344,12 +1344,6 @@ impl Evaluator {
                             Ok(Some(v.clone()))
                         } else if property == "len" {
                             Ok(Some(Value::Int(map.len() as i64)))
-                        } else if property == "size" && map.contains_key("_is_set") {
-                            if let Some(Value::Array(arr)) = map.get("items") {
-                                Ok(Some(Value::Int(arr.read().unwrap().len() as i64)))
-                            } else {
-                                Ok(Some(Value::Int(0)))
-                            }
                         } else if matches!(
                             property.as_str(),
                             "keys" | "values" | "has" | "contains" | "get" | "delete"

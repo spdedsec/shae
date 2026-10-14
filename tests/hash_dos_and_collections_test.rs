@@ -18,19 +18,31 @@ fn run_shae(code: &str) -> Value {
 
 #[test]
 fn test_siphash_2_4_reference_vector() {
-    // Standard SipHash-2-4 reference test vector:
+    // Official SipHash-2-4 reference test vectors from veorq/SipHash vectors.h:
     // Key: 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
-    // Input: 15 bytes: 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e
-    // Expected 64-bit digest: 0xa129ca61496b71e2
     let key: [u8; 16] = [
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
         0x0f,
     ];
-    let msg: [u8; 15] = [
+
+    // Vector 0 (0 bytes / empty)
+    assert_eq!(siphash_2_4(key, &[]), 0x310e0edd47db6f72);
+
+    // Vector 1 (1 byte: 00)
+    assert_eq!(siphash_2_4(key, &[0x00]), 0xfd67dc93c539f874);
+
+    // Vector 15 (15 bytes: 00..0e)
+    let msg15: [u8; 15] = [
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
     ];
-    let hash = siphash_2_4(key, &msg);
-    assert_eq!(hash, 0xa129ca61496b71e2);
+    assert_eq!(siphash_2_4(key, &msg15), 0xa129ca6149be45e5);
+
+    // Vector 16 (16 bytes: 00..0f)
+    let msg16: [u8; 16] = [
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f,
+    ];
+    assert_eq!(siphash_2_4(key, &msg16), 0xdb9bc2577fcc2a3f);
 }
 
 #[test]
@@ -69,7 +81,6 @@ let collections = use "std:collections"
 // 1. Create set from array with duplicates
 let s = collections.set([10, 20, 30, 20, 10])
 assert_eq(s.size(), 3)
-assert_eq(s.size, 3)
 
 // 2. Query membership
 assert_eq(s.has(10), true)
