@@ -145,6 +145,50 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
   - [x] Full first-class bound method dispatch in both Tree-Walking AST Evaluator (`eval.rs`) and Bytecode VM (`vm.rs`).
   - [x] Exception-safe depth tracking preserving stack balance in AST try-catch blocks.
 
+---
+
+### **Chunk 15: Phase 5 (Stage 1) — Pure-Shae Compiler Frontend & Self-Parsing Verification** *(Completed)*
+- [x] **Lexical Tokens & Keywords (`lib/compiler/token.shae`)**
+  - [x] Complete token specifications with kinds, symbols, keywords, line/column tracking, and constructors.
+- [x] **Abstract Syntax Tree Definitions (`lib/compiler/ast.shae`)**
+  - [x] Full AST node constructors for statements (`let`, `assign`, `fn`, `if`, `while`, `for`, `return`, `try/catch`, `struct`, `enum`, `use`) and expressions (`literal`, `binary`, `unary`, `call`, `get`, `index`, `array`, `map`, `lambda`, `match`, `struct_init`).
+- [x] **Pure-Shae Tokenizer & Lexer (`lib/compiler/lexer.shae`)**
+  - [x] Radix literals (hex `0x`, binary `0b`, octal `0o`), floating-point numbers, multi-character operators, raw string literals, string escape sequences, and comment stripping.
+- [x] **Pure-Shae Pratt Parser (`lib/compiler/parser.shae`)**
+  - [x] Top-down operator precedence Pratt parsing with configurable infix/prefix binding powers.
+  - [x] Compound statement parsing, struct and enum declarations, anonymous closures, destructuring patterns, and error synchronization.
+- [x] **Self-Hosting Verification (`tests/shae/self_parser_test.shae`)**
+  - [x] Self-parsing of all compiler source files (`token.shae`, `ast.shae`, `lexer.shae`, `parser.shae`) totaling 7,799+ tokens and 140 statements.
+  - [x] Strict dual-engine parity verified on both Bytecode VM (`run`) and AST Evaluator (`run --engine=ast`).
+
+---
+
+### **Chunk 16: Phase 5 (Stage 2) — Pure-Shae Bytecode Compiler & Serializer (`lib/compiler/codegen.shae`)** *(In Progress)*
+- [ ] **Opcode Definitions & Bytecode Chunk (`lib/compiler/opcode.shae`, `lib/compiler/chunk.shae`)**
+  - [ ] Numerical opcode mapping matching `src/opcode.rs`.
+  - [ ] Binary serialization of bytecode format (`\x7fSHAE`, version 1, code, lines, constant pool).
+- [ ] **AST-to-Bytecode Code Generator (`lib/compiler/codegen.shae`)**
+  - [ ] Local variable resolution, lexical scope tracking, and upvalue capture for closures.
+  - [ ] Expression compilation, arithmetic/bitwise operators, collections, and control flow jumps.
+- [ ] **Bytecode Disassembler in Pure Shae (`lib/compiler/disasm.shae`)**
+- [ ] **Self-Codegen Integration Test Suite (`tests/shae/self_codegen_test.shae`)**
+
+---
+
+### **Chunk 17: Phase 5 (Stage 3) — Direct Native Linker (ELF / PE Object Emission)**
+- [ ] Direct ELF 64-bit and PE executable emission with zero external linker dependencies.
+
+---
+
+### **Chunk 18: Phase 6 — WebAssembly & Edge Runtime Target**
+- [ ] `wasm32-wasi` and browser WebAssembly codegen and embed runner.
+
+---
+
+### **Chunk 19: Phase 7 — Distributed Actor Mesh (`std:actor:cluster`)**
+- [ ] Distributed network clustering over TCP/TLS with cross-node actor discovery and messaging.
+
+
 
 
 

@@ -1,0 +1,569 @@
+// Shae Self-Hosting Compiler: Pratt Parser
+// Parses an array of tokens produced by lexer.shae into an AST.
+
+use {
+    TOKEN_EOF, TOKEN_IDENT, TOKEN_INT, TOKEN_FLOAT, TOKEN_STRING, TOKEN_RAW_STRING,
+    TOKEN_LET, TOKEN_FN, TOKEN_RETURN, TOKEN_IF, TOKEN_ELSE, TOKEN_WHILE,
+    TOKEN_FOR, TOKEN_IN, TOKEN_TRUE, TOKEN_FALSE, TOKEN_NULL, TOKEN_BREAK,
+    TOKEN_CONTINUE, TOKEN_USE, TOKEN_FROM, TOKEN_AS, TOKEN_TRY, TOKEN_CATCH,
+    TOKEN_ASYNC, TOKEN_AWAIT, TOKEN_STRUCT, TOKEN_ENUM, TOKEN_MATCH,
+    TOKEN_LPAREN, TOKEN_RPAREN, TOKEN_LBRACE, TOKEN_RBRACE, TOKEN_LBRACKET,
+    TOKEN_RBRACKET, TOKEN_COMMA, TOKEN_COLON, TOKEN_SEMICOLON, TOKEN_DOT,
+    TOKEN_DOT_DOT, TOKEN_DOT_DOT_EQ, TOKEN_QUESTION, TOKEN_DOUBLE_QUESTION,
+    TOKEN_ARROW, TOKEN_FAT_ARROW, TOKEN_PIPE, TOKEN_UNDERSCORE,
+    TOKEN_PLUS, TOKEN_MINUS, TOKEN_STAR, TOKEN_SLASH, TOKEN_PERCENT,
+    TOKEN_EQUALS, TOKEN_PLUS_EQUALS, TOKEN_MINUS_EQUALS, TOKEN_EQ_EQ,
+    TOKEN_NOT_EQ, TOKEN_LT, TOKEN_LT_EQ, TOKEN_GT, TOKEN_GT_EQ,
+    TOKEN_AND, TOKEN_OR, TOKEN_NOT, TOKEN_AMP, TOKEN_BIT_OR, TOKEN_CARET,
+    TOKEN_TILDE, TOKEN_SHL, TOKEN_SHR
+} from "./token.shae"
+
+use {
+    make_program, make_let_stmt, make_assign_stmt, make_fn_stmt, make_if_stmt,
+    make_while_stmt, make_for_stmt, make_return_stmt, make_break_stmt,
+    make_continue_stmt, make_try_catch_stmt, make_struct_stmt, make_enum_stmt,
+    make_use_stmt, make_expr_stmt,
+    make_literal_expr, make_variable_expr, make_binary_expr, make_unary_expr,
+    make_call_expr, make_get_expr, make_index_expr, make_array_expr,
+    make_map_expr, make_lambda_expr, make_match_expr, make_struct_init_expr,
+    make_use_expr
+} from "./ast.shae"
+
+// Precedence levels
+let PREC_LOWEST = 1
+let PREC_ASSIGN = 2      // = += -=
+let PREC_COALESCE = 3    // ??
+let PREC_PIPE = 4        // |>
+let PREC_OR = 5          // or ||
+let PREC_AND = 6         // and &&
+let PREC_BIT_OR = 7      // |
+let PREC_BIT_XOR = 8     // ^
+let PREC_BIT_AND = 9     // &
+let PREC_EQUALITY = 10   // == !=
+let PREC_COMPARE = 11    // < <= > >=
+let PREC_SHIFT = 12      // << >>
+let PREC_SUM = 13        // + -
+let PREC_PRODUCT = 14    // * / %
+let PREC_UNARY = 15      // ! not - ~
+let PREC_CALL = 16       // () [] . ?.
+
+fn get_precedence(kind) {
+    if kind == TOKEN_EQUALS or kind == TOKEN_PLUS_EQUALS or kind == TOKEN_MINUS_EQUALS {
+        return PREC_ASSIGN
+    }
+    if kind == TOKEN_DOUBLE_QUESTION { return PREC_COALESCE }
+    if kind == TOKEN_PIPE { return PREC_PIPE }
+    if kind == TOKEN_OR { return PREC_OR }
+    if kind == TOKEN_AND { return PREC_AND }
+    if kind == TOKEN_BIT_OR { return PREC_BIT_OR }
+    if kind == TOKEN_CARET { return PREC_BIT_XOR }
+    if kind == TOKEN_AMP { return PREC_BIT_AND }
+    if kind == TOKEN_EQ_EQ or kind == TOKEN_NOT_EQ { return PREC_EQUALITY }
+    if kind == TOKEN_LT or kind == TOKEN_LT_EQ or kind == TOKEN_GT or kind == TOKEN_GT_EQ {
+        return PREC_COMPARE
+    }
+    if kind == TOKEN_SHL or kind == TOKEN_SHR { return PREC_SHIFT }
+    if kind == TOKEN_PLUS or kind == TOKEN_MINUS { return PREC_SUM }
+    if kind == TOKEN_STAR or kind == TOKEN_SLASH or kind == TOKEN_PERCENT { return PREC_PRODUCT }
+    if kind == TOKEN_LPAREN or kind == TOKEN_LBRACKET or kind == TOKEN_DOT or kind == TOKEN_QUESTION {
+        return PREC_CALL
+    }
+    return PREC_LOWEST
+}
+
+fn make_parser(tokens) {
+    return {
+        tokens: tokens,
+        pos: 0,
+        errors: [],
+        allow_struct: true
+    }
+}
+
+fn current_token(p) {
+    if p.pos < len(p.tokens) {
+        return p.tokens[p.pos]
+    }
+    return p.tokens[len(p.tokens) - 1]
+}
+
+fn peek_token(p, offset) {
+    let idx = p.pos + offset
+    if idx < len(p.tokens) {
+        return p.tokens[idx]
+    }
+    return p.tokens[len(p.tokens) - 1]
+}
+
+fn advance_token(p) {
+    let tok = current_token(p)
+    if p.pos < len(p.tokens) {
+        p.pos = p.pos + 1
+    }
+    return tok
+}
+
+fn check_kind(p, kind) {
+    return current_token(p).kind == kind
+}
+
+fn match_kind(p, kind) {
+    if check_kind(p, kind) {
+        advance_token(p)
+        return true
+    }
+    return false
+}
+
+fn expect_kind(p, kind, msg) {
+    let tok = current_token(p)
+    if tok.kind == kind {
+        return advance_token(p)
+    }
+    let err_msg = "Parser Error @" + str(tok.line) + ":" + str(tok.col) + ": " + msg + " (got " + tok.kind + ")"
+    p.errors.push(err_msg)
+    return null
+}
+
+// --- Expressions ---
+
+fn parse_expression(p, min_prec) {
+    let tok = current_token(p)
+    let left = null
+
+    // Prefix rules
+    if tok.kind == TOKEN_INT {
+        advance_token(p)
+        left = make_literal_expr("int", tok.value, tok.line, tok.col)
+    } else if tok.kind == TOKEN_FLOAT {
+        advance_token(p)
+        left = make_literal_expr("float", tok.value, tok.line, tok.col)
+    } else if tok.kind == TOKEN_STRING or tok.kind == TOKEN_RAW_STRING {
+        advance_token(p)
+        left = make_literal_expr("string", tok.value, tok.line, tok.col)
+    } else if tok.kind == TOKEN_TRUE {
+        advance_token(p)
+        left = make_literal_expr("bool", true, tok.line, tok.col)
+    } else if tok.kind == TOKEN_FALSE {
+        advance_token(p)
+        left = make_literal_expr("bool", false, tok.line, tok.col)
+    } else if tok.kind == TOKEN_NULL {
+        advance_token(p)
+        left = make_literal_expr("null", null, tok.line, tok.col)
+    } else if tok.kind == TOKEN_IDENT {
+        advance_token(p)
+        left = make_variable_expr(tok.value, tok.line, tok.col)
+
+        // Check for StructInit: Ident { field: val, ... }
+        if p.allow_struct and check_kind(p, TOKEN_LBRACE) {
+            let next_tok = peek_token(p, 1)
+            // Struct init if followed by '}' or 'ident:'
+            let is_struct_init = false
+            if next_tok.kind == TOKEN_RBRACE {
+                is_struct_init = true
+            } else if next_tok.kind == TOKEN_IDENT and peek_token(p, 2).kind == TOKEN_COLON {
+                is_struct_init = true
+            }
+
+            if is_struct_init {
+                advance_token(p) // consume {
+                let fields = []
+                while not check_kind(p, TOKEN_RBRACE) and not check_kind(p, TOKEN_EOF) {
+                    let f_name_tok = expect_kind(p, TOKEN_IDENT, "Expected struct field name")
+                    if f_name_tok == null { break }
+                    expect_kind(p, TOKEN_COLON, "Expected ':' after field name")
+                    let f_val = parse_expression(p, PREC_LOWEST)
+                    fields.push({ name: f_name_tok.value, value: f_val })
+                    if not match_kind(p, TOKEN_COMMA) {
+                        break
+                    }
+                }
+                expect_kind(p, TOKEN_RBRACE, "Expected '\}' after struct initialization fields")
+                left = make_struct_init_expr(tok.value, fields, tok.line, tok.col)
+            }
+        }
+    } else if tok.kind == TOKEN_MINUS or tok.kind == TOKEN_NOT or tok.kind == TOKEN_TILDE {
+        advance_token(p)
+        let operand = parse_expression(p, PREC_UNARY)
+        left = make_unary_expr(tok.value, operand, tok.line, tok.col)
+    } else if tok.kind == TOKEN_LPAREN {
+        advance_token(p)
+        let inner = parse_expression(p, PREC_LOWEST)
+        expect_kind(p, TOKEN_RPAREN, "Expected ')' after parenthesized expression")
+        left = inner
+    } else if tok.kind == TOKEN_LBRACKET {
+        // Array literal: [e1, e2, ...]
+        advance_token(p)
+        let elements = []
+        while not check_kind(p, TOKEN_RBRACKET) and not check_kind(p, TOKEN_EOF) {
+            let elem = parse_expression(p, PREC_LOWEST)
+            elements.push(elem)
+            if not match_kind(p, TOKEN_COMMA) {
+                break
+            }
+        }
+        expect_kind(p, TOKEN_RBRACKET, "Expected ']' after array elements")
+        left = make_array_expr(elements, tok.line, tok.col)
+    } else if tok.kind == TOKEN_LBRACE {
+        // Map literal: { k: v, "k2": v2, ... }
+        advance_token(p)
+        let entries = []
+        while not check_kind(p, TOKEN_RBRACE) and not check_kind(p, TOKEN_EOF) {
+            let key_str = ""
+            if check_kind(p, TOKEN_IDENT) or check_kind(p, TOKEN_STRING) {
+                let k_tok = advance_token(p)
+                key_str = str(k_tok.value)
+            } else {
+                p.errors.push("Expected identifier or string as map key")
+                break
+            }
+            expect_kind(p, TOKEN_COLON, "Expected ':' after map key")
+            let val = parse_expression(p, PREC_LOWEST)
+            entries.push({ key: key_str, value: val })
+            if not match_kind(p, TOKEN_COMMA) {
+                break
+            }
+        }
+        expect_kind(p, TOKEN_RBRACE, "Expected '\}' after map entries")
+        left = make_map_expr(entries, tok.line, tok.col)
+    } else if tok.kind == TOKEN_FN {
+        // Lambda / Anonymous function: fn(params) { body }
+        advance_token(p)
+        expect_kind(p, TOKEN_LPAREN, "Expected '(' after fn")
+        let params = []
+        while not check_kind(p, TOKEN_RPAREN) and not check_kind(p, TOKEN_EOF) {
+            let p_tok = expect_kind(p, TOKEN_IDENT, "Expected parameter name")
+            if p_tok != null {
+                params.push({ name: p_tok.value, type_ann: null })
+            }
+            if not match_kind(p, TOKEN_COMMA) {
+                break
+            }
+        }
+        expect_kind(p, TOKEN_RPAREN, "Expected ')' after parameters")
+        expect_kind(p, TOKEN_LBRACE, "Expected '\{' before function body")
+        let body = parse_block(p)
+        left = make_lambda_expr(params, null, body, false, tok.line, tok.col)
+    } else if tok.kind == TOKEN_USE {
+        // Expression use: let mod = use "std:fs"
+        advance_token(p)
+        let path_expr = parse_expression(p, PREC_LOWEST)
+        left = make_use_expr(path_expr, tok.line, tok.col)
+    } else {
+        p.errors.push("Unexpected token in expression: " + tok.kind + " @" + str(tok.line) + ":" + str(tok.col))
+        advance_token(p)
+        return make_literal_expr("null", null, tok.line, tok.col)
+    }
+
+    // Infix rules
+    while true {
+        let cur = current_token(p)
+        let prec = get_precedence(cur.kind)
+        if prec <= min_prec {
+            break
+        }
+
+        // Call: left(args)
+        if cur.kind == TOKEN_LPAREN {
+            advance_token(p)
+            let args = []
+            while not check_kind(p, TOKEN_RPAREN) and not check_kind(p, TOKEN_EOF) {
+                let a = parse_expression(p, PREC_LOWEST)
+                args.push(a)
+                if not match_kind(p, TOKEN_COMMA) {
+                    break
+                }
+            }
+            expect_kind(p, TOKEN_RPAREN, "Expected ')' after arguments")
+            left = make_call_expr(left, args, cur.line, cur.col)
+            continue
+        }
+
+        // Index: left[idx]
+        if cur.kind == TOKEN_LBRACKET {
+            advance_token(p)
+            let idx_expr = parse_expression(p, PREC_LOWEST)
+            expect_kind(p, TOKEN_RBRACKET, "Expected ']' after index")
+            left = make_index_expr(left, idx_expr, cur.line, cur.col)
+            continue
+        }
+
+        // Dot property access: left.prop
+        if cur.kind == TOKEN_DOT {
+            advance_token(p)
+            let prop_tok = advance_token(p)
+            left = make_get_expr(left, str(prop_tok.value), false, cur.line, cur.col)
+            continue
+        }
+
+        // Safe navigation: left?.prop
+        if cur.kind == TOKEN_QUESTION and peek_token(p, 1).kind == TOKEN_DOT {
+            advance_token(p) // ?
+            advance_token(p) // .
+            let prop_tok = advance_token(p)
+            left = make_get_expr(left, str(prop_tok.value), true, cur.line, cur.col)
+            continue
+        }
+
+        // Binary operations
+        let op_tok = advance_token(p)
+        let right = parse_expression(p, prec)
+        left = make_binary_expr(left, op_tok.value, right, op_tok.line, op_tok.col)
+    }
+
+    return left
+}
+
+// --- Statements ---
+
+fn parse_block(p) {
+    let stmts = []
+    while not check_kind(p, TOKEN_RBRACE) and not check_kind(p, TOKEN_EOF) {
+        let stmt = parse_statement(p)
+        if stmt != null {
+            stmts.push(stmt)
+        }
+    }
+    expect_kind(p, TOKEN_RBRACE, "Expected '\}' to close block")
+    return stmts
+}
+
+fn parse_statement(p) {
+    // Optional semicolons
+    while match_kind(p, TOKEN_SEMICOLON) {}
+
+    let tok = current_token(p)
+
+    // 1. Let statement: let [pattern] = init
+    if tok.kind == TOKEN_LET {
+        advance_token(p)
+        let pat_tok = advance_token(p)
+        let pattern = pat_tok.value
+        let type_ann = null
+        expect_kind(p, TOKEN_EQUALS, "Expected '=' in let binding")
+        let init_expr = parse_expression(p, PREC_LOWEST)
+        match_kind(p, TOKEN_SEMICOLON)
+        return make_let_stmt(pattern, type_ann, init_expr, tok.line, tok.col)
+    }
+
+    // 2. Fn statement: fn name(params) { body }
+    if tok.kind == TOKEN_FN {
+        advance_token(p)
+        let name_tok = expect_kind(p, TOKEN_IDENT, "Expected function name")
+        let name = "anonymous"
+        if name_tok != null {
+            name = name_tok.value
+        }
+        expect_kind(p, TOKEN_LPAREN, "Expected '(' after function name")
+        let params = []
+        while not check_kind(p, TOKEN_RPAREN) and not check_kind(p, TOKEN_EOF) {
+            let p_tok = expect_kind(p, TOKEN_IDENT, "Expected parameter name")
+            if p_tok != null {
+                params.push({ name: p_tok.value, type_ann: null })
+            }
+            if not match_kind(p, TOKEN_COMMA) {
+                break
+            }
+        }
+        expect_kind(p, TOKEN_RPAREN, "Expected ')' after parameters")
+        expect_kind(p, TOKEN_LBRACE, "Expected '\{' before function body")
+        let body = parse_block(p)
+        return make_fn_stmt(name, params, null, body, false, tok.line, tok.col)
+    }
+
+    // 3. If statement: if cond { then } else { else }
+    if tok.kind == TOKEN_IF {
+        advance_token(p)
+        let old_allow = p.allow_struct
+        p.allow_struct = false
+        let cond = parse_expression(p, PREC_LOWEST)
+        p.allow_struct = old_allow
+        expect_kind(p, TOKEN_LBRACE, "Expected '\{' after if condition")
+        let then_branch = parse_block(p)
+        let else_branch = null
+        if match_kind(p, TOKEN_ELSE) {
+            if check_kind(p, TOKEN_IF) {
+                let nested_if = parse_statement(p)
+                else_branch = [nested_if]
+            } else {
+                expect_kind(p, TOKEN_LBRACE, "Expected '\{' after else")
+                else_branch = parse_block(p)
+            }
+        }
+        return make_if_stmt(cond, then_branch, else_branch, tok.line, tok.col)
+    }
+
+    // 4. While statement: while cond { body }
+    if tok.kind == TOKEN_WHILE {
+        advance_token(p)
+        let old_allow = p.allow_struct
+        p.allow_struct = false
+        let cond = parse_expression(p, PREC_LOWEST)
+        p.allow_struct = old_allow
+        expect_kind(p, TOKEN_LBRACE, "Expected '\{' after while condition")
+        let body = parse_block(p)
+        return make_while_stmt(cond, body, tok.line, tok.col)
+    }
+
+    // 5. For statement: for item in iterable { body }
+    if tok.kind == TOKEN_FOR {
+        advance_token(p)
+        let item_tok = expect_kind(p, TOKEN_IDENT, "Expected loop variable name")
+        let item_name = "item"
+        if item_tok != null {
+            item_name = item_tok.value
+        }
+        expect_kind(p, TOKEN_IN, "Expected 'in' after loop variable")
+        let old_allow = p.allow_struct
+        p.allow_struct = false
+        let iterable = parse_expression(p, PREC_LOWEST)
+        p.allow_struct = old_allow
+        expect_kind(p, TOKEN_LBRACE, "Expected '\{' after for iterable")
+        let body = parse_block(p)
+        return make_for_stmt(item_name, iterable, body, tok.line, tok.col)
+    }
+
+    // 6. Return statement: return [expr]
+    if tok.kind == TOKEN_RETURN {
+        advance_token(p)
+        let val = null
+        if not check_kind(p, TOKEN_SEMICOLON) and not check_kind(p, TOKEN_RBRACE) and not check_kind(p, TOKEN_EOF) {
+            val = parse_expression(p, PREC_LOWEST)
+        }
+        match_kind(p, TOKEN_SEMICOLON)
+        return make_return_stmt(val, tok.line, tok.col)
+    }
+
+    // 7. Break and Continue
+    if tok.kind == TOKEN_BREAK {
+        advance_token(p)
+        match_kind(p, TOKEN_SEMICOLON)
+        return make_break_stmt(tok.line, tok.col)
+    }
+    if tok.kind == TOKEN_CONTINUE {
+        advance_token(p)
+        match_kind(p, TOKEN_SEMICOLON)
+        return make_continue_stmt(tok.line, tok.col)
+    }
+
+    // 8. Try-Catch: try { ... } catch (err) { ... }
+    if tok.kind == TOKEN_TRY {
+        advance_token(p)
+        expect_kind(p, TOKEN_LBRACE, "Expected '\{' after try")
+        let try_body = parse_block(p)
+        expect_kind(p, TOKEN_CATCH, "Expected 'catch' after try block")
+        let catch_id = "err"
+        if match_kind(p, TOKEN_LPAREN) {
+            let id_tok = expect_kind(p, TOKEN_IDENT, "Expected catch error identifier")
+            if id_tok != null { catch_id = id_tok.value }
+            expect_kind(p, TOKEN_RPAREN, "Expected ')' after catch identifier")
+        } else if check_kind(p, TOKEN_IDENT) {
+            catch_id = advance_token(p).value
+        }
+        expect_kind(p, TOKEN_LBRACE, "Expected '\{' after catch")
+        let catch_body = parse_block(p)
+        return make_try_catch_stmt(try_body, catch_id, catch_body, tok.line, tok.col)
+    }
+
+    // 9. Struct Definition: struct Name { f1, f2, ... }
+    if tok.kind == TOKEN_STRUCT {
+        advance_token(p)
+        let name_tok = expect_kind(p, TOKEN_IDENT, "Expected struct name")
+        let s_name = "AnonymousStruct"
+        if name_tok != null {
+            s_name = name_tok.value
+        }
+        expect_kind(p, TOKEN_LBRACE, "Expected '\{' after struct name")
+        let fields = []
+        while not check_kind(p, TOKEN_RBRACE) and not check_kind(p, TOKEN_EOF) {
+            let f_tok = expect_kind(p, TOKEN_IDENT, "Expected struct field name")
+            if f_tok != null {
+                fields.push({ name: f_tok.value, type_ann: null })
+            }
+            if not match_kind(p, TOKEN_COMMA) {
+                break
+            }
+        }
+        expect_kind(p, TOKEN_RBRACE, "Expected '\}' after struct fields")
+        return make_struct_stmt(s_name, fields, tok.line, tok.col)
+    }
+
+    // 10. Enum Definition: enum Name { V1, V2(a, b) }
+    if tok.kind == TOKEN_ENUM {
+        advance_token(p)
+        let name_tok = expect_kind(p, TOKEN_IDENT, "Expected enum name")
+        let e_name = "AnonymousEnum"
+        if name_tok != null {
+            e_name = name_tok.value
+        }
+        expect_kind(p, TOKEN_LBRACE, "Expected '\{' after enum name")
+        let variants = []
+        while not check_kind(p, TOKEN_RBRACE) and not check_kind(p, TOKEN_EOF) {
+            let v_tok = expect_kind(p, TOKEN_IDENT, "Expected enum variant name")
+            let v_fields = []
+            if match_kind(p, TOKEN_LPAREN) {
+                while not check_kind(p, TOKEN_RPAREN) and not check_kind(p, TOKEN_EOF) {
+                    let vf = expect_kind(p, TOKEN_IDENT, "Expected variant field name")
+                    if vf != null { v_fields.push(vf.value) }
+                    if not match_kind(p, TOKEN_COMMA) { break }
+                }
+                expect_kind(p, TOKEN_RPAREN, "Expected ')' after variant fields")
+            }
+            if v_tok != null {
+                variants.push({ name: v_tok.value, fields: v_fields })
+            }
+            if not match_kind(p, TOKEN_COMMA) { break }
+        }
+        expect_kind(p, TOKEN_RBRACE, "Expected '\}' after enum variants")
+        return make_enum_stmt(e_name, variants, tok.line, tok.col)
+    }
+
+    // 11. Module Import: use { a, b } from "path"
+    if tok.kind == TOKEN_USE and check_kind(p, TOKEN_USE) and peek_token(p, 1).kind == TOKEN_LBRACE {
+        advance_token(p) // use
+        advance_token(p) // {
+        let imports = []
+        while not check_kind(p, TOKEN_RBRACE) and not check_kind(p, TOKEN_EOF) {
+            let item_tok = expect_kind(p, TOKEN_IDENT, "Expected import identifier")
+            if item_tok != null {
+                imports.push({ name: item_tok.value, alias: null })
+            }
+            if not match_kind(p, TOKEN_COMMA) { break }
+        }
+        expect_kind(p, TOKEN_RBRACE, "Expected '\}' after imports")
+        expect_kind(p, TOKEN_FROM, "Expected 'from' after import list")
+        let path_tok = expect_kind(p, TOKEN_STRING, "Expected module path string")
+        let path = ""
+        if path_tok != null {
+            path = path_tok.value
+        }
+        match_kind(p, TOKEN_SEMICOLON)
+        return make_use_stmt(imports, path, tok.line, tok.col)
+    }
+
+    // 12. Expression or Assignment statement
+    let expr = parse_expression(p, PREC_LOWEST)
+
+    // Check assignment: target = value, target += value, target -= value
+    if check_kind(p, TOKEN_EQUALS) {
+        advance_token(p)
+        let val = parse_expression(p, PREC_LOWEST)
+        match_kind(p, TOKEN_SEMICOLON)
+        return make_assign_stmt(expr, val, tok.line, tok.col)
+    }
+
+    match_kind(p, TOKEN_SEMICOLON)
+    return make_expr_stmt(expr, tok.line, tok.col)
+}
+
+fn parse(tokens) {
+    let p = make_parser(tokens)
+    let stmts = []
+    while not check_kind(p, TOKEN_EOF) {
+        let stmt = parse_statement(p)
+        if stmt != null {
+            stmts.push(stmt)
+        }
+    }
+    return make_program(stmts)
+}

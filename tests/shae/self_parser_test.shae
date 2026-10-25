@@ -1,0 +1,86 @@
+// Shae Phase 5 (Stage 1): Self-Hosting Compiler Frontend Test
+// Tests the pure Shae Lexer, AST, and Pratt Parser by parsing Shae language constructs
+// and self-parsing the compiler frontend's own source code.
+
+use { read } from "std:fs"
+use { tokenize } from "/home/spdedsec/teamwork_projects/shae/lib/compiler/lexer.shae"
+use { parse } from "/home/spdedsec/teamwork_projects/shae/lib/compiler/parser.shae"
+
+println("=== Shae Phase 5: Self-Hosting Compiler Frontend Test ===")
+
+// -------------------------------------------------------------
+// 1. Basic Statements & Expressions Parsing
+// -------------------------------------------------------------
+println("\n[1] Parsing basic variable bindings and arithmetic...")
+let code1 = "let answer = 10 + 20 * 2\nlet ratio = 3.14159\n"
+let tokens1 = tokenize(code1)
+let ast1 = parse(tokens1)
+
+assert_eq(ast1.type, "Program", "AST root must be Program")
+assert_eq(len(ast1.statements), 2, "Expected 2 statements")
+let s1 = ast1.statements[0]
+assert_eq(s1.type, "LetStmt", "First statement must be LetStmt")
+assert_eq(s1.pattern, "answer", "Pattern must be answer")
+assert_eq(s1.init.type, "BinaryExpr", "Init must be BinaryExpr")
+println("   [✓] Basic bindings parsed successfully.")
+
+// -------------------------------------------------------------
+// 2. Control Flow & Functions Parsing
+// -------------------------------------------------------------
+println("\n[2] Parsing functions, if/else, and while loops...")
+let code2 = "fn compute(x, y) \{\n    if x > y \{\n        return x - y\n    \} else \{\n        return y - x\n    \}\n\}\n\nwhile count > 0 \{\n    count = count - 1\n\}\n"
+let tokens2 = tokenize(code2)
+let ast2 = parse(tokens2)
+assert_eq(len(ast2.statements), 2, "Expected 2 statements")
+assert_eq(ast2.statements[0].type, "FnStmt", "Expected FnStmt")
+assert_eq(ast2.statements[0].name, "compute", "Function name must be compute")
+assert_eq(len(ast2.statements[0].params), 2, "Expected 2 params")
+assert_eq(ast2.statements[1].type, "WhileStmt", "Expected WhileStmt")
+println("   [✓] Functions and loops parsed successfully.")
+
+// -------------------------------------------------------------
+// 3. Structs, Collections & Method Invocations
+// -------------------------------------------------------------
+println("\n[3] Parsing structs, arrays, maps, and member calls...")
+let code3 = "struct Point \{ x, y \}\nlet p = Point \{ x: 10, y: 20 \}\nlet list = [1, 2, 3]\nlet val = list[0]\nlet res = p.x + val\n"
+let tokens3 = tokenize(code3)
+let ast3 = parse(tokens3)
+assert_eq(len(ast3.statements), 5, "Expected 5 statements")
+assert_eq(ast3.statements[0].type, "StructStmt", "Expected StructStmt")
+assert_eq(ast3.statements[0].name, "Point", "Expected Point")
+assert_eq(ast3.statements[1].init.type, "StructInitExpr", "Expected StructInitExpr")
+assert_eq(ast3.statements[2].init.type, "ArrayExpr", "Expected ArrayExpr")
+assert_eq(ast3.statements[3].init.type, "IndexExpr", "Expected IndexExpr")
+assert_eq(ast3.statements[4].init.left.type, "GetExpr", "Expected GetExpr")
+println("   [✓] Structs and collections parsed successfully.")
+
+// -------------------------------------------------------------
+// 4. Self-Parsing: The Parser Parses Itself!
+// -------------------------------------------------------------
+println("\n[4] Self-Hosting Verification: Parsing Compiler Source Files...")
+
+let token_src = read("/home/spdedsec/teamwork_projects/shae/lib/compiler/token.shae")
+let token_tokens = tokenize(token_src)
+let token_ast = parse(token_tokens)
+println("   [✓] token.shae self-parsed: " + str(len(token_ast.statements)) + " statements (" + str(len(token_tokens)) + " tokens)")
+assert(len(token_ast.statements) > 10, "token.shae must contain >10 statements")
+
+let ast_src = read("/home/spdedsec/teamwork_projects/shae/lib/compiler/ast.shae")
+let ast_tokens = tokenize(ast_src)
+let ast_ast = parse(ast_tokens)
+println("   [✓] ast.shae self-parsed: " + str(len(ast_ast.statements)) + " statements (" + str(len(ast_tokens)) + " tokens)")
+assert(len(ast_ast.statements) > 15, "ast.shae must contain >15 statements")
+
+let lexer_src = read("/home/spdedsec/teamwork_projects/shae/lib/compiler/lexer.shae")
+let lexer_tokens = tokenize(lexer_src)
+let lexer_ast = parse(lexer_tokens)
+println("   [✓] lexer.shae self-parsed: " + str(len(lexer_ast.statements)) + " statements (" + str(len(lexer_tokens)) + " tokens)")
+assert(len(lexer_ast.statements) > 5, "lexer.shae must contain >5 statements")
+
+let parser_src = read("/home/spdedsec/teamwork_projects/shae/lib/compiler/parser.shae")
+let parser_tokens = tokenize(parser_src)
+let parser_ast = parse(parser_tokens)
+println("   [✓] parser.shae self-parsed: " + str(len(parser_ast.statements)) + " statements (" + str(len(parser_tokens)) + " tokens)")
+assert(len(parser_ast.statements) > 10, "parser.shae must contain >10 statements")
+
+println("\n=== All Self-Hosting Frontend Verification Tests Passed! ===")

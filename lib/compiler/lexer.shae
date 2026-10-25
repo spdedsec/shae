@@ -1,0 +1,459 @@
+// Shae Self-Hosting Compiler: Lexer (Tokenizer)
+// Scans Shae source code into an array of lexical tokens.
+
+use {
+    make_token,
+    TOKEN_EOF, TOKEN_IDENT, TOKEN_INT, TOKEN_FLOAT, TOKEN_STRING, TOKEN_RAW_STRING,
+    TOKEN_LET, TOKEN_FN, TOKEN_RETURN, TOKEN_IF, TOKEN_ELSE, TOKEN_WHILE,
+    TOKEN_FOR, TOKEN_IN, TOKEN_TRUE, TOKEN_FALSE, TOKEN_NULL, TOKEN_BREAK,
+    TOKEN_CONTINUE, TOKEN_USE, TOKEN_FROM, TOKEN_AS, TOKEN_TRY, TOKEN_CATCH,
+    TOKEN_ASYNC, TOKEN_AWAIT, TOKEN_STRUCT, TOKEN_ENUM, TOKEN_MATCH,
+    TOKEN_LPAREN, TOKEN_RPAREN, TOKEN_LBRACE, TOKEN_RBRACE, TOKEN_LBRACKET,
+    TOKEN_RBRACKET, TOKEN_COMMA, TOKEN_COLON, TOKEN_SEMICOLON, TOKEN_DOT,
+    TOKEN_DOT_DOT, TOKEN_DOT_DOT_EQ, TOKEN_QUESTION, TOKEN_DOUBLE_QUESTION,
+    TOKEN_ARROW, TOKEN_FAT_ARROW, TOKEN_PIPE, TOKEN_UNDERSCORE,
+    TOKEN_PLUS, TOKEN_MINUS, TOKEN_STAR, TOKEN_SLASH, TOKEN_PERCENT,
+    TOKEN_EQUALS, TOKEN_PLUS_EQUALS, TOKEN_MINUS_EQUALS, TOKEN_EQ_EQ,
+    TOKEN_NOT_EQ, TOKEN_LT, TOKEN_LT_EQ, TOKEN_GT, TOKEN_GT_EQ,
+    TOKEN_AND, TOKEN_OR, TOKEN_NOT, TOKEN_AMP, TOKEN_BIT_OR, TOKEN_CARET,
+    TOKEN_TILDE, TOKEN_SHL, TOKEN_SHR
+} from "./token.shae"
+
+let KEYWORDS = {
+    "let": TOKEN_LET,
+    "fn": TOKEN_FN,
+    "return": TOKEN_RETURN,
+    "if": TOKEN_IF,
+    "else": TOKEN_ELSE,
+    "while": TOKEN_WHILE,
+    "for": TOKEN_FOR,
+    "in": TOKEN_IN,
+    "true": TOKEN_TRUE,
+    "false": TOKEN_FALSE,
+    "null": TOKEN_NULL,
+    "break": TOKEN_BREAK,
+    "continue": TOKEN_CONTINUE,
+    "use": TOKEN_USE,
+    "from": TOKEN_FROM,
+    "as": TOKEN_AS,
+    "try": TOKEN_TRY,
+    "catch": TOKEN_CATCH,
+    "async": TOKEN_ASYNC,
+    "await": TOKEN_AWAIT,
+    "struct": TOKEN_STRUCT,
+    "enum": TOKEN_ENUM,
+    "match": TOKEN_MATCH,
+    "and": TOKEN_AND,
+    "or": TOKEN_OR,
+    "not": TOKEN_NOT
+}
+
+let DIGITS = "0123456789"
+let HEX_DIGITS = "0123456789abcdefABCDEF"
+let BIN_DIGITS = "01"
+let OCT_DIGITS = "01234567"
+let ALPHA = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
+
+fn parse_radix(digits_str, base) {
+    let lut = "0123456789abcdef"
+    let val = 0
+    let lower = digits_str.lower()
+    let len_str = len(lower)
+    let i = 0
+    while i < len_str {
+        let ch = lower[i]
+        if ch != "_" {
+            let d = -1
+            let j = 0
+            while j < base {
+                if lut[j] == ch {
+                    d = j
+                    break
+                }
+                j = j + 1
+            }
+            if d >= 0 {
+                val = val * base + d
+            }
+        }
+        i = i + 1
+    }
+    return val
+}
+
+fn tokenize(source) {
+    let tokens = []
+    let chars = source.chars()
+    let total_len = len(chars)
+    let pos = 0
+    let line = 1
+    let col = 1
+
+    while pos < total_len {
+        let c = chars[pos]
+
+        // 1. Whitespace handling
+        if c == " " or c == "\t" or c == "\r" {
+            pos = pos + 1
+            col = col + 1
+            continue
+        }
+
+        if c == "\n" {
+            pos = pos + 1
+            line = line + 1
+            col = 1
+            continue
+        }
+
+        let start_line = line
+        let start_col = col
+
+        // 2. Comments
+        if c == "/" and pos + 1 < total_len {
+            let next_c = chars[pos + 1]
+            if next_c == "/" {
+                // Single line comment: skip until newline
+                pos = pos + 2
+                col = col + 2
+                while pos < total_len and chars[pos] != "\n" {
+                    pos = pos + 1
+                    col = col + 1
+                }
+                continue
+            }
+            if next_c == "*" {
+                // Multi-line comment: skip until */
+                pos = pos + 2
+                col = col + 2
+                while pos + 1 < total_len and not (chars[pos] == "*" and chars[pos + 1] == "/") {
+                    if chars[pos] == "\n" {
+                        line = line + 1
+                        col = 1
+                    } else {
+                        col = col + 1
+                    }
+                    pos = pos + 1
+                }
+                if pos + 1 < total_len {
+                    pos = pos + 2
+                    col = col + 2
+                }
+                continue
+            }
+        }
+
+        // 3. Raw strings: r"..."
+        if c == "r" and pos + 1 < total_len and chars[pos + 1] == "\"" {
+            pos = pos + 2
+            col = col + 2
+            let content = ""
+            while pos < total_len and chars[pos] != "\"" {
+                if chars[pos] == "\n" {
+                    line = line + 1
+                    col = 1
+                } else {
+                    col = col + 1
+                }
+                content = content + chars[pos]
+                pos = pos + 1
+            }
+            if pos < total_len and chars[pos] == "\"" {
+                pos = pos + 1
+                col = col + 1
+            }
+            tokens.push(make_token(TOKEN_RAW_STRING, content, start_line, start_col))
+            continue
+        }
+
+        // 4. Normal strings: "..."
+        if c == "\"" {
+            pos = pos + 1
+            col = col + 1
+            let content = ""
+            while pos < total_len and chars[pos] != "\"" {
+                if chars[pos] == "\\" and pos + 1 < total_len {
+                    let esc = chars[pos + 1]
+                    if esc == "n" { content = content + "\n" }
+                    else if esc == "t" { content = content + "\t" }
+                    else if esc == "r" { content = content + "\r" }
+                    else if esc == "\\" { content = content + "\\" }
+                    else if esc == "\"" { content = content + "\"" }
+                    else { content = content + esc }
+                    pos = pos + 2
+                    col = col + 2
+                } else {
+                    if chars[pos] == "\n" {
+                        line = line + 1
+                        col = 1
+                    } else {
+                        col = col + 1
+                    }
+                    content = content + chars[pos]
+                    pos = pos + 1
+                }
+            }
+            if pos < total_len and chars[pos] == "\"" {
+                pos = pos + 1
+                col = col + 1
+            }
+            tokens.push(make_token(TOKEN_STRING, content, start_line, start_col))
+            continue
+        }
+
+        // 5. Number literals
+        if DIGITS.contains(c) {
+            // Check radix: 0x, 0b, 0o
+            if c == "0" and pos + 1 < total_len {
+                let rk = chars[pos + 1].lower()
+                if rk == "x" {
+                    pos = pos + 2
+                    col = col + 2
+                    let num_str = ""
+                    while pos < total_len and (HEX_DIGITS.contains(chars[pos]) or chars[pos] == "_") {
+                        num_str = num_str + chars[pos]
+                        pos = pos + 1
+                        col = col + 1
+                    }
+                    let val = parse_radix(num_str, 16)
+                    tokens.push(make_token(TOKEN_INT, val, start_line, start_col))
+                    continue
+                }
+                if rk == "b" {
+                    pos = pos + 2
+                    col = col + 2
+                    let num_str = ""
+                    while pos < total_len and (BIN_DIGITS.contains(chars[pos]) or chars[pos] == "_") {
+                        num_str = num_str + chars[pos]
+                        pos = pos + 1
+                        col = col + 1
+                    }
+                    let val = parse_radix(num_str, 2)
+                    tokens.push(make_token(TOKEN_INT, val, start_line, start_col))
+                    continue
+                }
+                if rk == "o" {
+                    pos = pos + 2
+                    col = col + 2
+                    let num_str = ""
+                    while pos < total_len and (OCT_DIGITS.contains(chars[pos]) or chars[pos] == "_") {
+                        num_str = num_str + chars[pos]
+                        pos = pos + 1
+                        col = col + 1
+                    }
+                    let val = parse_radix(num_str, 8)
+                    tokens.push(make_token(TOKEN_INT, val, start_line, start_col))
+                    continue
+                }
+            }
+
+            // Decimal number (integer or float)
+            let raw = ""
+            let is_float = false
+            while pos < total_len and (DIGITS.contains(chars[pos]) or chars[pos] == "_") {
+                if chars[pos] != "_" {
+                    raw = raw + chars[pos]
+                }
+                pos = pos + 1
+                col = col + 1
+            }
+
+            // Check for float dot: e.g. 3.14 (ensure not .. or ..=)
+            if pos + 1 < total_len and chars[pos] == "." and DIGITS.contains(chars[pos + 1]) {
+                is_float = true
+                raw = raw + "."
+                pos = pos + 1
+                col = col + 1
+                while pos < total_len and (DIGITS.contains(chars[pos]) or chars[pos] == "_") {
+                    if chars[pos] != "_" {
+                        raw = raw + chars[pos]
+                    }
+                    pos = pos + 1
+                    col = col + 1
+                }
+            }
+
+            // Exponent part: 1e10, 2.5e-3
+            if pos < total_len and (chars[pos] == "e" or chars[pos] == "E") {
+                is_float = true
+                raw = raw + chars[pos]
+                pos = pos + 1
+                col = col + 1
+                if pos < total_len and (chars[pos] == "+" or chars[pos] == "-") {
+                    raw = raw + chars[pos]
+                    pos = pos + 1
+                    col = col + 1
+                }
+                while pos < total_len and DIGITS.contains(chars[pos]) {
+                    raw = raw + chars[pos]
+                    pos = pos + 1
+                    col = col + 1
+                }
+            }
+
+            let num_val = num(raw)
+            if is_float {
+                tokens.push(make_token(TOKEN_FLOAT, num_val, start_line, start_col))
+            } else {
+                tokens.push(make_token(TOKEN_INT, num_val, start_line, start_col))
+            }
+            continue
+        }
+
+        // 6. Identifiers and Keywords
+        if ALPHA.contains(c) {
+            let ident_str = ""
+            while pos < total_len and (ALPHA.contains(chars[pos]) or DIGITS.contains(chars[pos])) {
+                ident_str = ident_str + chars[pos]
+                pos = pos + 1
+                col = col + 1
+            }
+            if KEYWORDS.has(ident_str) {
+                tokens.push(make_token(KEYWORDS[ident_str], ident_str, start_line, start_col))
+            } else {
+                tokens.push(make_token(TOKEN_IDENT, ident_str, start_line, start_col))
+            }
+            continue
+        }
+
+        // 7. Multi-character operators and symbols
+        // DotDotEq: ..=
+        if c == "." and pos + 2 < total_len and chars[pos + 1] == "." and chars[pos + 2] == "=" {
+            pos = pos + 3
+            col = col + 3
+            tokens.push(make_token(TOKEN_DOT_DOT_EQ, "..=", start_line, start_col))
+            continue
+        }
+        // DotDot: ..
+        if c == "." and pos + 1 < total_len and chars[pos + 1] == "." {
+            pos = pos + 2
+            col = col + 2
+            tokens.push(make_token(TOKEN_DOT_DOT, "..", start_line, start_col))
+            continue
+        }
+        // EqEq: ==, FatArrow: =>
+        if c == "=" and pos + 1 < total_len {
+            let n = chars[pos + 1]
+            if n == "=" {
+                pos = pos + 2; col = col + 2
+                tokens.push(make_token(TOKEN_EQ_EQ, "==", start_line, start_col))
+                continue
+            }
+            if n == ">" {
+                pos = pos + 2; col = col + 2
+                tokens.push(make_token(TOKEN_FAT_ARROW, "=>", start_line, start_col))
+                continue
+            }
+        }
+        // NotEq: !=
+        if c == "!" and pos + 1 < total_len and chars[pos + 1] == "=" {
+            pos = pos + 2; col = col + 2
+            tokens.push(make_token(TOKEN_NOT_EQ, "!=", start_line, start_col))
+            continue
+        }
+        // LtEq: <=, Shl: <<
+        if c == "<" and pos + 1 < total_len {
+            let n = chars[pos + 1]
+            if n == "=" {
+                pos = pos + 2; col = col + 2
+                tokens.push(make_token(TOKEN_LT_EQ, "<=", start_line, start_col))
+                continue
+            }
+            if n == "<" {
+                pos = pos + 2; col = col + 2
+                tokens.push(make_token(TOKEN_SHL, "<<", start_line, start_col))
+                continue
+            }
+        }
+        // GtEq: >=, Shr: >>
+        if c == ">" and pos + 1 < total_len {
+            let n = chars[pos + 1]
+            if n == "=" {
+                pos = pos + 2; col = col + 2
+                tokens.push(make_token(TOKEN_GT_EQ, ">=", start_line, start_col))
+                continue
+            }
+            if n == ">" {
+                pos = pos + 2; col = col + 2
+                tokens.push(make_token(TOKEN_SHR, ">>", start_line, start_col))
+                continue
+            }
+        }
+        // PlusEquals: +=
+        if c == "+" and pos + 1 < total_len and chars[pos + 1] == "=" {
+            pos = pos + 2; col = col + 2
+            tokens.push(make_token(TOKEN_PLUS_EQUALS, "+=", start_line, start_col))
+            continue
+        }
+        // MinusEquals: -=, Arrow: ->
+        if c == "-" and pos + 1 < total_len {
+            let n = chars[pos + 1]
+            if n == "=" {
+                pos = pos + 2; col = col + 2
+                tokens.push(make_token(TOKEN_MINUS_EQUALS, "-=", start_line, start_col))
+                continue
+            }
+            if n == ">" {
+                pos = pos + 2; col = col + 2
+                tokens.push(make_token(TOKEN_ARROW, "->", start_line, start_col))
+                continue
+            }
+        }
+        // Pipe: |>, BitOr: ||
+        if c == "|" and pos + 1 < total_len {
+            let n = chars[pos + 1]
+            if n == ">" {
+                pos = pos + 2; col = col + 2
+                tokens.push(make_token(TOKEN_PIPE, "|>", start_line, start_col))
+                continue
+            }
+            if n == "|" {
+                pos = pos + 2; col = col + 2
+                tokens.push(make_token(TOKEN_OR, "||", start_line, start_col))
+                continue
+            }
+        }
+        // And: &&
+        if c == "&" and pos + 1 < total_len and chars[pos + 1] == "&" {
+            pos = pos + 2; col = col + 2
+            tokens.push(make_token(TOKEN_AND, "&&", start_line, start_col))
+            continue
+        }
+        // DoubleQuestion: ??
+        if c == "?" and pos + 1 < total_len and chars[pos + 1] == "?" {
+            pos = pos + 2; col = col + 2
+            tokens.push(make_token(TOKEN_DOUBLE_QUESTION, "??", start_line, start_col))
+            continue
+        }
+
+        // 8. Single-character symbols & operators
+        pos = pos + 1
+        col = col + 1
+
+        if c == "(" { tokens.push(make_token(TOKEN_LPAREN, "(", start_line, start_col)); continue }
+        if c == ")" { tokens.push(make_token(TOKEN_RPAREN, ")", start_line, start_col)); continue }
+        if c == "\{" { tokens.push(make_token(TOKEN_LBRACE, "\{", start_line, start_col)); continue }
+        if c == "\}" { tokens.push(make_token(TOKEN_RBRACE, "\}", start_line, start_col)); continue }
+        if c == "[" { tokens.push(make_token(TOKEN_LBRACKET, "[", start_line, start_col)); continue }
+        if c == "]" { tokens.push(make_token(TOKEN_RBRACKET, "]", start_line, start_col)); continue }
+        if c == "," { tokens.push(make_token(TOKEN_COMMA, ",", start_line, start_col)); continue }
+        if c == ":" { tokens.push(make_token(TOKEN_COLON, ":", start_line, start_col)); continue }
+        if c == ";" { tokens.push(make_token(TOKEN_SEMICOLON, ";", start_line, start_col)); continue }
+        if c == "." { tokens.push(make_token(TOKEN_DOT, ".", start_line, start_col)); continue }
+        if c == "?" { tokens.push(make_token(TOKEN_QUESTION, "?", start_line, start_col)); continue }
+        if c == "+" { tokens.push(make_token(TOKEN_PLUS, "+", start_line, start_col)); continue }
+        if c == "-" { tokens.push(make_token(TOKEN_MINUS, "-", start_line, start_col)); continue }
+        if c == "*" { tokens.push(make_token(TOKEN_STAR, "*", start_line, start_col)); continue }
+        if c == "/" { tokens.push(make_token(TOKEN_SLASH, "/", start_line, start_col)); continue }
+        if c == "%" { tokens.push(make_token(TOKEN_PERCENT, "%", start_line, start_col)); continue }
+        if c == "=" { tokens.push(make_token(TOKEN_EQUALS, "=", start_line, start_col)); continue }
+        if c == "&" { tokens.push(make_token(TOKEN_AMP, "&", start_line, start_col)); continue }
+        if c == "|" { tokens.push(make_token(TOKEN_BIT_OR, "|", start_line, start_col)); continue }
+        if c == "^" { tokens.push(make_token(TOKEN_CARET, "^", start_line, start_col)); continue }
+        if c == "~" { tokens.push(make_token(TOKEN_TILDE, "~", start_line, start_col)); continue }
+        if c == "!" { tokens.push(make_token(TOKEN_NOT, "!", start_line, start_col)); continue }
+    }
+
+    tokens.push(make_token(TOKEN_EOF, "", line, col))
+    return tokens
+}

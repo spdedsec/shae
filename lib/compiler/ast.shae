@@ -1,0 +1,284 @@
+// Shae Self-Hosting Compiler: Abstract Syntax Tree (AST) Definitions
+// Defines all AST node constructors and structures for statements and expressions.
+
+fn make_program(statements) {
+    return {
+        type: "Program",
+        statements: statements
+    }
+}
+
+// --- Statements ---
+
+fn make_let_stmt(pattern, type_ann, init, line, col) {
+    return {
+        type: "LetStmt",
+        pattern: pattern,
+        type_ann: type_ann,
+        init: init,
+        line: line,
+        col: col
+    }
+}
+
+fn make_assign_stmt(target, value, line, col) {
+    return {
+        type: "AssignStmt",
+        target: target,
+        value: value,
+        line: line,
+        col: col
+    }
+}
+
+fn make_fn_stmt(name, params, return_type, body, is_async, line, col) {
+    return {
+        type: "FnStmt",
+        name: name,
+        params: params,
+        return_type: return_type,
+        body: body,
+        is_async: is_async,
+        line: line,
+        col: col
+    }
+}
+
+fn make_if_stmt(condition, then_branch, else_branch, line, col) {
+    return {
+        type: "IfStmt",
+        condition: condition,
+        then_branch: then_branch,
+        else_branch: else_branch,
+        line: line,
+        col: col
+    }
+}
+
+fn make_while_stmt(condition, body, line, col) {
+    return {
+        type: "WhileStmt",
+        condition: condition,
+        body: body,
+        line: line,
+        col: col
+    }
+}
+
+fn make_for_stmt(item, iterable, body, line, col) {
+    return {
+        type: "ForStmt",
+        item: item,
+        iterable: iterable,
+        body: body,
+        line: line,
+        col: col
+    }
+}
+
+fn make_return_stmt(value, line, col) {
+    return {
+        type: "ReturnStmt",
+        value: value,
+        line: line,
+        col: col
+    }
+}
+
+fn make_break_stmt(line, col) {
+    return {
+        type: "BreakStmt",
+        line: line,
+        col: col
+    }
+}
+
+fn make_continue_stmt(line, col) {
+    return {
+        type: "ContinueStmt",
+        line: line,
+        col: col
+    }
+}
+
+fn make_try_catch_stmt(try_body, catch_ident, catch_body, line, col) {
+    return {
+        type: "TryCatchStmt",
+        try_body: try_body,
+        catch_ident: catch_ident,
+        catch_body: catch_body,
+        line: line,
+        col: col
+    }
+}
+
+fn make_struct_stmt(name, fields, line, col) {
+    return {
+        type: "StructStmt",
+        name: name,
+        fields: fields,
+        line: line,
+        col: col
+    }
+}
+
+fn make_enum_stmt(name, variants, line, col) {
+    return {
+        type: "EnumStmt",
+        name: name,
+        variants: variants,
+        line: line,
+        col: col
+    }
+}
+
+fn make_use_stmt(imports, path, line, col) {
+    return {
+        type: "UseStmt",
+        imports: imports,
+        path: path,
+        line: line,
+        col: col
+    }
+}
+
+fn make_expr_stmt(expr, line, col) {
+    return {
+        type: "ExprStmt",
+        expr: expr,
+        line: line,
+        col: col
+    }
+}
+
+// --- Expressions ---
+
+fn make_literal_expr(kind, value, line, col) {
+    return {
+        type: "LiteralExpr",
+        kind: kind,
+        value: value,
+        line: line,
+        col: col
+    }
+}
+
+fn make_variable_expr(name, line, col) {
+    return {
+        type: "VariableExpr",
+        name: name,
+        line: line,
+        col: col
+    }
+}
+
+fn make_binary_expr(left, op, right, line, col) {
+    return {
+        type: "BinaryExpr",
+        left: left,
+        op: op,
+        right: right,
+        line: line,
+        col: col
+    }
+}
+
+fn make_unary_expr(op, expr, line, col) {
+    return {
+        type: "UnaryExpr",
+        op: op,
+        expr: expr,
+        line: line,
+        col: col
+    }
+}
+
+fn make_call_expr(callee, args, line, col) {
+    return {
+        type: "CallExpr",
+        callee: callee,
+        args: args,
+        line: line,
+        col: col
+    }
+}
+
+fn make_get_expr(target, property, safe, line, col) {
+    return {
+        type: "GetExpr",
+        target: target,
+        property: property,
+        safe: safe,
+        line: line,
+        col: col
+    }
+}
+
+fn make_index_expr(target, index, line, col) {
+    return {
+        type: "IndexExpr",
+        target: target,
+        index: index,
+        line: line,
+        col: col
+    }
+}
+
+fn make_array_expr(elements, line, col) {
+    return {
+        type: "ArrayExpr",
+        elements: elements,
+        line: line,
+        col: col
+    }
+}
+
+fn make_map_expr(entries, line, col) {
+    return {
+        type: "MapExpr",
+        entries: entries,
+        line: line,
+        col: col
+    }
+}
+
+fn make_lambda_expr(params, return_type, body, is_async, line, col) {
+    return {
+        type: "LambdaExpr",
+        params: params,
+        return_type: return_type,
+        body: body,
+        is_async: is_async,
+        line: line,
+        col: col
+    }
+}
+
+fn make_match_expr(target, arms, line, col) {
+    return {
+        type: "MatchExpr",
+        target: target,
+        arms: arms,
+        line: line,
+        col: col
+    }
+}
+
+fn make_struct_init_expr(name, fields, line, col) {
+    return {
+        type: "StructInitExpr",
+        name: name,
+        fields: fields,
+        line: line,
+        col: col
+    }
+}
+
+fn make_use_expr(path, line, col) {
+    return {
+        type: "UseExpr",
+        path: path,
+        line: line,
+        col: col
+    }
+}

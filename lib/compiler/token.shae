@@ -1,0 +1,106 @@
+// Shae Self-Hosting Compiler: Token Definitions
+// Defines all lexical tokens, keywords, operators, and token constructors.
+
+// --- Token Kinds ---
+let TOKEN_EOF = "EOF"
+let TOKEN_IDENT = "IDENT"
+let TOKEN_INT = "INT"
+let TOKEN_FLOAT = "FLOAT"
+let TOKEN_STRING = "STRING"
+let TOKEN_RAW_STRING = "RAW_STRING"
+
+// Keywords
+let TOKEN_LET = "LET"
+let TOKEN_FN = "FN"
+let TOKEN_RETURN = "RETURN"
+let TOKEN_IF = "IF"
+let TOKEN_ELSE = "ELSE"
+let TOKEN_WHILE = "WHILE"
+let TOKEN_FOR = "FOR"
+let TOKEN_IN = "IN"
+let TOKEN_TRUE = "TRUE"
+let TOKEN_FALSE = "FALSE"
+let TOKEN_NULL = "NULL"
+let TOKEN_BREAK = "BREAK"
+let TOKEN_CONTINUE = "CONTINUE"
+let TOKEN_USE = "USE"
+let TOKEN_FROM = "FROM"
+let TOKEN_AS = "AS"
+let TOKEN_TRY = "TRY"
+let TOKEN_CATCH = "CATCH"
+let TOKEN_ASYNC = "ASYNC"
+let TOKEN_AWAIT = "AWAIT"
+let TOKEN_STRUCT = "STRUCT"
+let TOKEN_ENUM = "ENUM"
+let TOKEN_MATCH = "MATCH"
+
+// Operators & Delimiters
+let TOKEN_LPAREN = "LPAREN"       // (
+let TOKEN_RPAREN = "RPAREN"       // )
+let TOKEN_LBRACE = "LBRACE"       // {
+let TOKEN_RBRACE = "RBRACE"       // }
+let TOKEN_LBRACKET = "LBRACKET"   // [
+let TOKEN_RBRACKET = "RBRACKET"   // ]
+let TOKEN_COMMA = "COMMA"         // ,
+let TOKEN_COLON = "COLON"         // :
+let TOKEN_SEMICOLON = "SEMICOLON" // ;
+let TOKEN_DOT = "DOT"             // .
+let TOKEN_DOT_DOT = "DOT_DOT"     // ..
+let TOKEN_DOT_DOT_EQ = "DOT_DOT_EQ" // ..=
+let TOKEN_QUESTION = "QUESTION"   // ?
+let TOKEN_DOUBLE_QUESTION = "DOUBLE_QUESTION" // ??
+let TOKEN_ARROW = "ARROW"         // ->
+let TOKEN_FAT_ARROW = "FAT_ARROW" // =>
+let TOKEN_PIPE = "PIPE"           // |>
+let TOKEN_UNDERSCORE = "UNDERSCORE" // _
+
+// Math / Logic Operators
+let TOKEN_PLUS = "PLUS"           // +
+let TOKEN_MINUS = "MINUS"         // -
+let TOKEN_STAR = "STAR"           // *
+let TOKEN_SLASH = "SLASH"         // /
+let TOKEN_PERCENT = "PERCENT"     // %
+let TOKEN_EQUALS = "EQUALS"       // =
+let TOKEN_PLUS_EQUALS = "PLUS_EQUALS" // +=
+let TOKEN_MINUS_EQUALS = "MINUS_EQUALS" // -=
+let TOKEN_EQ_EQ = "EQ_EQ"         // ==
+let TOKEN_NOT_EQ = "NOT_EQ"       // !=
+let TOKEN_LT = "LT"               // <
+let TOKEN_LT_EQ = "LT_EQ"         // <=
+let TOKEN_GT = "GT"               // >
+let TOKEN_GT_EQ = "GT_EQ"         // >=
+let TOKEN_AND = "AND"             // and, &&
+let TOKEN_OR = "OR"               // or, ||
+let TOKEN_NOT = "NOT"             // not, !
+
+// Bitwise Operators
+let TOKEN_AMP = "AMP"             // &
+let TOKEN_BIT_OR = "BIT_OR"       // |
+let TOKEN_CARET = "CARET"         // ^
+let TOKEN_TILDE = "TILDE"         // ~
+let TOKEN_SHL = "SHL"             // <<
+let TOKEN_SHR = "SHR"             // >>
+
+fn make_token(kind, value, line, col) {
+    return {
+        kind: kind,
+        value: value,
+        line: line,
+        col: col
+    }
+}
+
+fn token_is_keyword(kind) {
+    return kind == TOKEN_LET or kind == TOKEN_FN or kind == TOKEN_RETURN or
+           kind == TOKEN_IF or kind == TOKEN_ELSE or kind == TOKEN_WHILE or
+           kind == TOKEN_FOR or kind == TOKEN_IN or kind == TOKEN_TRUE or
+           kind == TOKEN_FALSE or kind == TOKEN_NULL or kind == TOKEN_BREAK or
+           kind == TOKEN_CONTINUE or kind == TOKEN_USE or kind == TOKEN_FROM or
+           kind == TOKEN_AS or kind == TOKEN_TRY or kind == TOKEN_CATCH or
+           kind == TOKEN_ASYNC or kind == TOKEN_AWAIT or kind == TOKEN_STRUCT or
+           kind == TOKEN_ENUM or kind == TOKEN_MATCH
+}
+
+fn token_to_string(token) {
+    return "<" + token.kind + " " + str(token.value) + " @" + str(token.line) + ":" + str(token.col) + ">"
+}
