@@ -1468,6 +1468,89 @@ impl VM {
                                 );
                             }
                         }
+                        Value::Actor(ref _act) => {
+                            if matches!(
+                                property.as_str(),
+                                "send"
+                                    | "ask"
+                                    | "stop"
+                                    | "is_alive"
+                                    | "isAlive"
+                                    | "len"
+                                    | "mailbox_len"
+                                    | "mailboxLen"
+                                    | "id"
+                                    | "status"
+                            ) {
+                                self.stack.push(Value::BoundMethod {
+                                    object: Box::new(target.clone()),
+                                    method: property,
+                                });
+                            } else if is_safe {
+                                self.stack.push(Value::Null);
+                            } else {
+                                runtime_error!(
+                                    self,
+                                    format!("Actor has no property or method '{}'", property)
+                                );
+                            }
+                        }
+                        Value::Supervisor(ref _sup) => {
+                            if matches!(
+                                property.as_str(),
+                                "get_child"
+                                    | "getChild"
+                                    | "start_child"
+                                    | "startChild"
+                                    | "stop_child"
+                                    | "stopChild"
+                                    | "restart_child"
+                                    | "restartChild"
+                                    | "children"
+                                    | "stop"
+                                    | "len"
+                                    | "id"
+                                    | "status"
+                                    | "is_alive"
+                                    | "isAlive"
+                            ) {
+                                self.stack.push(Value::BoundMethod {
+                                    object: Box::new(target.clone()),
+                                    method: property,
+                                });
+                            } else if is_safe {
+                                self.stack.push(Value::Null);
+                            } else {
+                                runtime_error!(
+                                    self,
+                                    format!("Supervisor has no property or method '{}'", property)
+                                );
+                            }
+                        }
+                        Value::Channel(ref _ch) => {
+                            if matches!(
+                                property.as_str(),
+                                "send"
+                                    | "recv"
+                                    | "try_recv"
+                                    | "tryRecv"
+                                    | "close"
+                                    | "len"
+                                    | "capacity"
+                            ) {
+                                self.stack.push(Value::BoundMethod {
+                                    object: Box::new(target.clone()),
+                                    method: property,
+                                });
+                            } else if is_safe {
+                                self.stack.push(Value::Null);
+                            } else {
+                                runtime_error!(
+                                    self,
+                                    format!("Channel has no property or method '{}'", property)
+                                );
+                            }
+                        }
                         other => {
                             runtime_error!(
                                 self,

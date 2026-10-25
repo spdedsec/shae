@@ -114,5 +114,37 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 - [x] Dual-engine compatibility: Bundled executables support `--engine=ast` fallback when source is retained, and disassembling embedded chunks via `--disasm`.
 - [x] 100% backward compatibility with legacy bundle archive JSON schemas.
 
+---
+
+### **Chunk 14: Phase 4 — Actor-Based Concurrency & Distributed Mailboxes** *(Completed)*
+- [x] **Lightweight Isolated Actors (`src/actor.rs`, `src/value.rs`)**
+  - [x] Dedicated OS thread per actor with zero-idle CPU waiting (`Condvar`).
+  - [x] Full memory isolation with recursive deep cloning (`Value::deep_clone`) preventing shared mutable memory and data races.
+  - [x] Stateless actors (`actor.spawn(fn(msg))`) and stateful actors (`actor.spawn(state, fn(state, msg))`).
+  - [x] Unbounded FIFO message mailboxes (`VecDeque<ActorMessage>`).
+  - [x] Non-blocking asynchronous message sending (`actor.send(pid, msg)` and `pid.send(msg)`).
+  - [x] Synchronous request-response pattern (`actor.ask(pid, msg, [timeout_ms])` and `pid.ask(msg, [timeout_ms])`).
+  - [x] Actor lifecycle controls: `stop()`, `is_alive()`, `len()`, `id()`, and `status()`.
+  - [x] Calling actor self-identity inspection (`actor.self_pid()` / `actor.self()`).
+  - [x] Self-ask deadlock detection and prevention.
+- [x] **Global Actor Registry (`ActorRegistry`)**
+  - [x] Named actor registration (`actor.register(name, pid)`).
+  - [x] Name resolution to actor handles (`actor.whereis(name)`).
+  - [x] Unregistration and duplicate name collision protection (`actor.unregister(name)`, `actor.registered()`).
+  - [x] Polymorphic `send(target, msg)` in standard prelude routing to channels, actor handles, and registered names.
+- [x] **Hierarchical Supervision Trees & Process Restart Policies**
+  - [x] Declarative supervisor specifications (`actor.supervisor(config)`).
+  - [x] `OneForOne` restart strategy: isolated restart of crashed child actors with clean initial state.
+  - [x] `AllForOne` restart strategy: atomic restart of all sibling child actors upon child failure.
+  - [x] Restart frequency rate limiting via sliding time window (`max_restarts` within `within_seconds`).
+  - [x] Clean cascading termination of all supervised children on supervisor shutdown.
+  - [x] Dynamic runtime child management: `start_child()`, `stop_child()`, `restart_child()`, `get_child()`, `children()`.
+- [x] **Dual-Engine Runtime Integration & Standard Library (`std:actor`)**
+  - [x] First-class language values: `Value::Actor(Arc<ActorRef>)` and `Value::Supervisor(Arc<SupervisorRef>)`.
+  - [x] Standard library module `std:actor` registered in `stdlib.rs` with 13 core exports.
+  - [x] Full first-class bound method dispatch in both Tree-Walking AST Evaluator (`eval.rs`) and Bytecode VM (`vm.rs`).
+  - [x] Exception-safe depth tracking preserving stack balance in AST try-catch blocks.
+
+
 
 

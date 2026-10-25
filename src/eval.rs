@@ -1546,16 +1546,75 @@ impl Evaluator {
                             }))
                         } else if property == "path" {
                             Ok(Some(Value::String(lib.path.clone())))
+                        } else if *safe || lenient {
+                            Ok(None)
                         } else {
-                            if *safe || lenient {
-                                Ok(None)
-                            } else {
-                                Err(RuntimeError::new(format!(
-                                    "FFI library has no property '{}'",
-                                    property
-                                ))
-                                .at(*span))
-                            }
+                            Err(RuntimeError::new(format!(
+                                "FFI library has no property '{}'",
+                                property
+                            ))
+                            .at(*span))
+                        }
+                    }
+                    Value::Actor(act) => {
+                        if matches!(
+                            property.as_str(),
+                            "send"
+                                | "ask"
+                                | "stop"
+                                | "is_alive"
+                                | "isAlive"
+                                | "len"
+                                | "mailbox_len"
+                                | "mailboxLen"
+                                | "id"
+                                | "status"
+                        ) {
+                            Ok(Some(Value::BoundMethod {
+                                object: Box::new(Value::Actor(act.clone())),
+                                method: property.clone(),
+                            }))
+                        } else if *safe || lenient {
+                            Ok(None)
+                        } else {
+                            Err(RuntimeError::new(format!(
+                                "Actor has no property or method '{}'",
+                                property
+                            ))
+                            .at(*span))
+                        }
+                    }
+                    Value::Supervisor(sup) => {
+                        if matches!(
+                            property.as_str(),
+                            "get_child"
+                                | "getChild"
+                                | "start_child"
+                                | "startChild"
+                                | "stop_child"
+                                | "stopChild"
+                                | "restart_child"
+                                | "restartChild"
+                                | "children"
+                                | "stop"
+                                | "is_alive"
+                                | "isAlive"
+                                | "id"
+                                | "status"
+                                | "len"
+                        ) {
+                            Ok(Some(Value::BoundMethod {
+                                object: Box::new(Value::Supervisor(sup.clone())),
+                                method: property.clone(),
+                            }))
+                        } else if *safe || lenient {
+                            Ok(None)
+                        } else {
+                            Err(RuntimeError::new(format!(
+                                "Supervisor has no property or method '{}'",
+                                property
+                            ))
+                            .at(*span))
                         }
                     }
                     other => {
@@ -2695,14 +2754,11 @@ impl Evaluator {
                     }
                     (Value::Channel(ch), "send") => {
                         if args.len() != 1 {
-                            self.depth -= 1;
-                            return Err(RuntimeError::new(
-                                "ch.send(val) expects 1 argument".into(),
-                            )
-                            .at(span));
+                            Err(RuntimeError::new("ch.send(val) expects 1 argument".into())
+                                .at(span))
+                        } else {
+                            ch.send(args[0].clone(), span).map(|_| Value::Null)
                         }
-                        ch.send(args[0].clone(), span)?;
-                        Ok(Value::Null)
                     }
                     (Value::Channel(ch), "recv") => {
                         let timeout = if args.is_empty() {
@@ -3210,10 +3266,234 @@ impl Evaluator {
                         Ok(Value::FfiFunction(Arc::new(dynamic_fn)))
                     }
                     (Value::FfiLibrary(_), "close") => Ok(Value::Null),
-                    _ => {
-                        self.depth -= 1;
-                        Err(RuntimeError::new(format!("Method {} not found", method)).at(span))
+
+                    // -------------------------------------------------------------
+                    // Actor bound methods
+                    // -------------------------------------------------------------
+                    (Value::Actor(act), "send") => {
+                        if args.len() != 1 {
+                            Err(RuntimeError::new("send() expects 1 argument".into()).at(span))
+                        } else {
+                            act.send(args[0].clone())
+                                .map(|()| Value::Null)
+                                .map_err(|e| e.to_runtime_error(span))
+                        }
                     }
+                    (Value::Actor(act), "ask") => {
+                        let timeout = if args.len() == 1 {
+                            Ok(None)
+                        } else if args.len() == 2 {
+                            match args[1] {
+                                Value::Int(ms) if ms >= 0 => {
+                                    Ok(Some(std::time::Duration::from_millis(ms as u64)))
+                                }
+                                Value::Float(ms) | Value::Number(ms) if ms >= 0.0 => {
+                                    Ok(Some(std::time::Duration::from_millis(ms as u64)))
+                                }
+                                Value::Null => Ok(None),
+                                _ => Err(RuntimeError::new(
+                                    "ask() timeout must be a non-negative number or null".into(),
+                                )
+                                .at(span)),
+                            }
+                        } else {
+                            Err(RuntimeError::new(
+                                "ask() expects 1 or 2 arguments: ask(msg, [timeout_ms])".into(),
+                            )
+                            .at(span))
+                        };
+                        match timeout {
+                            Ok(to) => act
+                                .ask(args[0].clone(), to)
+                                .map_err(|e| e.to_runtime_error(span)),
+                            Err(e) => Err(e),
+                        }
+                    }
+                    (Value::Actor(act), "stop") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("stop() expects 0 arguments".into()).at(span))
+                        } else {
+                            Ok(Value::Bool(act.stop()))
+                        }
+                    }
+                    (Value::Actor(act), "is_alive" | "isAlive") => {
+                        if !args.is_empty() {
+                            Err(
+                                RuntimeError::new(format!("{}() expects 0 arguments", method))
+                                    .at(span),
+                            )
+                        } else {
+                            Ok(Value::Bool(act.is_alive()))
+                        }
+                    }
+                    (Value::Actor(act), "len" | "mailbox_len" | "mailboxLen") => {
+                        if !args.is_empty() {
+                            Err(
+                                RuntimeError::new(format!("{}() expects 0 arguments", method))
+                                    .at(span),
+                            )
+                        } else {
+                            Ok(Value::Int(act.mailbox_len() as i64))
+                        }
+                    }
+                    (Value::Actor(act), "id") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("id() expects 0 arguments".into()).at(span))
+                        } else {
+                            Ok(Value::String(act.id().to_string()))
+                        }
+                    }
+                    (Value::Actor(act), "status") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("status() expects 0 arguments".into()).at(span))
+                        } else {
+                            Ok(Value::String(act.status().as_str().to_string()))
+                        }
+                    }
+
+                    // -------------------------------------------------------------
+                    // Supervisor bound methods
+                    // -------------------------------------------------------------
+                    (Value::Supervisor(sup), "get_child" | "getChild") => {
+                        if args.len() != 1 {
+                            Err(RuntimeError::new(
+                                "get_child() expects 1 argument (child_id)".into(),
+                            )
+                            .at(span))
+                        } else {
+                            match &args[0] {
+                                Value::String(s) => match sup.get_child(s) {
+                                    Some(a) => Ok(Value::Actor(a)),
+                                    None => Ok(Value::Null),
+                                },
+                                other => Err(RuntimeError::new(format!(
+                                    "get_child() expects string child_id, got {}",
+                                    other.type_name()
+                                ))
+                                .at(span)),
+                            }
+                        }
+                    }
+                    (Value::Supervisor(sup), "start_child" | "startChild") => {
+                        if args.len() != 1 {
+                            Err(RuntimeError::new(
+                                "start_child() expects 1 argument (child_spec map)".into(),
+                            )
+                            .at(span))
+                        } else {
+                            match crate::stdlib::parse_shae_child_spec(&args[0], self, span) {
+                                Ok(child_spec) => sup
+                                    .start_child(child_spec)
+                                    .map(Value::Actor)
+                                    .map_err(|e| e.to_runtime_error(span)),
+                                Err(e) => Err(e),
+                            }
+                        }
+                    }
+                    (Value::Supervisor(sup), "stop_child" | "stopChild") => {
+                        if args.len() != 1 {
+                            Err(RuntimeError::new(
+                                "stop_child() expects 1 argument (child_id)".into(),
+                            )
+                            .at(span))
+                        } else {
+                            match &args[0] {
+                                Value::String(s) => sup
+                                    .stop_child(s)
+                                    .map(|()| Value::Null)
+                                    .map_err(|e| e.to_runtime_error(span)),
+                                other => Err(RuntimeError::new(format!(
+                                    "stop_child() expects string child_id, got {}",
+                                    other.type_name()
+                                ))
+                                .at(span)),
+                            }
+                        }
+                    }
+                    (Value::Supervisor(sup), "restart_child" | "restartChild") => {
+                        if args.len() != 1 {
+                            Err(RuntimeError::new(
+                                "restart_child() expects 1 argument (child_id)".into(),
+                            )
+                            .at(span))
+                        } else {
+                            match &args[0] {
+                                Value::String(s) => sup
+                                    .restart_child(s)
+                                    .map(Value::Actor)
+                                    .map_err(|e| e.to_runtime_error(span)),
+                                other => Err(RuntimeError::new(format!(
+                                    "restart_child() expects string child_id, got {}",
+                                    other.type_name()
+                                ))
+                                .at(span)),
+                            }
+                        }
+                    }
+                    (Value::Supervisor(sup), "children") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("children() expects 0 arguments".into()).at(span))
+                        } else {
+                            let children_info = sup.children();
+                            let mut list = Vec::with_capacity(children_info.len());
+                            for (id, status) in children_info {
+                                let mut child_map = indexmap::IndexMap::new();
+                                child_map.insert("id".to_string(), Value::String(id.clone()));
+                                child_map.insert(
+                                    "status".to_string(),
+                                    Value::String(status.as_str().to_string()),
+                                );
+                                if let Some(actor) = sup.get_child(&id) {
+                                    child_map.insert("actor".to_string(), Value::Actor(actor));
+                                }
+                                list.push(Value::Map(std::sync::Arc::new(std::sync::RwLock::new(
+                                    child_map,
+                                ))));
+                            }
+                            Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
+                                list,
+                            ))))
+                        }
+                    }
+                    (Value::Supervisor(sup), "stop") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("stop() expects 0 arguments".into()).at(span))
+                        } else {
+                            Ok(Value::Bool(sup.stop()))
+                        }
+                    }
+                    (Value::Supervisor(sup), "len") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("len() expects 0 arguments".into()).at(span))
+                        } else {
+                            Ok(Value::Int(sup.len() as i64))
+                        }
+                    }
+                    (Value::Supervisor(sup), "id") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("id() expects 0 arguments".into()).at(span))
+                        } else {
+                            Ok(Value::String(sup.id().to_string()))
+                        }
+                    }
+                    (Value::Supervisor(sup), "status") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("status() expects 0 arguments".into()).at(span))
+                        } else {
+                            Ok(Value::String(sup.status().to_string()))
+                        }
+                    }
+                    (Value::Supervisor(sup), "is_alive" | "isAlive") => {
+                        if !args.is_empty() {
+                            Err(
+                                RuntimeError::new(format!("{}() expects 0 arguments", method))
+                                    .at(span),
+                            )
+                        } else {
+                            Ok(Value::Bool(sup.is_alive()))
+                        }
+                    }
+                    _ => Err(RuntimeError::new(format!("Method {} not found", method)).at(span)),
                 }
             }
 

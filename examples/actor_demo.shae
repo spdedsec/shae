@@ -1,0 +1,154 @@
+// Shae Phase 4: Actor-Based Concurrency & Supervision Demo
+// Demonstrates isolated lightweight actors, mailboxes, request-reply (ask),
+// global registry, and fault-tolerant supervision trees.
+
+let actor = use "std:actor"
+
+println("=== Shae Phase 4: Actor-Based Concurrency Demo ===")
+
+// -------------------------------------------------------------
+// 1. Stateless Actor & Request-Reply (ask) Pattern
+// -------------------------------------------------------------
+println("\n[1] Spawning stateless math worker...")
+let math_worker = actor.spawn(fn(msg) {
+    if msg["op"] == "square" {
+        return msg["n"] * msg["n"]
+    } else if msg["op"] == "double" {
+        return msg["n"] * 2
+    } else {
+        return "unknown operation"
+    }
+})
+
+let res1 = math_worker.ask({ "op": "square", "n": 12 })
+let res2 = math_worker.ask({ "op": "double", "n": 21 })
+println("   12^2 = " + str(res1))
+println("   21*2 = " + str(res2))
+math_worker.stop()
+println("   Stateless worker stopped.")
+
+// -------------------------------------------------------------
+// 2. Stateful Actor with Message Passing
+// -------------------------------------------------------------
+println("\n[2] Spawning stateful bank account actor...")
+let account = actor.spawn({ "balance": 1000, "owner": "Alice" }, fn(state, msg) {
+    if msg["action"] == "deposit" {
+        let new_bal = state["balance"] + msg["amount"]
+        return {
+            "state": { "balance": new_bal, "owner": state["owner"] },
+            "reply": new_bal
+        }
+    } else if msg["action"] == "withdraw" {
+        if state["balance"] >= msg["amount"] {
+            let new_bal = state["balance"] - msg["amount"]
+            return {
+                "state": { "balance": new_bal, "owner": state["owner"] },
+                "reply": { "ok": true, "balance": new_bal }
+            }
+        } else {
+            return {
+                "state": state,
+                "reply": { "ok": false, "reason": "insufficient funds" }
+            }
+        }
+    } else if msg["action"] == "balance" {
+        return { "state": state, "reply": state["balance"] }
+    } else {
+        return state
+    }
+})
+
+let bal0 = account.ask({ "action": "balance" })
+println("   Initial balance: $" + str(bal0))
+
+let dep_res = account.ask({ "action": "deposit", "amount": 250 })
+println("   Deposited $250 -> Balance: $" + str(dep_res))
+
+let w1 = account.ask({ "action": "withdraw", "amount": 400 })
+println("   Withdraw $400 result: " + str(w1))
+
+let w2 = account.ask({ "action": "withdraw", "amount": 5000 })
+println("   Withdraw $5000 result: " + str(w2))
+
+account.stop()
+println("   Account actor stopped.")
+
+// -------------------------------------------------------------
+// 3. Named Registry & Polymorphic Messaging
+// -------------------------------------------------------------
+println("\n[3] Testing Named Registry & Polymorphic send()...")
+let logger = actor.spawn(fn(msg) {
+    println("   [LOGGER EVENT]: " + str(msg))
+})
+
+actor.register("system_logger", logger)
+println("   Registered 'system_logger'")
+
+// Polymorphic prelude send() to registered string name
+send("system_logger", "System initialized successfully")
+send("system_logger", "Heartbeat tick: ok")
+
+// Allow asynchronous worker to flush events
+let drain = channel(1)
+drain.recv(50)
+
+let resolved = actor.whereis("system_logger")
+println("   whereis('system_logger') alive? " + str(resolved.is_alive()))
+
+actor.unregister("system_logger")
+logger.stop()
+println("   Unregistered & stopped system_logger.")
+
+// -------------------------------------------------------------
+// 4. Fault-Tolerant Supervision Tree (OneForOne Restart)
+// -------------------------------------------------------------
+println("\n[4] Initializing Fault-Tolerant Supervision Tree...")
+let sup = actor.supervisor({
+    "strategy": "one_for_one",
+    "max_restarts": 5,
+    "within_seconds": 10.0,
+    "children": [
+        {
+            "id": "cache_service",
+            "state": { "hits": 0 },
+            "start": fn(st, msg) {
+                if msg == "crash" {
+                    // Trigger runtime crash error
+                    return 1 / 0
+                } else if msg == "hit" {
+                    let next = st["hits"] + 1
+                    return { "state": { "hits": next }, "reply": next }
+                } else {
+                    return { "state": st, "reply": st["hits"] }
+                }
+            }
+        }
+    ]
+})
+
+println("   Supervisor running with " + str(sup.len()) + " child.")
+let cache = sup.get_child("cache_service")
+let h1 = cache.ask("hit")
+let h2 = cache.ask("hit")
+println("   Cache service hits: " + str(h2))
+
+println("   Triggering child runtime crash...")
+try {
+    cache.ask("crash", 500)
+} catch err {
+    println("   [!] Caught expected crash error from actor")
+}
+
+// Brief pause to allow asynchronous supervisor thread to restart the child
+let timer = channel(1)
+timer.recv(150)
+
+// Supervisor automatically restarts child with initial state under OneForOne
+let restarted_cache = sup.get_child("cache_service")
+println("   Supervised child alive after crash? " + str(restarted_cache.is_alive()))
+let h_fresh = restarted_cache.ask("hit")
+println("   Fresh hit count after restart: " + str(h_fresh) + " (clean state recovered)")
+
+sup.stop()
+println("   Supervision tree gracefully terminated.")
+println("\n=== Shae Phase 4 Demo Complete ===")

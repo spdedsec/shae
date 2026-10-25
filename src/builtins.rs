@@ -1425,11 +1425,29 @@ fn builtin_send(
     span: Span,
 ) -> Result<Value, RuntimeError> {
     expect_args("send", 2, &args, span)?;
-    if let Value::Channel(ch) = &args[0] {
-        ch.send(args[1].clone(), span)?;
-        Ok(Value::Null)
-    } else {
-        Err(RuntimeError::new("send() expects a channel as first argument".into()).at(span))
+    match &args[0] {
+        Value::Channel(ch) => {
+            ch.send(args[1].clone(), span)?;
+            Ok(Value::Null)
+        }
+        Value::Actor(act) => {
+            act.send(args[1].clone())
+                .map_err(|e| e.to_runtime_error(span))?;
+            Ok(Value::Null)
+        }
+        Value::String(name) => {
+            if let Some(act) = crate::actor::ActorRegistry::whereis(name) {
+                act.send(args[1].clone())
+                    .map_err(|e| e.to_runtime_error(span))?;
+                Ok(Value::Null)
+            } else {
+                Err(crate::actor::ActorError::NameNotFound(name.clone()).to_runtime_error(span))
+            }
+        }
+        _ => Err(RuntimeError::new(
+            "send expects an actor, channel, or registered actor name as first argument".into(),
+        )
+        .at(span)),
     }
 }
 

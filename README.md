@@ -38,6 +38,7 @@ Shae is designed to hit the sweet spot between safety, ergonomics, raw utility, 
 - 🌐 **Modern HTTP Client & Server**:
   - Client (`std:http`): Ergonomic `get`, `post_json`, query parameter encoding, and automatic response decoding.
   - Server (`serve`, `serve_tls`): Multi-threaded HTTP/1.1 and TLS servers with keep-alive connection pooling and route pattern matching.
+- 🎭 **Actor-Based Concurrency & Supervision (`std:actor`)**: Isolated actors with asynchronous unbounded FIFO mailboxes, synchronous request-response (`ask`), named registry resolution, and fault-tolerant supervision trees (`OneForOne`, `AllForOne`) with automatic restart thresholds.
 - 🧵 **True Concurrency & Channels**: Asynchronous thread spawning (`spawn()`) and message-passing channels (`channel(capacity)`).
 - 🛡️ **Predictable Primitives**: Distinct integers (`i64`) and floats (`f64`), radix literals (`0x`, `0b`, `0o`), and full bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`).
 - 🧩 **Pattern Matching & Destructuring**: Match arm guards, range patterns (`1..=10`), and array/struct destructuring with rest patterns.
@@ -174,7 +175,77 @@ while msg != null {
 }
 ```
 
-### 6. Expanded Standard Library
+### 6. Actor Concurrency & Fault-Tolerant Supervision (`std:actor`)
+Shae provides Erlang/OTP-inspired isolated actors with zero shared mutable state, deep-cloned message envelopes, unbounded FIFO mailboxes, request-response synchronization, and hierarchical supervision trees:
+
+```shae
+let actor = use "std:actor"
+
+// Stateful actor maintaining encapsulated state
+let counter = actor.spawn(0, fn(count, msg) {
+    if msg == "inc" {
+        return { "state": count + 1, "reply": count + 1 }
+    } else if msg == "get" {
+        return { "state": count, "reply": count }
+    }
+    return count
+})
+
+// Synchronous request-response (ask) pattern
+let val = counter.ask("inc") // 1
+println("Counter:", counter.ask("get")) // 1
+
+// Global actor registry and polymorphic sending
+actor.register("global_counter", counter)
+send("global_counter", "inc")
+
+// Fault-tolerant supervision tree
+let sup = actor.supervisor({
+    "strategy": "one_for_one",
+    "max_restarts": 3,
+    "within_seconds": 5.0,
+    "children": [
+        {
+            "id": "worker",
+            "state": 100,
+            "start": fn(st, msg) {
+                if msg == "fail" { return 1 / 0 } // Automatic restart
+                return { "state": st, "reply": "ok" }
+            }
+        }
+    ]
+})
+
+let worker = sup.get_child("worker")
+println("Supervised worker status:", worker.ask("ping"))
+
+// Graceful teardown
+counter.stop()
+sup.stop()
+```
+
+#### `std:actor` Module API Reference
+| Function / Method | Signature | Description |
+|---|---|---|
+| `actor.spawn(handler)` | `fn(handler: fn(msg))` | Spawns a stateless actor with unary message handler |
+| `actor.spawn(initial_state, handler)` | `fn(state, handler: fn(state, msg))` | Spawns a stateful actor with state-transition handler |
+| `actor.spawn_named(name, [state], handler)` | `fn(name: str, ...)` | Spawns an actor and binds it to the global registry |
+| `actor.send(target, msg)` / `pid.send(msg)` | `fn(target, msg)` | Asynchronous non-blocking message dispatch |
+| `actor.ask(target, msg, [timeout_ms])` / `pid.ask(msg, [timeout_ms])` | `fn(target, msg, [timeout])` | Synchronous request-response with optional timeout |
+| `actor.stop(pid)` / `pid.stop()` | `fn(pid)` | Cleanly shuts down actor and terminates thread |
+| `actor.is_alive(pid)` / `pid.is_alive()` | `fn(pid) -> bool` | Checks if actor is active and running |
+| `actor.mailbox_len(pid)` / `pid.len()` | `fn(pid) -> int` | Returns current count of queued messages |
+| `actor.self_pid()` / `actor.self()` | `fn() -> ActorRef` | Retrieves the calling actor's own handle |
+| `actor.register(name, pid)` | `fn(name: str, pid)` | Registers global alias for actor |
+| `actor.whereis(name)` | `fn(name: str) -> ActorRef` | Resolves global alias to actor handle |
+| `actor.unregister(name)` | `fn(name: str)` | Unbinds global alias from registry |
+| `actor.registered()` | `fn() -> [str]` | Lists all currently registered global actor names |
+| `actor.supervisor(config)` | `fn(config: map) -> SupervisorRef` | Creates supervision tree (`OneForOne` / `AllForOne`) |
+| `sup.get_child(id)` / `sup.children()` | `fn(id)` / `fn()` | Retrieves child actor handle or lists child IDs |
+| `sup.start_child(spec)` / `sup.stop_child(id)` | `fn(spec)` / `fn(id)` | Dynamically starts or stops supervised children |
+| `sup.restart_child(id)` / `sup.stop()` | `fn(id)` / `fn()` | Restarts specific child or stops supervisor tree |
+
+### 7. Expanded Standard Library
 ```shae
 // Cryptography
 use { sha256, hmac_sha256, uuid_v4, random_bytes } from "std:crypto"
@@ -224,6 +295,7 @@ println("Running on:", sys.platform(), sys.arch())
 
 Explore ready-to-run examples in the [`examples/`](examples) directory:
 
+- 🎭 [**Actor Concurrency & Supervision Demo**](examples/actor_demo.shae): Stateful actors, request-reply `ask`, named registry, and `OneForOne` supervisor crash recovery.
 - 🚀 [**Production Microservice Showcase**](examples/realworld_service/): Complete real-world HTTP microservice integrating SQLite telemetry persistence and CSV bulk import/export.
 - 🔤 [**Unicode & Grapheme Demo**](examples/unicode_demo.shae): Extended grapheme clusters, emoji sequences, and rune slicing.
 - 🚦 [**OS Signals Demo**](examples/signals_demo.shae): Cross-platform interrupt handling and graceful server teardown.
@@ -286,10 +358,12 @@ The output executable embeds all imported dependencies and executes directly wit
 
 Shae is advancing toward an enterprise-scale systems ecosystem. Upcoming major phases:
 
-1. **Phase 4: Actor-Based Concurrency & Distributed Mailboxes**:
-   - Lightweight isolated actors with unbounded mailboxes and message passing.
-   - Supervision trees (`OneForOne`, `AllForOne`) with automatic process restart policies.
-   - Remote node discovery and cluster channel serialization.
+1. **Phase 4: Actor-Based Concurrency & Distributed Mailboxes** *(Completed in v0.3.1)*:
+   - Lightweight isolated actors with unbounded mailboxes and message passing (`std:actor`).
+   - Request-response `ask` pattern with configurable timeouts.
+   - Global name registration (`ActorRegistry`) and polymorphic message dispatch.
+   - Fault-tolerant supervision trees (`OneForOne`, `AllForOne`) with automatic process restart policies.
+   - Full dual-engine VM and AST execution parity.
 2. **Phase 5: Self-Hosting Shae Compiler & Direct Native Linker**:
    - Lexer, parser, type checker, and Cranelift backend rewritten in pure Shae.
    - Direct ELF, Mach-O, and PE object emission with zero external compiler dependencies.

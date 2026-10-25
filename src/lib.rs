@@ -1,3 +1,4 @@
+pub mod actor;
 pub mod ast;
 pub mod async_rt;
 pub mod builtins;

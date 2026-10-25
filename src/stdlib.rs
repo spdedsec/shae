@@ -1,3 +1,7 @@
+use crate::actor::{
+    ActorError, ActorRef, ActorRegistry, ChildSpec, RestartPolicy, RestartStrategy,
+    SupervisorConfig, SupervisorRef,
+};
 use crate::ast::Span;
 use crate::builtins::expect_args;
 use crate::eval::{Evaluator, RuntimeError};
@@ -10,6 +14,7 @@ use ring::rand::SecureRandom;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::time::Duration;
 
 pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
     let clean_name = name
@@ -33,8 +38,9 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "csv" => Ok(build_csv_module()),
         "sqlite" | "sql" => Ok(build_sqlite_module()),
         "unicode" => Ok(build_unicode_module()),
+        "actor" | "actors" => Ok(build_actor_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor",
             clean_name
         ))
         .at(span)),
@@ -2907,4 +2913,562 @@ fn unicode_category(
     Ok(Value::String(
         crate::unicode::unicode_category(ch).to_string(),
     ))
+}
+
+// -------------------------------------------------------------
+// std:actor
+// -------------------------------------------------------------
+
+fn build_actor_module() -> Value {
+    make_map(vec![
+        ("spawn", actor_spawn),
+        ("spawn_named", actor_spawn_named),
+        ("spawnNamed", actor_spawn_named),
+        ("send", actor_send),
+        ("ask", actor_ask),
+        ("stop", actor_stop),
+        ("is_alive", actor_is_alive),
+        ("isAlive", actor_is_alive),
+        ("mailbox_len", actor_mailbox_len),
+        ("mailboxLen", actor_mailbox_len),
+        ("len", actor_mailbox_len),
+        ("self_pid", actor_self_pid),
+        ("selfPid", actor_self_pid),
+        ("self", actor_self_pid),
+        ("supervisor", actor_supervisor),
+        ("register", actor_register),
+        ("whereis", actor_whereis),
+        ("unregister", actor_unregister),
+        ("registered", actor_registered),
+    ])
+}
+
+pub(crate) fn parse_shae_child_spec(
+    val: &Value,
+    ev: &Evaluator,
+    span: Span,
+) -> Result<ChildSpec, RuntimeError> {
+    let map = match val {
+        Value::Map(m) => {
+            let g = match m.read() {
+                Ok(guard) => guard,
+                Err(p) => p.into_inner(),
+            };
+            g.clone()
+        }
+        _ => {
+            return Err(RuntimeError::new(
+                "Child spec must be a map with 'id' and 'handler' (or 'start')".into(),
+            )
+            .at(span));
+        }
+    };
+
+    let id = match map.get("id") {
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+        None => {
+            return Err(RuntimeError::new("Child spec must contain a string 'id'".into()).at(span));
+        }
+    };
+
+    let handler = map
+        .get("handler")
+        .or_else(|| map.get("start"))
+        .cloned()
+        .ok_or_else(|| {
+            RuntimeError::new(format!(
+                "Child spec '{}' must contain a callable 'handler' or 'start'",
+                id
+            ))
+            .at(span)
+        })?;
+
+    if !handler.is_callable() {
+        return Err(
+            RuntimeError::new(format!("Child spec '{}' handler must be a function", id)).at(span),
+        );
+    }
+
+    let initial_state = map
+        .get("state")
+        .or_else(|| map.get("initial_state"))
+        .map(|v| v.deep_clone());
+
+    let restart_policy = if let Some(r) = map.get("restart").or_else(|| map.get("restart_policy")) {
+        match r {
+            Value::String(s) => {
+                Some(RestartPolicy::from_str_loose(s).map_err(|e| e.to_runtime_error(span))?)
+            }
+            _ => {
+                return Err(RuntimeError::new(
+                    "Child spec 'restart' policy must be a string ('permanent', 'transient', 'temporary')".into(),
+                )
+                .at(span));
+            }
+        }
+    } else {
+        None
+    };
+
+    let worker_eval = Evaluator::with_env_cache_file(
+        ev.global_env.clone(),
+        ev.module_cache.clone(),
+        ev.current_file.clone(),
+    );
+
+    let mut spec = ChildSpec::from_shae(id, initial_state, handler, Some(worker_eval));
+    if let Some(p) = restart_policy {
+        spec = spec.with_restart(p);
+    }
+    Ok(spec)
+}
+
+fn actor_spawn(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(RuntimeError::new(
+            "spawn() expects 1 or 2 arguments: spawn(handler) or spawn(initial_state, handler)"
+                .into(),
+        )
+        .at(span));
+    }
+
+    let (initial_state, handler) = if args.len() == 1 {
+        let h = args[0].clone();
+        if !h.is_callable() {
+            return Err(RuntimeError::new("spawn() handler must be a function".into()).at(span));
+        }
+        (None, h)
+    } else {
+        let st = args[0].deep_clone();
+        let h = args[1].clone();
+        if !h.is_callable() {
+            return Err(RuntimeError::new("spawn() handler must be a function".into()).at(span));
+        }
+        (Some(st), h)
+    };
+
+    let actor = ActorRef::spawn_with_eval(ev, None, initial_state, handler)
+        .map_err(|e| e.to_runtime_error(span))?;
+    Ok(Value::Actor(actor))
+}
+
+fn actor_spawn_named(
+    ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.len() < 2 || args.len() > 3 {
+        return Err(RuntimeError::new(
+            "spawn_named() expects 2 or 3 arguments: spawn_named(name, handler) or spawn_named(name, initial_state, handler)".into(),
+        )
+        .at(span));
+    }
+
+    let name = match &args[0] {
+        Value::String(s) => s.clone(),
+        _ => {
+            return Err(RuntimeError::new(
+                "spawn_named() first argument must be a string name".into(),
+            )
+            .at(span));
+        }
+    };
+
+    let (initial_state, handler) = if args.len() == 2 {
+        let h = args[1].clone();
+        if !h.is_callable() {
+            return Err(
+                RuntimeError::new("spawn_named() handler must be a function".into()).at(span),
+            );
+        }
+        (None, h)
+    } else {
+        let st = args[1].deep_clone();
+        let h = args[2].clone();
+        if !h.is_callable() {
+            return Err(
+                RuntimeError::new("spawn_named() handler must be a function".into()).at(span),
+            );
+        }
+        (Some(st), h)
+    };
+
+    if ActorRegistry::whereis(&name).is_some() {
+        return Err(ActorError::NameAlreadyRegistered(name).to_runtime_error(span));
+    }
+
+    let actor = ActorRef::spawn_with_eval(ev, Some(&name), initial_state, handler)
+        .map_err(|e| e.to_runtime_error(span))?;
+
+    Ok(Value::Actor(actor))
+}
+
+fn actor_send(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("send", 2, &args, span)?;
+    match &args[0] {
+        Value::Actor(act) => {
+            act.send(args[1].clone())
+                .map_err(|e| e.to_runtime_error(span))?;
+            Ok(Value::Null)
+        }
+        Value::String(name) => {
+            if let Some(act) = ActorRegistry::whereis(name) {
+                act.send(args[1].clone())
+                    .map_err(|e| e.to_runtime_error(span))?;
+                Ok(Value::Null)
+            } else {
+                Err(ActorError::NameNotFound(name.clone()).to_runtime_error(span))
+            }
+        }
+        Value::Channel(ch) => {
+            ch.send(args[1].clone(), span)?;
+            Ok(Value::Null)
+        }
+        _ => Err(RuntimeError::new(
+            "send expects an actor, channel, or registered actor name as first argument".into(),
+        )
+        .at(span)),
+    }
+}
+
+fn actor_ask(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() < 2 || args.len() > 3 {
+        return Err(RuntimeError::new(
+            "ask() expects 2 or 3 arguments: ask(target, msg, [timeout_ms])".into(),
+        )
+        .at(span));
+    }
+
+    let actor = match &args[0] {
+        Value::Actor(act) => Arc::clone(act),
+        Value::String(name) => ActorRegistry::whereis(name)
+            .ok_or_else(|| ActorError::NameNotFound(name.clone()).to_runtime_error(span))?,
+        _ => {
+            return Err(RuntimeError::new(
+                "ask expects an actor or registered actor name as first argument".into(),
+            )
+            .at(span));
+        }
+    };
+
+    let timeout = if args.len() == 3 {
+        match &args[2] {
+            Value::Int(ms) if *ms >= 0 => Some(Duration::from_millis(*ms as u64)),
+            Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => {
+                Some(Duration::from_millis(*ms as u64))
+            }
+            Value::Null => None,
+            _ => {
+                return Err(RuntimeError::new(
+                    "ask() timeout must be a non-negative number".into(),
+                )
+                .at(span));
+            }
+        }
+    } else {
+        None
+    };
+
+    let reply = actor
+        .ask(args[1].clone(), timeout)
+        .map_err(|e| e.to_runtime_error(span))?;
+    Ok(reply)
+}
+
+fn actor_stop(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("stop", 1, &args, span)?;
+    match &args[0] {
+        Value::Actor(act) => Ok(Value::Bool(act.stop())),
+        Value::Supervisor(sup) => Ok(Value::Bool(sup.stop())),
+        Value::String(name) => {
+            if let Some(act) = ActorRegistry::whereis(name) {
+                let stopped = act.stop();
+                ActorRegistry::unregister(name);
+                Ok(Value::Bool(stopped))
+            } else {
+                Ok(Value::Bool(false))
+            }
+        }
+        _ => Err(RuntimeError::new(
+            "stop expects an actor, supervisor, or registered actor name as first argument".into(),
+        )
+        .at(span)),
+    }
+}
+
+fn actor_is_alive(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("is_alive", 1, &args, span)?;
+    match &args[0] {
+        Value::Actor(act) => Ok(Value::Bool(act.is_alive())),
+        Value::Supervisor(sup) => Ok(Value::Bool(sup.is_alive())),
+        Value::String(name) => Ok(Value::Bool(
+            ActorRegistry::whereis(name)
+                .map(|a| a.is_alive())
+                .unwrap_or(false),
+        )),
+        _ => Err(RuntimeError::new(
+            "is_alive expects an actor, supervisor, or registered actor name as first argument"
+                .into(),
+        )
+        .at(span)),
+    }
+}
+
+fn actor_mailbox_len(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("mailbox_len", 1, &args, span)?;
+    match &args[0] {
+        Value::Actor(act) => Ok(Value::Int(act.mailbox_len() as i64)),
+        Value::String(name) => {
+            if let Some(act) = ActorRegistry::whereis(name) {
+                Ok(Value::Int(act.mailbox_len() as i64))
+            } else {
+                Err(ActorError::NameNotFound(name.clone()).to_runtime_error(span))
+            }
+        }
+        _ => Err(RuntimeError::new(
+            "mailbox_len expects an actor or registered actor name as first argument".into(),
+        )
+        .at(span)),
+    }
+}
+
+fn actor_self_pid(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("self_pid", 0, &args, span)?;
+    match crate::actor::self_pid() {
+        Some(act) => Ok(Value::Actor(act)),
+        None => Ok(Value::Null),
+    }
+}
+
+fn actor_register(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("register", 2, &args, span)?;
+    let name = match &args[0] {
+        Value::String(s) => s.clone(),
+        _ => return Err(RuntimeError::new("register() name must be a string".into()).at(span)),
+    };
+    let actor = match &args[1] {
+        Value::Actor(act) => Arc::clone(act),
+        _ => {
+            return Err(
+                RuntimeError::new("register() second argument must be an actor".into()).at(span),
+            );
+        }
+    };
+    ActorRegistry::register(&name, actor).map_err(|e| e.to_runtime_error(span))?;
+    Ok(Value::Bool(true))
+}
+
+fn actor_whereis(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("whereis", 1, &args, span)?;
+    let name = match &args[0] {
+        Value::String(s) => s,
+        _ => return Err(RuntimeError::new("whereis() name must be a string".into()).at(span)),
+    };
+    match ActorRegistry::whereis(name) {
+        Some(act) => Ok(Value::Actor(act)),
+        None => Ok(Value::Null),
+    }
+}
+
+fn actor_unregister(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("unregister", 1, &args, span)?;
+    let name = match &args[0] {
+        Value::String(s) => s,
+        _ => return Err(RuntimeError::new("unregister() name must be a string".into()).at(span)),
+    };
+    match ActorRegistry::unregister(name) {
+        Some(act) => Ok(Value::Actor(act)),
+        None => Ok(Value::Null),
+    }
+}
+
+fn actor_registered(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("registered", 0, &args, span)?;
+    let names = ActorRegistry::registered();
+    let arr = names.into_iter().map(Value::String).collect();
+    Ok(Value::Array(Arc::new(RwLock::new(arr))))
+}
+
+fn actor_supervisor(
+    ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(RuntimeError::new(
+            "supervisor() expects 1 or 2 arguments: supervisor(config) or supervisor(config, children)".into(),
+        )
+        .at(span));
+    }
+
+    let mut config = SupervisorConfig::default();
+    let mut custom_id: Option<String> = None;
+    let mut raw_children: Vec<Value> = Vec::new();
+
+    if args.len() == 1 {
+        match &args[0] {
+            Value::Array(arr) => {
+                let g = match arr.read() {
+                    Ok(guard) => guard,
+                    Err(p) => p.into_inner(),
+                };
+                raw_children = g.clone();
+            }
+            Value::Map(m) => {
+                let g = match m.read() {
+                    Ok(guard) => guard,
+                    Err(p) => p.into_inner(),
+                };
+                if let Some(strat_val) = g.get("strategy") {
+                    if let Value::String(s) = strat_val {
+                        config.strategy = RestartStrategy::from_str_loose(s)
+                            .map_err(|e| e.to_runtime_error(span))?;
+                    }
+                }
+                if let Some(mr_val) = g.get("max_restarts").or_else(|| g.get("maxRestarts")) {
+                    match mr_val {
+                        Value::Int(n) if *n >= 0 => config.max_restarts = *n as usize,
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "max_restarts must be a non-negative integer".into(),
+                            )
+                            .at(span));
+                        }
+                    }
+                }
+                if let Some(ws_val) = g.get("within_seconds").or_else(|| g.get("within")) {
+                    match ws_val {
+                        Value::Float(f) | Value::Number(f) if *f > 0.0 => {
+                            config.within_seconds = *f
+                        }
+                        Value::Int(n) if *n > 0 => config.within_seconds = *n as f64,
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "within_seconds must be a positive number".into(),
+                            )
+                            .at(span));
+                        }
+                    }
+                }
+                if let Some(id_val) = g.get("id").or_else(|| g.get("name")) {
+                    if let Value::String(s) = id_val {
+                        custom_id = Some(s.clone());
+                    }
+                }
+                if let Some(children_val) = g.get("children").or_else(|| g.get("specs")) {
+                    if let Value::Array(arr) = children_val {
+                        let cg = match arr.read() {
+                            Ok(guard) => guard,
+                            Err(p) => p.into_inner(),
+                        };
+                        raw_children = cg.clone();
+                    }
+                }
+            }
+            _ => {
+                return Err(RuntimeError::new(
+                    "supervisor() argument must be a config map or array of child specs".into(),
+                )
+                .at(span));
+            }
+        }
+    } else {
+        if let Value::Map(m) = &args[0] {
+            let g = match m.read() {
+                Ok(guard) => guard,
+                Err(p) => p.into_inner(),
+            };
+            if let Some(strat_val) = g.get("strategy") {
+                if let Value::String(s) = strat_val {
+                    config.strategy =
+                        RestartStrategy::from_str_loose(s).map_err(|e| e.to_runtime_error(span))?;
+                }
+            }
+            if let Some(mr_val) = g.get("max_restarts").or_else(|| g.get("maxRestarts")) {
+                match mr_val {
+                    Value::Int(n) if *n >= 0 => config.max_restarts = *n as usize,
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "max_restarts must be a non-negative integer".into(),
+                        )
+                        .at(span));
+                    }
+                }
+            }
+            if let Some(ws_val) = g.get("within_seconds").or_else(|| g.get("within")) {
+                match ws_val {
+                    Value::Float(f) | Value::Number(f) if *f > 0.0 => config.within_seconds = *f,
+                    Value::Int(n) if *n > 0 => config.within_seconds = *n as f64,
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "within_seconds must be a positive number".into(),
+                        )
+                        .at(span));
+                    }
+                }
+            }
+            if let Some(id_val) = g.get("id").or_else(|| g.get("name")) {
+                if let Value::String(s) = id_val {
+                    custom_id = Some(s.clone());
+                }
+            }
+        } else {
+            return Err(RuntimeError::new("supervisor() config must be a map".into()).at(span));
+        }
+
+        match &args[1] {
+            Value::Array(arr) => {
+                let g = match arr.read() {
+                    Ok(guard) => guard,
+                    Err(p) => p.into_inner(),
+                };
+                raw_children = g.clone();
+            }
+            _ => {
+                return Err(RuntimeError::new(
+                    "supervisor() children must be an array of child specs".into(),
+                )
+                .at(span));
+            }
+        }
+    }
+
+    let mut child_specs = Vec::with_capacity(raw_children.len());
+    for child_val in &raw_children {
+        child_specs.push(parse_shae_child_spec(child_val, ev, span)?);
+    }
+
+    let sup = if let Some(name) = custom_id {
+        SupervisorRef::start_named(name, config, child_specs)
+    } else {
+        SupervisorRef::start(config, child_specs)
+    }
+    .map_err(|e| e.to_runtime_error(span))?;
+
+    Ok(Value::Supervisor(sup))
 }

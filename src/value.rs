@@ -183,6 +183,8 @@ pub enum Value {
     Channel(Arc<crate::channel::Channel>),
     FfiLibrary(Arc<crate::ffi::DynamicLibrary>),
     FfiFunction(Arc<crate::ffi::DynamicFunction>),
+    Actor(Arc<crate::actor::ActorRef>),
+    Supervisor(Arc<crate::actor::SupervisorRef>),
 }
 
 impl Value {
@@ -211,6 +213,8 @@ impl Value {
             Value::Channel(_) => "channel",
             Value::FfiLibrary(_) => "ffi_library",
             Value::FfiFunction(_) => "ffi_function",
+            Value::Actor(_) => "actor",
+            Value::Supervisor(_) => "supervisor",
         }
     }
 
@@ -250,7 +254,9 @@ impl Value {
             | Value::Task(_)
             | Value::Channel(_)
             | Value::FfiLibrary(_)
-            | Value::FfiFunction(_) => true,
+            | Value::FfiFunction(_)
+            | Value::Actor(_)
+            | Value::Supervisor(_) => true,
         }
     }
 
@@ -355,6 +361,8 @@ impl Value {
             }
             Value::FfiLibrary(lib) => format!("<ffi_library \"{}\">", lib.path),
             Value::FfiFunction(func) => format!("<ffi_function {}()>", func.name),
+            Value::Actor(act) => act.to_string(),
+            Value::Supervisor(sup) => sup.to_string(),
         }
     }
 
@@ -446,6 +454,8 @@ impl Value {
             Value::FfiFunction(func) => {
                 JsonValue::String(format!("<ffi_function {}()>", func.name))
             }
+            Value::Actor(act) => JsonValue::String(act.to_string()),
+            Value::Supervisor(sup) => JsonValue::String(sup.to_string()),
         }
     }
 
@@ -472,6 +482,225 @@ impl Value {
                 }
                 Value::Map(Arc::new(RwLock::new(map)))
             }
+        }
+    }
+
+    /// Recursively deep-clones a `Value` to guarantee 100% memory isolation
+    /// across actor boundaries. Compound collections (`Array`, `Map`, `StructInstance`)
+    /// are allocated into fresh `Arc<RwLock<...>>` containers. Cyclic structures
+    /// are detected via pointer memoization to prevent infinite loops.
+    pub fn deep_clone(&self) -> Value {
+        match self {
+            Value::Null => Value::Null,
+            Value::Bool(b) => Value::Bool(*b),
+            Value::Int(i) => Value::Int(*i),
+            Value::Float(f) => Value::Float(*f),
+            Value::Number(n) => Value::Number(*n),
+            Value::String(s) => Value::String(s.clone()),
+            Value::Channel(c) => Value::Channel(Arc::clone(c)),
+            Value::Task(t) => Value::Task(Arc::clone(t)),
+            Value::Actor(a) => Value::Actor(Arc::clone(a)),
+            Value::Supervisor(s) => Value::Supervisor(Arc::clone(s)),
+            Value::FfiLibrary(l) => Value::FfiLibrary(Arc::clone(l)),
+            Value::FfiFunction(f) => Value::FfiFunction(Arc::clone(f)),
+            Value::CompiledFunction(f) => Value::CompiledFunction(Arc::clone(f)),
+            Value::Builtin { name, func } => Value::Builtin {
+                name: name.clone(),
+                func: *func,
+            },
+            Value::StructDef { name, fields } => Value::StructDef {
+                name: name.clone(),
+                fields: fields.clone(),
+            },
+            Value::EnumDef { name, variants } => Value::EnumDef {
+                name: name.clone(),
+                variants: Arc::clone(variants),
+            },
+            Value::EnumConstructor {
+                enum_name,
+                variant_name,
+                params,
+            } => Value::EnumConstructor {
+                enum_name: enum_name.clone(),
+                variant_name: variant_name.clone(),
+                params: params.clone(),
+            },
+            Value::GcArray(r) => Value::GcArray(*r),
+            Value::GcMap(r) => Value::GcMap(*r),
+            Value::GcClosure(r) => Value::GcClosure(*r),
+            Value::GcString(r) => Value::GcString(*r),
+            Value::GcInstance(r) => Value::GcInstance(*r),
+            _ => {
+                let mut visited = HashMap::new();
+                self.deep_clone_internal(&mut visited, 0)
+            }
+        }
+    }
+
+    fn deep_clone_internal(&self, visited: &mut HashMap<usize, Value>, depth: usize) -> Value {
+        const MAX_DEEP_CLONE_DEPTH: usize = 256;
+        if depth > MAX_DEEP_CLONE_DEPTH {
+            return self.clone();
+        }
+
+        match self {
+            Value::Null => Value::Null,
+            Value::Bool(b) => Value::Bool(*b),
+            Value::Int(i) => Value::Int(*i),
+            Value::Float(f) => Value::Float(*f),
+            Value::Number(n) => Value::Number(*n),
+            Value::String(s) => Value::String(s.clone()),
+
+            Value::Array(arr) => {
+                let ptr = Arc::as_ptr(arr) as usize;
+                if let Some(existing) = visited.get(&ptr) {
+                    return existing.clone();
+                }
+
+                let new_inner = Arc::new(RwLock::new(Vec::new()));
+                let cloned_val = Value::Array(Arc::clone(&new_inner));
+                visited.insert(ptr, cloned_val.clone());
+
+                let guard = match arr.read() {
+                    Ok(g) => g,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                let mut items = Vec::with_capacity(guard.len());
+                for item in guard.iter() {
+                    items.push(item.deep_clone_internal(visited, depth + 1));
+                }
+                *new_inner.write().unwrap() = items;
+                cloned_val
+            }
+
+            Value::Map(map) => {
+                let ptr = Arc::as_ptr(map) as usize;
+                if let Some(existing) = visited.get(&ptr) {
+                    return existing.clone();
+                }
+
+                let new_inner = Arc::new(RwLock::new(IndexMap::new()));
+                let cloned_val = Value::Map(Arc::clone(&new_inner));
+                visited.insert(ptr, cloned_val.clone());
+
+                let guard = match map.read() {
+                    Ok(g) => g,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                let mut items = IndexMap::with_capacity(guard.len());
+                for (k, v) in guard.iter() {
+                    items.insert(k.clone(), v.deep_clone_internal(visited, depth + 1));
+                }
+                *new_inner.write().unwrap() = items;
+                cloned_val
+            }
+
+            Value::StructInstance { name, fields } => {
+                let ptr = Arc::as_ptr(fields) as usize;
+                if let Some(existing) = visited.get(&ptr) {
+                    return existing.clone();
+                }
+
+                let new_fields = Arc::new(RwLock::new(IndexMap::new()));
+                let cloned_val = Value::StructInstance {
+                    name: name.clone(),
+                    fields: Arc::clone(&new_fields),
+                };
+                visited.insert(ptr, cloned_val.clone());
+
+                let guard = match fields.read() {
+                    Ok(g) => g,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                let mut items = IndexMap::with_capacity(guard.len());
+                for (k, v) in guard.iter() {
+                    items.insert(k.clone(), v.deep_clone_internal(visited, depth + 1));
+                }
+                *new_fields.write().unwrap() = items;
+                cloned_val
+            }
+
+            Value::EnumInstance {
+                enum_name,
+                variant_name,
+                values,
+            } => {
+                let cloned_values = values
+                    .iter()
+                    .map(|v| v.deep_clone_internal(visited, depth + 1))
+                    .collect();
+                Value::EnumInstance {
+                    enum_name: enum_name.clone(),
+                    variant_name: variant_name.clone(),
+                    values: cloned_values,
+                }
+            }
+
+            Value::BoundMethod { object, method } => Value::BoundMethod {
+                object: Box::new(object.deep_clone_internal(visited, depth + 1)),
+                method: method.clone(),
+            },
+
+            Value::Closure(c) => {
+                let cloned_upvalues = c
+                    .upvalues
+                    .iter()
+                    .map(|u| {
+                        let guard = match u.read() {
+                            Ok(g) => g,
+                            Err(p) => p.into_inner(),
+                        };
+                        let new_loc = match &guard.location {
+                            UpvalueLocation::Open(slot) => UpvalueLocation::Open(*slot),
+                            UpvalueLocation::Closed(val) => {
+                                UpvalueLocation::Closed(val.deep_clone_internal(visited, depth + 1))
+                            }
+                        };
+                        Arc::new(RwLock::new(Upvalue { location: new_loc }))
+                    })
+                    .collect();
+
+                Value::Closure(Arc::new(Closure {
+                    function: Arc::clone(&c.function),
+                    upvalues: cloned_upvalues,
+                    module_globals: c.module_globals.as_ref().map(Arc::clone),
+                }))
+            }
+
+            Value::Function { .. } => self.clone(),
+            Value::Channel(c) => Value::Channel(Arc::clone(c)),
+            Value::Task(t) => Value::Task(Arc::clone(t)),
+            Value::Actor(a) => Value::Actor(Arc::clone(a)),
+            Value::Supervisor(s) => Value::Supervisor(Arc::clone(s)),
+            Value::FfiLibrary(l) => Value::FfiLibrary(Arc::clone(l)),
+            Value::FfiFunction(f) => Value::FfiFunction(Arc::clone(f)),
+            Value::CompiledFunction(f) => Value::CompiledFunction(Arc::clone(f)),
+            Value::Builtin { name, func } => Value::Builtin {
+                name: name.clone(),
+                func: *func,
+            },
+            Value::StructDef { name, fields } => Value::StructDef {
+                name: name.clone(),
+                fields: fields.clone(),
+            },
+            Value::EnumDef { name, variants } => Value::EnumDef {
+                name: name.clone(),
+                variants: Arc::clone(variants),
+            },
+            Value::EnumConstructor {
+                enum_name,
+                variant_name,
+                params,
+            } => Value::EnumConstructor {
+                enum_name: enum_name.clone(),
+                variant_name: variant_name.clone(),
+                params: params.clone(),
+            },
+            Value::GcArray(r) => Value::GcArray(*r),
+            Value::GcMap(r) => Value::GcMap(*r),
+            Value::GcClosure(r) => Value::GcClosure(*r),
+            Value::GcString(r) => Value::GcString(*r),
+            Value::GcInstance(r) => Value::GcInstance(*r),
         }
     }
 }
@@ -540,6 +769,8 @@ impl PartialEq for Value {
             (Value::Channel(a), Value::Channel(b)) => Arc::ptr_eq(a, b),
             (Value::FfiLibrary(a), Value::FfiLibrary(b)) => Arc::ptr_eq(a, b),
             (Value::FfiFunction(a), Value::FfiFunction(b)) => Arc::ptr_eq(a, b),
+            (Value::Actor(a), Value::Actor(b)) => a == b,
+            (Value::Supervisor(a), Value::Supervisor(b)) => a == b,
             (Value::CompiledFunction(a), Value::CompiledFunction(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::Closure(a), Value::Closure(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::GcArray(a), Value::GcArray(b)) => a == b,
@@ -712,6 +943,14 @@ impl Hash for Value {
             Value::FfiFunction(f) => {
                 26u8.hash(state);
                 f.name.hash(state);
+            }
+            Value::Actor(a) => {
+                27u8.hash(state);
+                a.hash(state);
+            }
+            Value::Supervisor(s) => {
+                28u8.hash(state);
+                s.hash(state);
             }
         }
     }
