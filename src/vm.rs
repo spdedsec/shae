@@ -1433,6 +1433,7 @@ impl VM {
                                     | "graphemeLen"
                                     | "byte_len"
                                     | "byteLen"
+                                    | "bytes"
                                     | "runes"
                                     | "codepoints"
                                     | "is_ascii"

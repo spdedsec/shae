@@ -1,0 +1,881 @@
+// Shae Self-Hosting Compiler: AST to Bytecode Code Generator
+// Transforms pure-Shae AST nodes into executable bytecode chunks and .shaec files.
+
+use {
+    OP_RETURN, OP_CONSTANT, OP_NIL, OP_TRUE, OP_FALSE, OP_POP,
+    OP_GET_LOCAL, OP_SET_LOCAL, OP_GET_GLOBAL, OP_DEFINE_GLOBAL, OP_SET_GLOBAL,
+    OP_EQUAL, OP_GREATER, OP_LESS, OP_ADD, OP_SUBTRACT, OP_MULTIPLY, OP_DIVIDE,
+    OP_NOT, OP_NEGATE, OP_PRINT, OP_JUMP, OP_JUMP_IF_FALSE, OP_LOOP,
+    OP_CALL, OP_CLOSURE, OP_CLOSE_UPVALUE, OP_CLASS, OP_GET_PROPERTY, OP_SET_PROPERTY,
+    OP_METHOD, OP_INVOKE, OP_INHERIT, OP_GET_SUPER, OP_SUPER_INVOKE,
+    OP_BUILD_LIST, OP_BUILD_MAP, OP_INDEX_GET, OP_INDEX_SET, OP_MOD,
+    OP_BIT_AND, OP_BIT_OR, OP_BIT_XOR, OP_BIT_NOT, OP_SHL, OP_SHR,
+    OP_FOR_ITER, OP_GET_UPVALUE, OP_SET_UPVALUE, OP_FORMAT_STRING,
+    OP_INDEX_GET_SAFE, OP_ARRAY_SLICE, OP_MAP_REST, OP_BUILD_STRUCT,
+    OP_MATCH_ENUM, OP_MATCH_RANGE, OP_MATCH_ERROR, OP_PUSH_TRY, OP_POP_TRY,
+    OP_DUP, OP_IMPORT_MODULE, OP_IMPORT_STAR, OP_CONSTANT_LONG,
+    OP_GET_LOCAL_LONG, OP_SET_LOCAL_LONG, OP_TAIL_CALL, OP_AWAIT
+} from "./opcode.shae"
+
+use {
+    make_chunk, chunk_write, chunk_write_opcode, chunk_add_constant,
+    make_compiled_fn, make_struct_def, make_enum_def, serialize_chunk
+} from "./chunk.shae"
+
+use { tokenize } from "./lexer.shae"
+use { parse } from "./parser.shae"
+use { read, write_bytes } from "std:fs"
+
+fn make_compiler(enclosing) {
+    return {
+        chunk: make_chunk(),
+        locals: [],
+        upvalues: [],
+        scope_depth: 0,
+        loops: [],
+        enclosing: enclosing
+    }
+}
+
+fn begin_scope(c) {
+    c.scope_depth = c.scope_depth + 1
+}
+
+fn end_scope(c, line) {
+    c.scope_depth = c.scope_depth - 1
+    while c.locals.len > 0 {
+        let last_idx = c.locals.len - 1
+        let local = c.locals[last_idx]
+        if local.depth > c.scope_depth {
+            if local.is_captured {
+                chunk_write_opcode(c.chunk, OP_CLOSE_UPVALUE, line)
+            } else {
+                chunk_write_opcode(c.chunk, OP_POP, line)
+            }
+            c.locals.pop()
+        } else {
+            break
+        }
+    }
+}
+
+fn add_local(c, name) {
+    c.locals.push({
+        name: name,
+        depth: c.scope_depth,
+        is_captured: false
+    })
+    return c.locals.len - 1
+}
+
+fn resolve_local(c, name) {
+    let i = c.locals.len - 1
+    while i >= 0 {
+        if c.locals[i].name == name {
+            return i
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+fn add_upvalue(c, index, is_local) {
+    let count = c.upvalues.len
+    let i = 0
+    while i < count {
+        let uv = c.upvalues[i]
+        if uv.index == index && uv.is_local == is_local {
+            return i
+        }
+        i = i + 1
+    }
+    c.upvalues.push({ index: index, is_local: is_local })
+    return count
+}
+
+fn resolve_upvalue(c, name) {
+    if c.enclosing == null {
+        return -1
+    }
+    let local = resolve_local(c.enclosing, name)
+    if local != -1 {
+        c.enclosing.locals[local].is_captured = true
+        return add_upvalue(c, local, true)
+    }
+    let upval = resolve_upvalue(c.enclosing, name)
+    if upval != -1 {
+        return add_upvalue(c, upval, false)
+    }
+    return -1
+}
+
+fn emit_constant(c, val, line) {
+    let idx = chunk_add_constant(c.chunk, val)
+    if idx <= 255 {
+        chunk_write_opcode(c.chunk, OP_CONSTANT, line)
+        chunk_write(c.chunk, idx, line)
+    } else {
+        chunk_write_opcode(c.chunk, OP_CONSTANT_LONG, line)
+        chunk_write(c.chunk, (idx >> 8) & 255, line)
+        chunk_write(c.chunk, idx & 255, line)
+    }
+}
+
+fn emit_get_local(c, slot, line) {
+    if slot <= 255 {
+        chunk_write_opcode(c.chunk, OP_GET_LOCAL, line)
+        chunk_write(c.chunk, slot, line)
+    } else {
+        chunk_write_opcode(c.chunk, OP_GET_LOCAL_LONG, line)
+        chunk_write(c.chunk, (slot >> 8) & 255, line)
+        chunk_write(c.chunk, slot & 255, line)
+    }
+}
+
+fn emit_set_local(c, slot, line) {
+    if slot <= 255 {
+        chunk_write_opcode(c.chunk, OP_SET_LOCAL, line)
+        chunk_write(c.chunk, slot, line)
+    } else {
+        chunk_write_opcode(c.chunk, OP_SET_LOCAL_LONG, line)
+        chunk_write(c.chunk, (slot >> 8) & 255, line)
+        chunk_write(c.chunk, slot & 255, line)
+    }
+}
+
+fn emit_jump(c, op, line) {
+    chunk_write_opcode(c.chunk, op, line)
+    chunk_write(c.chunk, 255, line)
+    chunk_write(c.chunk, 255, line)
+    return c.chunk.code.len - 2
+}
+
+fn patch_jump(c, offset) {
+    let jump = c.chunk.code.len - offset - 2
+    c.chunk.code[offset] = (jump >> 8) & 255
+    c.chunk.code[offset + 1] = jump & 255
+}
+
+fn emit_loop(c, loop_start, line) {
+    chunk_write_opcode(c.chunk, OP_LOOP, line)
+    let offset = c.chunk.code.len - loop_start + 2
+    chunk_write(c.chunk, (offset >> 8) & 255, line)
+    chunk_write(c.chunk, offset & 255, line)
+}
+
+fn emit_return(c, line) {
+    let len = c.chunk.code.len
+    if len >= 2 && c.chunk.code[len - 2] == OP_CALL {
+        c.chunk.code[len - 2] = OP_TAIL_CALL
+    }
+    chunk_write_opcode(c.chunk, OP_RETURN, line)
+}
+
+fn compile_function(parent_c, name, params, body, is_async) {
+    let child = make_compiler(parent_c)
+    let fn_slot = ""
+    if name != null {
+        fn_slot = name
+    }
+    add_local(child, fn_slot)
+
+    let i = 0
+    while i < params.len {
+        add_local(child, params[i])
+        i = i + 1
+    }
+
+    let body_len = body.len
+    let j = 0
+    while j < body_len {
+        let is_last = (j + 1) == body_len
+        compile_stmt(child, body[j], is_last)
+        j = j + 1
+    }
+
+    if body_len == 0 {
+        chunk_write_opcode(child.chunk, OP_NIL, 0)
+    }
+    emit_return(child, 0)
+
+    let upvalues_clone = []
+    let k = 0
+    while k < child.upvalues.len {
+        upvalues_clone.push({
+            index: child.upvalues[k].index,
+            is_local: child.upvalues[k].is_local
+        })
+        k = k + 1
+    }
+
+    return make_compiled_fn(name, params.len, child.chunk, is_async, upvalues_clone)
+}
+
+fn compile_binding_pattern(c, pattern, line) {
+    let t = type(pattern)
+    if t == "string" {
+        let slot = add_local(c, pattern)
+        if c.scope_depth == 0 && c.enclosing == null {
+            emit_get_local(c, slot, line)
+            let name_idx = chunk_add_constant(c.chunk, pattern)
+            chunk_write_opcode(c.chunk, OP_DEFINE_GLOBAL, line)
+            chunk_write(c.chunk, name_idx, line)
+        }
+    } else if t == "map" && pattern.has("type") {
+        let ptype = pattern.type
+        if ptype == "IdentPattern" {
+            let slot = add_local(c, pattern.name)
+            if c.scope_depth == 0 && c.enclosing == null {
+                emit_get_local(c, slot, line)
+                let name_idx = chunk_add_constant(c.chunk, pattern.name)
+                chunk_write_opcode(c.chunk, OP_DEFINE_GLOBAL, line)
+                chunk_write(c.chunk, name_idx, line)
+            }
+        } else if ptype == "ArrayPattern" {
+            let arr_slot = add_local(c, "(destruct_arr)")
+            let elements = pattern.elements
+            let i = 0
+            while i < elements.len {
+                emit_get_local(c, arr_slot, line)
+                emit_constant(c, i, line)
+                chunk_write_opcode(c.chunk, OP_INDEX_GET_SAFE, line)
+                compile_binding_pattern(c, elements[i], line)
+                i = i + 1
+            }
+            if pattern.has("rest") and pattern.rest != null {
+                emit_get_local(c, arr_slot, line)
+                emit_constant(c, elements.len, line)
+                chunk_write_opcode(c.chunk, OP_ARRAY_SLICE, line)
+                add_local(c, pattern.rest)
+            }
+        }
+    }
+}
+
+fn compile_literal(c, lit, line) {
+    let kind = lit.kind
+    let val = lit.value
+    if kind == "int" {
+        emit_constant(c, val, line)
+    } else if kind == "float" || kind == "number" {
+        emit_constant(c, val, line)
+    } else if kind == "string" {
+        emit_constant(c, val, line)
+    } else if kind == "bool" {
+        if val {
+            chunk_write_opcode(c.chunk, OP_TRUE, line)
+        } else {
+            chunk_write_opcode(c.chunk, OP_FALSE, line)
+        }
+    } else if kind == "null" {
+        chunk_write_opcode(c.chunk, OP_NIL, line)
+    }
+}
+
+fn compile_expr(c, expr) {
+    let etype = expr.type
+    let line = expr.line
+
+    if etype == "LiteralExpr" {
+        compile_literal(c, expr, line)
+        return null
+    }
+
+    if etype == "VariableExpr" {
+        let name = expr.name
+        let local = resolve_local(c, name)
+        if local != -1 {
+            emit_get_local(c, local, line)
+        } else {
+            let upval = resolve_upvalue(c, name)
+            if upval != -1 {
+                chunk_write_opcode(c.chunk, OP_GET_UPVALUE, line)
+                chunk_write(c.chunk, upval, line)
+            } else {
+                let const_idx = chunk_add_constant(c.chunk, name)
+                chunk_write_opcode(c.chunk, OP_GET_GLOBAL, line)
+                chunk_write(c.chunk, const_idx, line)
+            }
+        }
+        return null
+    }
+
+    if etype == "BinaryExpr" {
+        let op = expr.op
+        if op == "and" || op == "&&" {
+            compile_expr(c, expr.left)
+            let end_jump = emit_jump(c, OP_JUMP_IF_FALSE, line)
+            chunk_write_opcode(c.chunk, OP_POP, line)
+            compile_expr(c, expr.right)
+            patch_jump(c, end_jump)
+            return null
+        }
+        if op == "or" || op == "||" {
+            compile_expr(c, expr.left)
+            let else_jump = emit_jump(c, OP_JUMP_IF_FALSE, line)
+            let end_jump = emit_jump(c, OP_JUMP, line)
+            patch_jump(c, else_jump)
+            chunk_write_opcode(c.chunk, OP_POP, line)
+            compile_expr(c, expr.right)
+            patch_jump(c, end_jump)
+            return null
+        }
+        if op == "??" {
+            compile_expr(c, expr.left)
+            chunk_write_opcode(c.chunk, OP_DUP, line)
+            chunk_write_opcode(c.chunk, OP_NIL, line)
+            chunk_write_opcode(c.chunk, OP_EQUAL, line)
+            let not_null_jump = emit_jump(c, OP_JUMP_IF_FALSE, line)
+            chunk_write_opcode(c.chunk, OP_POP, line)
+            chunk_write_opcode(c.chunk, OP_POP, line)
+            compile_expr(c, expr.right)
+            let end_jump = emit_jump(c, OP_JUMP, line)
+            patch_jump(c, not_null_jump)
+            chunk_write_opcode(c.chunk, OP_POP, line)
+            patch_jump(c, end_jump)
+            return null
+        }
+        if op == "|>" {
+            if expr.right.type == "CallExpr" {
+                compile_expr(c, expr.right.callee)
+                compile_expr(c, expr.left)
+                let a = 0
+                while a < expr.right.args.len {
+                    compile_expr(c, expr.right.args[a])
+                    a = a + 1
+                }
+                chunk_write_opcode(c.chunk, OP_CALL, line)
+                chunk_write(c.chunk, expr.right.args.len + 1, line)
+            } else {
+                compile_expr(c, expr.right)
+                compile_expr(c, expr.left)
+                chunk_write_opcode(c.chunk, OP_CALL, line)
+                chunk_write(c.chunk, 1, line)
+            }
+            return null
+        }
+
+        compile_expr(c, expr.left)
+        compile_expr(c, expr.right)
+
+        if op == "+" { chunk_write_opcode(c.chunk, OP_ADD, line) }
+        else if op == "-" { chunk_write_opcode(c.chunk, OP_SUBTRACT, line) }
+        else if op == "*" { chunk_write_opcode(c.chunk, OP_MULTIPLY, line) }
+        else if op == "/" { chunk_write_opcode(c.chunk, OP_DIVIDE, line) }
+        else if op == "%" { chunk_write_opcode(c.chunk, OP_MOD, line) }
+        else if op == "==" { chunk_write_opcode(c.chunk, OP_EQUAL, line) }
+        else if op == "!=" {
+            chunk_write_opcode(c.chunk, OP_EQUAL, line)
+            chunk_write_opcode(c.chunk, OP_NOT, line)
+        }
+        else if op == ">" { chunk_write_opcode(c.chunk, OP_GREATER, line) }
+        else if op == "<" { chunk_write_opcode(c.chunk, OP_LESS, line) }
+        else if op == ">=" {
+            chunk_write_opcode(c.chunk, OP_LESS, line)
+            chunk_write_opcode(c.chunk, OP_NOT, line)
+        }
+        else if op == "<=" {
+            chunk_write_opcode(c.chunk, OP_GREATER, line)
+            chunk_write_opcode(c.chunk, OP_NOT, line)
+        }
+        else if op == "&" { chunk_write_opcode(c.chunk, OP_BIT_AND, line) }
+        else if op == "|" { chunk_write_opcode(c.chunk, OP_BIT_OR, line) }
+        else if op == "^" { chunk_write_opcode(c.chunk, OP_BIT_XOR, line) }
+        else if op == "<<" { chunk_write_opcode(c.chunk, OP_SHL, line) }
+        else if op == ">>" { chunk_write_opcode(c.chunk, OP_SHR, line) }
+        return null
+    }
+
+    if etype == "UnaryExpr" {
+        compile_expr(c, expr.expr)
+        if expr.op == "-" {
+            chunk_write_opcode(c.chunk, OP_NEGATE, line)
+        } else if expr.op == "!" {
+            chunk_write_opcode(c.chunk, OP_NOT, line)
+        } else if expr.op == "~" {
+            chunk_write_opcode(c.chunk, OP_BIT_NOT, line)
+        }
+        return null
+    }
+
+    if etype == "ArrayExpr" {
+        let elems = expr.elements
+        let i = 0
+        while i < elems.len {
+            compile_expr(c, elems[i])
+            i = i + 1
+        }
+        chunk_write_opcode(c.chunk, OP_BUILD_LIST, line)
+        chunk_write(c.chunk, elems.len, line)
+        return null
+    }
+
+    if etype == "MapExpr" {
+        let entries = expr.entries
+        let i = 0
+        while i < entries.len {
+            let entry = entries[i]
+            emit_constant(c, entry.key, line)
+            compile_expr(c, entry.value)
+            i = i + 1
+        }
+        chunk_write_opcode(c.chunk, OP_BUILD_MAP, line)
+        chunk_write(c.chunk, entries.len, line)
+        return null
+    }
+
+    if etype == "IndexExpr" {
+        compile_expr(c, expr.target)
+        compile_expr(c, expr.index)
+        chunk_write_opcode(c.chunk, OP_INDEX_GET, line)
+        return null
+    }
+
+    if etype == "GetExpr" {
+        compile_expr(c, expr.target)
+        let name_idx = chunk_add_constant(c.chunk, expr.property)
+        chunk_write_opcode(c.chunk, OP_GET_PROPERTY, line)
+        chunk_write(c.chunk, name_idx, line)
+        if expr.safe {
+            chunk_write(c.chunk, 1, line)
+        } else {
+            chunk_write(c.chunk, 0, line)
+        }
+        return null
+    }
+
+    if etype == "CallExpr" {
+        compile_expr(c, expr.callee)
+        let args = expr.args
+        let i = 0
+        while i < args.len {
+            compile_expr(c, args[i])
+            i = i + 1
+        }
+        chunk_write_opcode(c.chunk, OP_CALL, line)
+        chunk_write(c.chunk, args.len, line)
+        return null
+    }
+
+    if etype == "LambdaExpr" {
+        let param_names = []
+        let p = 0
+        while p < expr.params.len {
+            param_names.push(expr.params[p].name)
+            p = p + 1
+        }
+        let compiled = compile_function(c, null, param_names, expr.body, expr.is_async)
+        let const_idx = chunk_add_constant(c.chunk, compiled)
+        chunk_write_opcode(c.chunk, OP_CLOSURE, line)
+        chunk_write(c.chunk, const_idx, line)
+        return null
+    }
+
+    if etype == "StructInitExpr" {
+        let name = expr.name
+        let local = resolve_local(c, name)
+        if local != -1 {
+            emit_get_local(c, local, line)
+        } else {
+            let upval = resolve_upvalue(c, name)
+            if upval != -1 {
+                chunk_write_opcode(c.chunk, OP_GET_UPVALUE, line)
+                chunk_write(c.chunk, upval, line)
+            } else {
+                let const_idx = chunk_add_constant(c.chunk, name)
+                chunk_write_opcode(c.chunk, OP_GET_GLOBAL, line)
+                chunk_write(c.chunk, const_idx, line)
+            }
+        }
+        let fields = expr.fields
+        let i = 0
+        while i < fields.len {
+            let f = fields[i]
+            emit_constant(c, f.name, line)
+            compile_expr(c, f.value)
+            i = i + 1
+        }
+        chunk_write_opcode(c.chunk, OP_BUILD_STRUCT, line)
+        chunk_write(c.chunk, fields.len, line)
+        return null
+    }
+
+    if etype == "UseExpr" {
+        compile_expr(c, expr.path)
+        chunk_write_opcode(c.chunk, OP_IMPORT_MODULE, line)
+        return null
+    }
+}
+
+fn compile_stmt(c, stmt, is_last) {
+    let stype = stmt.type
+    let line = stmt.line
+
+    if stype == "LetStmt" {
+        compile_expr(c, stmt.init)
+        compile_binding_pattern(c, stmt.pattern, line)
+        if is_last {
+            chunk_write_opcode(c.chunk, OP_NIL, line)
+        }
+        return null
+    }
+
+    if stype == "AssignStmt" {
+        let target = stmt.target
+        if target.type == "VariableExpr" {
+            compile_expr(c, stmt.value)
+            let name = target.name
+            let local = resolve_local(c, name)
+            if local != -1 {
+                emit_set_local(c, local, line)
+                if c.scope_depth == 0 && c.enclosing == null {
+                    let const_idx = chunk_add_constant(c.chunk, name)
+                    chunk_write_opcode(c.chunk, OP_SET_GLOBAL, line)
+                    chunk_write(c.chunk, const_idx, line)
+                }
+            } else {
+                let upval = resolve_upvalue(c, name)
+                if upval != -1 {
+                    chunk_write_opcode(c.chunk, OP_SET_UPVALUE, line)
+                    chunk_write(c.chunk, upval, line)
+                } else {
+                    let const_idx = chunk_add_constant(c.chunk, name)
+                    chunk_write_opcode(c.chunk, OP_SET_GLOBAL, line)
+                    chunk_write(c.chunk, const_idx, line)
+                }
+            }
+            if not is_last {
+                chunk_write_opcode(c.chunk, OP_POP, line)
+            }
+        } else if target.type == "IndexExpr" {
+            compile_expr(c, target.target)
+            compile_expr(c, target.index)
+            compile_expr(c, stmt.value)
+            chunk_write_opcode(c.chunk, OP_INDEX_SET, line)
+            if not is_last {
+                chunk_write_opcode(c.chunk, OP_POP, line)
+            }
+        } else if target.type == "GetExpr" {
+            compile_expr(c, target.target)
+            compile_expr(c, stmt.value)
+            let name_idx = chunk_add_constant(c.chunk, target.property)
+            chunk_write_opcode(c.chunk, OP_SET_PROPERTY, line)
+            chunk_write(c.chunk, name_idx, line)
+            if not is_last {
+                chunk_write_opcode(c.chunk, OP_POP, line)
+            }
+        }
+        return null
+    }
+
+    if stype == "IfStmt" {
+        compile_expr(c, stmt.condition)
+        let then_jump = emit_jump(c, OP_JUMP_IF_FALSE, line)
+        chunk_write_opcode(c.chunk, OP_POP, line)
+
+        begin_scope(c)
+        let i = 0
+        while i < stmt.then_branch.len {
+            compile_stmt(c, stmt.then_branch[i], false)
+            i = i + 1
+        }
+        end_scope(c, line)
+
+        let else_jump = emit_jump(c, OP_JUMP, line)
+        patch_jump(c, then_jump)
+        chunk_write_opcode(c.chunk, OP_POP, line)
+
+        if stmt.else_branch != null {
+            begin_scope(c)
+            let j = 0
+            while j < stmt.else_branch.len {
+                compile_stmt(c, stmt.else_branch[j], false)
+                j = j + 1
+            }
+            end_scope(c, line)
+        }
+        patch_jump(c, else_jump)
+
+        if is_last {
+            chunk_write_opcode(c.chunk, OP_NIL, line)
+        }
+        return null
+    }
+
+    if stype == "WhileStmt" {
+        let loop_start = c.chunk.code.len
+        let loop_depth = c.scope_depth
+        c.loops.push({
+            start_ip: loop_start,
+            scope_depth: loop_depth,
+            break_jumps: []
+        })
+
+        compile_expr(c, stmt.condition)
+        let exit_jump = emit_jump(c, OP_JUMP_IF_FALSE, line)
+        chunk_write_opcode(c.chunk, OP_POP, line)
+
+        begin_scope(c)
+        let i = 0
+        while i < stmt.body.len {
+            compile_stmt(c, stmt.body[i], false)
+            i = i + 1
+        }
+        end_scope(c, line)
+
+        emit_loop(c, loop_start, line)
+        patch_jump(c, exit_jump)
+        chunk_write_opcode(c.chunk, OP_POP, line)
+
+        let loop_ctx = c.loops.pop()
+        let b = 0
+        while b < loop_ctx.break_jumps.len {
+            patch_jump(c, loop_ctx.break_jumps[b])
+            b = b + 1
+        }
+
+        if is_last {
+            chunk_write_opcode(c.chunk, OP_NIL, line)
+        }
+        return null
+    }
+
+    if stype == "ForStmt" {
+        begin_scope(c)
+        compile_expr(c, stmt.iterable)
+        let seq_slot = add_local(c, "(seq)")
+
+        emit_constant(c, 0, line)
+        add_local(c, "(iter)")
+
+        let loop_start = c.chunk.code.len
+        let loop_depth = c.scope_depth
+        c.loops.push({
+            start_ip: loop_start,
+            scope_depth: loop_depth,
+            break_jumps: []
+        })
+
+        chunk_write_opcode(c.chunk, OP_FOR_ITER, line)
+        chunk_write(c.chunk, seq_slot, line)
+        chunk_write(c.chunk, 255, line)
+        chunk_write(c.chunk, 255, line)
+        let exit_jump = c.chunk.code.len - 2
+
+        begin_scope(c)
+        add_local(c, stmt.item)
+        let i = 0
+        while i < stmt.body.len {
+            compile_stmt(c, stmt.body[i], false)
+            i = i + 1
+        }
+        end_scope(c, line)
+
+        emit_loop(c, loop_start, line)
+        patch_jump(c, exit_jump)
+
+        let loop_ctx = c.loops.pop()
+        let b = 0
+        while b < loop_ctx.break_jumps.len {
+            patch_jump(c, loop_ctx.break_jumps[b])
+            b = b + 1
+        }
+
+        end_scope(c, line)
+
+        if is_last {
+            chunk_write_opcode(c.chunk, OP_NIL, line)
+        }
+        return null
+    }
+
+    if stype == "BreakStmt" {
+        if c.loops.len > 0 {
+            let jump = emit_jump(c, OP_JUMP, line)
+            let loop_ctx = c.loops[c.loops.len - 1]
+            loop_ctx.break_jumps.push(jump)
+        }
+        return null
+    }
+
+    if stype == "ContinueStmt" {
+        if c.loops.len > 0 {
+            let loop_ctx = c.loops[c.loops.len - 1]
+            emit_loop(c, loop_ctx.start_ip, line)
+        }
+        return null
+    }
+
+    if stype == "ReturnStmt" {
+        if stmt.value != null {
+            compile_expr(c, stmt.value)
+        } else {
+            chunk_write_opcode(c.chunk, OP_NIL, line)
+        }
+        emit_return(c, line)
+        return null
+    }
+
+    if stype == "FnStmt" {
+        let param_names = []
+        let p = 0
+        while p < stmt.params.len {
+            param_names.push(stmt.params[p].name)
+            p = p + 1
+        }
+        let compiled = compile_function(c, stmt.name, param_names, stmt.body, stmt.is_async)
+        let const_idx = chunk_add_constant(c.chunk, compiled)
+        chunk_write_opcode(c.chunk, OP_CLOSURE, line)
+        chunk_write(c.chunk, const_idx, line)
+        if c.scope_depth > 0 {
+            add_local(c, stmt.name)
+        } else {
+            let name_idx = chunk_add_constant(c.chunk, stmt.name)
+            chunk_write_opcode(c.chunk, OP_DEFINE_GLOBAL, line)
+            chunk_write(c.chunk, name_idx, line)
+        }
+        if is_last {
+            chunk_write_opcode(c.chunk, OP_NIL, line)
+        }
+        return null
+    }
+
+    if stype == "StructStmt" {
+        let field_names = []
+        let fi = 0
+        while fi < stmt.fields.len {
+            field_names.push(stmt.fields[fi].name)
+            fi = fi + 1
+        }
+        let sdef = make_struct_def(stmt.name, field_names)
+        emit_constant(c, sdef, line)
+        if c.scope_depth > 0 {
+            add_local(c, stmt.name)
+        } else {
+            let name_idx = chunk_add_constant(c.chunk, stmt.name)
+            chunk_write_opcode(c.chunk, OP_DEFINE_GLOBAL, line)
+            chunk_write(c.chunk, name_idx, line)
+        }
+        if is_last {
+            chunk_write_opcode(c.chunk, OP_NIL, line)
+        }
+        return null
+    }
+
+    if stype == "EnumStmt" {
+        let edef = make_enum_def(stmt.name, stmt.variants)
+        emit_constant(c, edef, line)
+        if c.scope_depth > 0 {
+            add_local(c, stmt.name)
+        } else {
+            let name_idx = chunk_add_constant(c.chunk, stmt.name)
+            chunk_write_opcode(c.chunk, OP_DEFINE_GLOBAL, line)
+            chunk_write(c.chunk, name_idx, line)
+        }
+        if is_last {
+            chunk_write_opcode(c.chunk, OP_NIL, line)
+        }
+        return null
+    }
+
+    if stype == "TryCatchStmt" {
+        let catch_jump = emit_jump(c, OP_PUSH_TRY, line)
+
+        begin_scope(c)
+        let ti = 0
+        while ti < stmt.try_body.len {
+            compile_stmt(c, stmt.try_body[ti], false)
+            ti = ti + 1
+        }
+        end_scope(c, line)
+
+        chunk_write_opcode(c.chunk, OP_POP_TRY, line)
+        let exit_jump = emit_jump(c, OP_JUMP, line)
+
+        patch_jump(c, catch_jump)
+
+        begin_scope(c)
+        add_local(c, stmt.catch_ident)
+        let ci = 0
+        while ci < stmt.catch_body.len {
+            compile_stmt(c, stmt.catch_body[ci], false)
+            ci = ci + 1
+        }
+        end_scope(c, line)
+
+        patch_jump(c, exit_jump)
+
+        if is_last {
+            chunk_write_opcode(c.chunk, OP_NIL, line)
+        }
+        return null
+    }
+
+    if stype == "UseStmt" {
+        emit_constant(c, stmt.path, line)
+        chunk_write_opcode(c.chunk, OP_IMPORT_MODULE, line)
+        let mod_slot = add_local(c, "(import_mod)")
+        let i = 0
+        while i < stmt.imports.len {
+            let item = stmt.imports[i]
+            if item.name == "*" {
+                emit_get_local(c, mod_slot, line)
+                chunk_write_opcode(c.chunk, OP_IMPORT_STAR, line)
+            } else {
+                emit_get_local(c, mod_slot, line)
+                let key_const = chunk_add_constant(c.chunk, item.name)
+                chunk_write_opcode(c.chunk, OP_GET_PROPERTY, line)
+                chunk_write(c.chunk, key_const, line)
+                chunk_write(c.chunk, 0, line) // not safe
+                let bind_name = item.name
+                if item.has("alias") and item.alias != null {
+                    bind_name = item.alias
+                }
+                add_local(c, bind_name)
+            }
+            i = i + 1
+        }
+        if is_last {
+            chunk_write_opcode(c.chunk, OP_NIL, line)
+        }
+        return null
+    }
+
+    if stype == "ExprStmt" {
+        compile_expr(c, stmt.expr)
+        if not is_last {
+            chunk_write_opcode(c.chunk, OP_POP, line)
+        }
+        return null
+    }
+}
+
+fn compile_program(program) {
+    let c = make_compiler(null)
+    let len = program.statements.len
+    let i = 0
+    while i < len {
+        let is_last = (i + 1) == len
+        compile_stmt(c, program.statements[i], is_last)
+        i = i + 1
+    }
+    if len == 0 {
+        chunk_write_opcode(c.chunk, OP_NIL, 0)
+    }
+    emit_return(c, 0)
+    return c.chunk
+}
+
+fn compile_source_to_chunk(source) {
+    let tokens = tokenize(source)
+    let ast = parse(tokens)
+    return compile_program(ast)
+}
+
+fn compile_file_to_shaec(input_file, output_file) {
+    let src = read(input_file)
+    let chunk = compile_source_to_chunk(src)
+    let bytes = serialize_chunk(chunk)
+    write_bytes(output_file, bytes)
+    return bytes.len
+}

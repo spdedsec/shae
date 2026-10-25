@@ -1,0 +1,412 @@
+// Shae Self-Hosting Compiler: Chunk Data Structure & Serialization
+// Implements in-memory bytecode chunks and .shaec binary serialization format.
+
+use {
+    OP_RETURN, OP_CONSTANT, OP_NIL, OP_TRUE, OP_FALSE, OP_POP,
+    OP_GET_LOCAL, OP_SET_LOCAL, OP_GET_GLOBAL, OP_DEFINE_GLOBAL, OP_SET_GLOBAL,
+    OP_EQUAL, OP_GREATER, OP_LESS, OP_ADD, OP_SUBTRACT, OP_MULTIPLY, OP_DIVIDE,
+    OP_NOT, OP_NEGATE, OP_PRINT, OP_JUMP, OP_JUMP_IF_FALSE, OP_LOOP,
+    OP_CALL, OP_CLOSURE, OP_CLOSE_UPVALUE, OP_CLASS, OP_GET_PROPERTY, OP_SET_PROPERTY,
+    OP_METHOD, OP_INVOKE, OP_INHERIT, OP_GET_SUPER, OP_SUPER_INVOKE,
+    OP_BUILD_LIST, OP_BUILD_MAP, OP_INDEX_GET, OP_INDEX_SET, OP_MOD,
+    OP_BIT_AND, OP_BIT_OR, OP_BIT_XOR, OP_BIT_NOT, OP_SHL, OP_SHR,
+    OP_FOR_ITER, OP_GET_UPVALUE, OP_SET_UPVALUE, OP_FORMAT_STRING,
+    OP_INDEX_GET_SAFE, OP_ARRAY_SLICE, OP_MAP_REST, OP_BUILD_STRUCT,
+    OP_MATCH_ENUM, OP_MATCH_RANGE, OP_MATCH_ERROR, OP_PUSH_TRY, OP_POP_TRY,
+    OP_DUP, OP_IMPORT_MODULE, OP_IMPORT_STAR, OP_CONSTANT_LONG,
+    OP_GET_LOCAL_LONG, OP_SET_LOCAL_LONG, OP_TAIL_CALL, OP_AWAIT
+} from "./opcode.shae"
+
+fn make_chunk() {
+    return {
+        code: [],
+        constants: [],
+        lines: []
+    }
+}
+
+fn chunk_write(chunk, byte, line) {
+    chunk.code.push(byte)
+    chunk.lines.push(line)
+}
+
+fn chunk_write_opcode(chunk, op, line) {
+    chunk.code.push(op)
+    chunk.lines.push(line)
+}
+
+fn chunk_add_constant(chunk, val) {
+    let len = chunk.constants.len
+    let i = 0
+    while i < len {
+        if chunk.constants[i] == val {
+            return i
+        }
+        i = i + 1
+    }
+    chunk.constants.push(val)
+    return len
+}
+
+fn make_compiled_fn(name, arity, chunk, is_async, upvalues) {
+    return {
+        _tag: "CompiledFunction",
+        name: name,
+        arity: arity,
+        chunk: chunk,
+        is_async: is_async,
+        upvalues: upvalues
+    }
+}
+
+fn make_struct_def(name, fields) {
+    return {
+        _tag: "StructDef",
+        name: name,
+        fields: fields
+    }
+}
+
+fn make_enum_def(name, variants) {
+    return {
+        _tag: "EnumDef",
+        name: name,
+        variants: variants
+    }
+}
+
+fn u16_to_bytes(n) {
+    return [
+        n & 255,
+        (n >> 8) & 255
+    ]
+}
+
+fn u32_to_bytes(n) {
+    return [
+        n & 255,
+        (n >> 8) & 255,
+        (n >> 16) & 255,
+        (n >> 24) & 255
+    ]
+}
+
+fn i64_to_bytes(n) {
+    let bytes = []
+    let v = n
+    let i = 0
+    while i < 8 {
+        bytes.push(v & 255)
+        v = v >> 8
+        i = i + 1
+    }
+    return bytes
+}
+
+fn serialize_value(val, buf) {
+    let t = type(val)
+    if t == "null" {
+        buf.push(0)
+    } else if t == "bool" {
+        buf.push(1)
+        if val {
+            buf.push(1)
+        } else {
+            buf.push(0)
+        }
+    } else if t == "int" {
+        buf.push(2)
+        let ibytes = i64_to_bytes(val)
+        let i = 0
+        while i < 8 {
+            buf.push(ibytes[i])
+            i = i + 1
+        }
+    } else if t == "float" or t == "number" {
+        buf.push(3)
+        let ibytes = i64_to_bytes(val)
+        let i = 0
+        while i < 8 {
+            buf.push(ibytes[i])
+            i = i + 1
+        }
+    } else if t == "string" {
+        buf.push(4)
+        let sbytes = val.bytes()
+        let len_bytes = u32_to_bytes(sbytes.len)
+        let i = 0
+        while i < 4 {
+            buf.push(len_bytes[i])
+            i = i + 1
+        }
+        let j = 0
+        while j < sbytes.len {
+            buf.push(sbytes[j])
+            j = j + 1
+        }
+    } else if t == "array" {
+        buf.push(8)
+        let len_bytes = u32_to_bytes(val.len)
+        let i = 0
+        while i < 4 {
+            buf.push(len_bytes[i])
+            i = i + 1
+        }
+        let j = 0
+        while j < val.len {
+            serialize_value(val[j], buf)
+            j = j + 1
+        }
+    } else if t == "map" {
+        if val.has("_tag") and val._tag == "CompiledFunction" {
+            buf.push(5)
+            // arity
+            let arity_bytes = u32_to_bytes(val.arity)
+            let i = 0
+            while i < 4 {
+                buf.push(arity_bytes[i])
+                i = i + 1
+            }
+            // has_name
+            if val.name != null {
+                buf.push(1)
+                let name_bytes = val.name.bytes()
+                let nlen_bytes = u32_to_bytes(name_bytes.len)
+                let k = 0
+                while k < 4 {
+                    buf.push(nlen_bytes[k])
+                    k = k + 1
+                }
+                let m = 0
+                while m < name_bytes.len {
+                    buf.push(name_bytes[m])
+                    m = m + 1
+                }
+            } else {
+                buf.push(0)
+            }
+            // is_async
+            if val.is_async {
+                buf.push(1)
+            } else {
+                buf.push(0)
+            }
+            // upvalues
+            let uv_len = val.upvalues.len
+            let uv_bytes = u32_to_bytes(uv_len)
+            let uvi = 0
+            while uvi < 4 {
+                buf.push(uv_bytes[uvi])
+                uvi = uvi + 1
+            }
+            let uvj = 0
+            while uvj < uv_len {
+                let uv = val.upvalues[uvj]
+                buf.push(uv.index)
+                if uv.is_local {
+                    buf.push(1)
+                } else {
+                    buf.push(0)
+                }
+                uvj = uvj + 1
+            }
+            // inner chunk
+            serialize_inner(val.chunk, buf)
+        } else if val.has("_tag") and val._tag == "StructDef" {
+            buf.push(6)
+            let n_bytes = val.name.bytes()
+            let nlen_bytes = u32_to_bytes(n_bytes.len)
+            let k = 0
+            while k < 4 {
+                buf.push(nlen_bytes[k])
+                k = k + 1
+            }
+            let m = 0
+            while m < n_bytes.len {
+                buf.push(n_bytes[m])
+                m = m + 1
+            }
+            let flen = val.fields.len
+            let flen_bytes = u32_to_bytes(flen)
+            let fi = 0
+            while fi < 4 {
+                buf.push(flen_bytes[fi])
+                fi = fi + 1
+            }
+            let fj = 0
+            while fj < flen {
+                let f_bytes = val.fields[fj].bytes()
+                let fl_bytes = u32_to_bytes(f_bytes.len)
+                let l = 0
+                while l < 4 {
+                    buf.push(fl_bytes[l])
+                    l = l + 1
+                }
+                let p = 0
+                while p < f_bytes.len {
+                    buf.push(f_bytes[p])
+                    p = p + 1
+                }
+                fj = fj + 1
+            }
+        } else if val.has("_tag") and val._tag == "EnumDef" {
+            buf.push(7)
+            let n_bytes = val.name.bytes()
+            let nlen_bytes = u32_to_bytes(n_bytes.len)
+            let k = 0
+            while k < 4 {
+                buf.push(nlen_bytes[k])
+                k = k + 1
+            }
+            let m = 0
+            while m < n_bytes.len {
+                buf.push(n_bytes[m])
+                m = m + 1
+            }
+            let vlen = val.variants.len
+            let vlen_bytes = u32_to_bytes(vlen)
+            let vi = 0
+            while vi < 4 {
+                buf.push(vlen_bytes[vi])
+                vi = vi + 1
+            }
+            let vj = 0
+            while vj < vlen {
+                let variant = val.variants[vj]
+                let v_name_bytes = variant.name.bytes()
+                let vnl_bytes = u32_to_bytes(v_name_bytes.len)
+                let l = 0
+                while l < 4 {
+                    buf.push(vnl_bytes[l])
+                    l = l + 1
+                }
+                let p = 0
+                while p < v_name_bytes.len {
+                    buf.push(v_name_bytes[p])
+                    p = p + 1
+                }
+                let vflen = variant.fields.len
+                let vfl_bytes = u32_to_bytes(vflen)
+                let q = 0
+                while q < 4 {
+                    buf.push(vfl_bytes[q])
+                    q = q + 1
+                }
+                let r = 0
+                while r < vflen {
+                    let field_bytes = variant.fields[r].bytes()
+                    let fbl_bytes = u32_to_bytes(field_bytes.len)
+                    let s = 0
+                    while s < 4 {
+                        buf.push(fbl_bytes[s])
+                        s = s + 1
+                    }
+                    let t_idx = 0
+                    while t_idx < field_bytes.len {
+                        buf.push(field_bytes[t_idx])
+                        t_idx = t_idx + 1
+                    }
+                    r = r + 1
+                }
+                vj = vj + 1
+            }
+        } else {
+            // General map
+            buf.push(9)
+            let keys = val.keys()
+            let klen_bytes = u32_to_bytes(keys.len)
+            let ki = 0
+            while ki < 4 {
+                buf.push(klen_bytes[ki])
+                ki = ki + 1
+            }
+            let kj = 0
+            while kj < keys.len {
+                let k_str = keys[kj]
+                let k_bytes = k_str.bytes()
+                let kl_bytes = u32_to_bytes(k_bytes.len)
+                let l = 0
+                while l < 4 {
+                    buf.push(kl_bytes[l])
+                    l = l + 1
+                }
+                let p = 0
+                while p < k_bytes.len {
+                    buf.push(k_bytes[p])
+                    p = p + 1
+                }
+                serialize_value(val[k_str], buf)
+                kj = kj + 1
+            }
+        }
+    }
+}
+
+fn serialize_inner(chunk, buf) {
+    // 1. Code
+    let code_len = chunk.code.len
+    let clen_bytes = u32_to_bytes(code_len)
+    let i = 0
+    while i < 4 {
+        buf.push(clen_bytes[i])
+        i = i + 1
+    }
+    let j = 0
+    while j < code_len {
+        buf.push(chunk.code[j])
+        j = j + 1
+    }
+
+    // 2. Lines
+    let lines_len = chunk.lines.len
+    let llen_bytes = u32_to_bytes(lines_len)
+    let li = 0
+    while li < 4 {
+        buf.push(llen_bytes[li])
+        li = li + 1
+    }
+    let lj = 0
+    while lj < lines_len {
+        let line_num = chunk.lines[lj]
+        let ln_bytes = u32_to_bytes(line_num)
+        let lk = 0
+        while lk < 4 {
+            buf.push(ln_bytes[lk])
+            lk = lk + 1
+        }
+        lj = lj + 1
+    }
+
+    // 3. Constants
+    let const_len = chunk.constants.len
+    let const_bytes = u32_to_bytes(const_len)
+    let ci = 0
+    while ci < 4 {
+        buf.push(const_bytes[ci])
+        ci = ci + 1
+    }
+    let cj = 0
+    while cj < const_len {
+        serialize_value(chunk.constants[cj], buf)
+        cj = cj + 1
+    }
+}
+
+fn serialize_chunk(chunk) {
+    let buf = []
+    // Bytecode magic: \x7fSHAE
+    buf.push(127)
+    buf.push(83)
+    buf.push(72)
+    buf.push(65)
+    buf.push(69)
+    // Version 1 (u16 le)
+    buf.push(1)
+    buf.push(0)
+    // Flags 0 (u16 le)
+    buf.push(0)
+    buf.push(0)
+
+    serialize_inner(chunk, buf)
+    return buf
+}

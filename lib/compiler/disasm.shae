@@ -1,0 +1,219 @@
+// Shae Self-Hosting Compiler: Bytecode Disassembler
+// Formats bytecode chunks into human-readable assembly instructions.
+
+use {
+    OP_RETURN, OP_CONSTANT, OP_NIL, OP_TRUE, OP_FALSE, OP_POP,
+    OP_GET_LOCAL, OP_SET_LOCAL, OP_GET_GLOBAL, OP_DEFINE_GLOBAL, OP_SET_GLOBAL,
+    OP_EQUAL, OP_GREATER, OP_LESS, OP_ADD, OP_SUBTRACT, OP_MULTIPLY, OP_DIVIDE,
+    OP_NOT, OP_NEGATE, OP_PRINT, OP_JUMP, OP_JUMP_IF_FALSE, OP_LOOP,
+    OP_CALL, OP_CLOSURE, OP_CLOSE_UPVALUE, OP_CLASS, OP_GET_PROPERTY, OP_SET_PROPERTY,
+    OP_METHOD, OP_INVOKE, OP_INHERIT, OP_GET_SUPER, OP_SUPER_INVOKE,
+    OP_BUILD_LIST, OP_BUILD_MAP, OP_INDEX_GET, OP_INDEX_SET, OP_MOD,
+    OP_BIT_AND, OP_BIT_OR, OP_BIT_XOR, OP_BIT_NOT, OP_SHL, OP_SHR,
+    OP_FOR_ITER, OP_GET_UPVALUE, OP_SET_UPVALUE, OP_FORMAT_STRING,
+    OP_INDEX_GET_SAFE, OP_ARRAY_SLICE, OP_MAP_REST, OP_BUILD_STRUCT,
+    OP_MATCH_ENUM, OP_MATCH_RANGE, OP_MATCH_ERROR, OP_PUSH_TRY, OP_POP_TRY,
+    OP_DUP, OP_IMPORT_MODULE, OP_IMPORT_STAR, OP_CONSTANT_LONG,
+    OP_GET_LOCAL_LONG, OP_SET_LOCAL_LONG, OP_TAIL_CALL, OP_AWAIT,
+    get_op_name
+} from "./opcode.shae"
+
+fn pad_left(val, width) {
+    let s = str(val)
+    while s.len < width {
+        s = " " + s
+    }
+    return s
+}
+
+fn pad_zero(val, width) {
+    let s = str(val)
+    while s.len < width {
+        s = "0" + s
+    }
+    return s
+}
+
+fn pad_right(val, width) {
+    let s = str(val)
+    while s.len < width {
+        s = s + " "
+    }
+    return s
+}
+
+fn disassemble_instruction(chunk, offset) {
+    let line = 0
+    if offset < chunk.lines.len {
+        line = chunk.lines[offset]
+    }
+    let same_line = false
+    if offset > 0 and offset < chunk.lines.len and offset - 1 < chunk.lines.len {
+        if chunk.lines[offset - 1] == line {
+            same_line = true
+        }
+    }
+
+    let line_str = ""
+    if same_line {
+        line_str = "   |"
+    } else {
+        line_str = pad_left(line, 4)
+    }
+
+    if offset >= chunk.code.len {
+        return {
+            str: pad_zero(offset, 4) + " " + line_str + " <EOF>",
+            next: offset + 1
+        }
+    }
+
+    let op = chunk.code[offset]
+    let name = get_op_name(op)
+    let padded_name = pad_right(name, 16)
+    let prefix = pad_zero(offset, 4) + " " + line_str + " " + padded_name
+
+    if op == OP_CONSTANT {
+        let idx = 0
+        if offset + 1 < chunk.code.len {
+            idx = chunk.code[offset + 1]
+        }
+        let val_str = "<invalid>"
+        if idx < chunk.constants.len {
+            val_str = str(chunk.constants[idx])
+        }
+        return {
+            str: prefix + " " + pad_left(idx, 4) + " (" + val_str + ")",
+            next: offset + 2
+        }
+    }
+
+    if op == OP_GET_LOCAL or op == OP_SET_LOCAL {
+        let slot = 0
+        if offset + 1 < chunk.code.len {
+            slot = chunk.code[offset + 1]
+        }
+        return {
+            str: prefix + " slot " + str(slot),
+            next: offset + 2
+        }
+    }
+
+    if op == OP_GET_GLOBAL or op == OP_SET_GLOBAL or op == OP_DEFINE_GLOBAL {
+        let idx = 0
+        if offset + 1 < chunk.code.len {
+            idx = chunk.code[offset + 1]
+        }
+        let val_str = "<invalid>"
+        if idx < chunk.constants.len {
+            val_str = str(chunk.constants[idx])
+        }
+        return {
+            str: prefix + " " + pad_left(idx, 4) + " (" + val_str + ")",
+            next: offset + 2
+        }
+    }
+
+    if op == OP_JUMP or op == OP_JUMP_IF_FALSE {
+        let hi = 0
+        let lo = 0
+        if offset + 1 < chunk.code.len { hi = chunk.code[offset + 1] }
+        if offset + 2 < chunk.code.len { lo = chunk.code[offset + 2] }
+        let jump = (hi << 8) | lo
+        let target = offset + 3 + jump
+        return {
+            str: prefix + " +" + str(jump) + " -> " + pad_zero(target, 4),
+            next: offset + 3
+        }
+    }
+
+    if op == OP_LOOP {
+        let hi = 0
+        let lo = 0
+        if offset + 1 < chunk.code.len { hi = chunk.code[offset + 1] }
+        if offset + 2 < chunk.code.len { lo = chunk.code[offset + 2] }
+        let jump = (hi << 8) | lo
+        let target = offset + 3 - jump
+        if target < 0 { target = 0 }
+        return {
+            str: prefix + " -" + str(jump) + " -> " + pad_zero(target, 4),
+            next: offset + 3
+        }
+    }
+
+    if op == OP_CALL or op == OP_TAIL_CALL {
+        let arity = 0
+        if offset + 1 < chunk.code.len { arity = chunk.code[offset + 1] }
+        return {
+            str: prefix + " (" + str(arity) + " args)",
+            next: offset + 2
+        }
+    }
+
+    if op == OP_CLOSURE {
+        let idx = 0
+        if offset + 1 < chunk.code.len { idx = chunk.code[offset + 1] }
+        return {
+            str: prefix + " fn constant [" + str(idx) + "]",
+            next: offset + 2
+        }
+    }
+
+    if op == OP_GET_UPVALUE or op == OP_SET_UPVALUE {
+        let slot = 0
+        if offset + 1 < chunk.code.len { slot = chunk.code[offset + 1] }
+        return {
+            str: prefix + " upvalue " + str(slot),
+            next: offset + 2
+        }
+    }
+
+    if op == OP_BUILD_LIST or op == OP_BUILD_MAP or op == OP_BUILD_STRUCT {
+        let count = 0
+        if offset + 1 < chunk.code.len { count = chunk.code[offset + 1] }
+        return {
+            str: prefix + " count " + str(count),
+            next: offset + 2
+        }
+    }
+
+    // Default 1-byte opcode
+    return {
+        str: prefix,
+        next: offset + 1
+    }
+}
+
+fn disassemble_chunk(chunk, name) {
+    let out = "== " + name + " ==\n"
+    if chunk.constants.len > 0 {
+        out = out + "Constants:\n"
+        let i = 0
+        while i < chunk.constants.len {
+            out = out + "  [" + pad_zero(i, 4) + "] " + str(chunk.constants[i]) + "\n"
+            i = i + 1
+        }
+    }
+    out = out + "Disassembly:\n"
+    let offset = 0
+    while offset < chunk.code.len {
+        let instr = disassemble_instruction(chunk, offset)
+        out = out + instr.str + "\n"
+        offset = instr.next
+    }
+
+    let c_idx = 0
+    while c_idx < chunk.constants.len {
+        let c_val = chunk.constants[c_idx]
+        if type(c_val) == "map" and c_val.has("_tag") and c_val._tag == "CompiledFunction" {
+            let fn_name = "anonymous"
+            if c_val.name != null {
+                fn_name = c_val.name
+            }
+            out = out + "\n" + disassemble_chunk(c_val.chunk, "<fn " + fn_name + ">")
+        }
+        c_idx = c_idx + 1
+    }
+
+    return out
+}

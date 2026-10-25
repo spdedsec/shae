@@ -1,0 +1,91 @@
+// Shae Self-Hosting Compiler: Opcode Definitions
+// Numerical byte codes matching src/opcode.rs
+
+let OP_RETURN = 0
+let OP_CONSTANT = 1
+let OP_NIL = 2
+let OP_TRUE = 3
+let OP_FALSE = 4
+let OP_POP = 5
+let OP_GET_LOCAL = 6
+let OP_SET_LOCAL = 7
+let OP_GET_GLOBAL = 8
+let OP_DEFINE_GLOBAL = 9
+let OP_SET_GLOBAL = 10
+let OP_EQUAL = 11
+let OP_GREATER = 12
+let OP_LESS = 13
+let OP_ADD = 14
+let OP_SUBTRACT = 15
+let OP_MULTIPLY = 16
+let OP_DIVIDE = 17
+let OP_NOT = 18
+let OP_NEGATE = 19
+let OP_PRINT = 20
+let OP_JUMP = 21
+let OP_JUMP_IF_FALSE = 22
+let OP_LOOP = 23
+let OP_CALL = 24
+let OP_CLOSURE = 25
+let OP_CLOSE_UPVALUE = 26
+let OP_CLASS = 27
+let OP_GET_PROPERTY = 28
+let OP_SET_PROPERTY = 29
+let OP_METHOD = 30
+let OP_INVOKE = 31
+let OP_INHERIT = 32
+let OP_GET_SUPER = 33
+let OP_SUPER_INVOKE = 34
+let OP_BUILD_LIST = 35
+let OP_BUILD_MAP = 36
+let OP_INDEX_GET = 37
+let OP_INDEX_SET = 38
+let OP_MOD = 39
+let OP_BIT_AND = 40
+let OP_BIT_OR = 41
+let OP_BIT_XOR = 42
+let OP_BIT_NOT = 43
+let OP_SHL = 44
+let OP_SHR = 45
+let OP_FOR_ITER = 46
+let OP_GET_UPVALUE = 47
+let OP_SET_UPVALUE = 48
+let OP_FORMAT_STRING = 49
+let OP_INDEX_GET_SAFE = 50
+let OP_ARRAY_SLICE = 51
+let OP_MAP_REST = 52
+let OP_BUILD_STRUCT = 53
+let OP_MATCH_ENUM = 54
+let OP_MATCH_RANGE = 55
+let OP_MATCH_ERROR = 56
+let OP_PUSH_TRY = 57
+let OP_POP_TRY = 58
+let OP_DUP = 59
+let OP_IMPORT_MODULE = 60
+let OP_IMPORT_STAR = 61
+let OP_CONSTANT_LONG = 62
+let OP_GET_LOCAL_LONG = 63
+let OP_SET_LOCAL_LONG = 64
+let OP_TAIL_CALL = 65
+let OP_AWAIT = 66
+
+let OP_NAMES = [
+    "Return", "Constant", "Nil", "True", "False", "Pop", "GetLocal", "SetLocal",
+    "GetGlobal", "DefineGlobal", "SetGlobal", "Equal", "Greater", "Less",
+    "Add", "Subtract", "Multiply", "Divide", "Not", "Negate",
+    "Print", "Jump", "JumpIfFalse", "Loop", "Call", "Closure",
+    "CloseUpvalue", "Class", "GetProperty", "SetProperty", "Method", "Invoke",
+    "Inherit", "GetSuper", "SuperInvoke", "BuildList", "BuildMap", "IndexGet",
+    "IndexSet", "Mod", "BitAnd", "BitOr", "BitXor", "BitNot",
+    "Shl", "Shr", "ForIter", "GetUpvalue", "SetUpvalue", "FormatString",
+    "IndexGetSafe", "ArraySlice", "MapRest", "BuildStruct", "MatchEnum", "MatchRange",
+    "MatchError", "PushTry", "PopTry", "Dup", "ImportModule", "ImportStar",
+    "ConstantLong", "GetLocalLong", "SetLocalLong", "TailCall", "Await"
+]
+
+fn get_op_name(code) {
+    if code >= 0 and code < OP_NAMES.len {
+        return OP_NAMES[code]
+    }
+    return "UnknownOp"
+}

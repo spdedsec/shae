@@ -162,12 +162,16 @@ fn test_std_fs_namespace() {
 
     let script = format!(
         r#"
-use {{ mkdir, write, append, read, exists, isFile, isDir, readDir, remove }} from "std:fs"
+use {{ mkdir, write, append, read, exists, isFile, isDir, readDir, remove, write_bytes, read_bytes }} from "std:fs"
 
 mkdir("{0}")
 write("{0}/hello.txt", "Hello World")
 append("{0}/hello.txt", " from Shae!")
 let content = read("{0}/hello.txt")
+
+let byte_data = [127, 83, 72, 65, 69, 1, 0]
+write_bytes("{0}/data.bin", byte_data)
+let read_back = read_bytes("{0}/data.bin")
 
 let has_file = exists("{0}/hello.txt")
 let is_f = isFile("{0}/hello.txt")
@@ -177,7 +181,7 @@ let entries = readDir("{0}")
 remove("{0}")
 let after_remove = exists("{0}")
 
-[content, has_file, is_f, is_d, entries, after_remove]
+[content, has_file, is_f, is_d, entries, after_remove, read_back]
 "#,
         test_dir
     );
@@ -190,8 +194,9 @@ let after_remove = exists("{0}")
             true,
             true,
             true,
-            ["hello.txt"],
-            false
+            ["data.bin", "hello.txt"],
+            false,
+            [127, 83, 72, 65, 69, 1, 0]
         ])
     );
 }

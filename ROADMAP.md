@@ -163,15 +163,19 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 
 ---
 
-### **Chunk 16: Phase 5 (Stage 2) — Pure-Shae Bytecode Compiler & Serializer (`lib/compiler/codegen.shae`)** *(In Progress)*
-- [ ] **Opcode Definitions & Bytecode Chunk (`lib/compiler/opcode.shae`, `lib/compiler/chunk.shae`)**
-  - [ ] Numerical opcode mapping matching `src/opcode.rs`.
-  - [ ] Binary serialization of bytecode format (`\x7fSHAE`, version 1, code, lines, constant pool).
-- [ ] **AST-to-Bytecode Code Generator (`lib/compiler/codegen.shae`)**
-  - [ ] Local variable resolution, lexical scope tracking, and upvalue capture for closures.
-  - [ ] Expression compilation, arithmetic/bitwise operators, collections, and control flow jumps.
-- [ ] **Bytecode Disassembler in Pure Shae (`lib/compiler/disasm.shae`)**
-- [ ] **Self-Codegen Integration Test Suite (`tests/shae/self_codegen_test.shae`)**
+### **Chunk 16: Phase 5 (Stage 2) — Pure-Shae Bytecode Compiler & Serializer (`lib/compiler/codegen.shae`)** *(Completed)*
+- [x] **Opcode Definitions & Bytecode Chunk (`lib/compiler/opcode.shae`, `lib/compiler/chunk.shae`)**
+  - [x] Numerical opcode mapping matching `src/opcode.rs`.
+  - [x] Binary serialization of bytecode format (`\x7fSHAE`, version 1, code, lines, constant pool).
+- [x] **AST-to-Bytecode Code Generator (`lib/compiler/codegen.shae`)**
+  - [x] Local variable resolution, lexical scope tracking, and upvalue capture for closures.
+  - [x] Expression compilation, arithmetic/bitwise operators, collections, and control flow jumps.
+  - [x] Direct file compilation pipeline (`compile_file_to_shaec`).
+- [x] **Bytecode Disassembler in Pure Shae (`lib/compiler/disasm.shae`)**
+  - [x] Human-readable instruction formatting with constant pool inspection and recursive compiled function disassembly.
+- [x] **Self-Codegen Integration Test Suite (`tests/shae/self_codegen_test.shae`, `tests/self_codegen_test.rs`)**
+  - [x] Strict dual-engine parity verified on both Bytecode VM (`run_file_vm`) and AST Evaluator (`run_file`).
+  - [x] Direct execution of pure-Shae emitted `.shaec` bytecode verified by Shae VM runtime with exact computed results.
 
 ---
 

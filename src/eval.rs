@@ -1472,6 +1472,7 @@ impl Evaluator {
                                 | "graphemeLen"
                                 | "byte_len"
                                 | "byteLen"
+                                | "bytes"
                                 | "runes"
                                 | "codepoints"
                                 | "is_ascii"
@@ -2660,6 +2661,18 @@ impl Evaluator {
                             );
                         }
                         Ok(Value::Int(s.len() as i64))
+                    }
+                    (Value::String(s), "bytes") => {
+                        if !args.is_empty() {
+                            self.depth -= 1;
+                            return Err(
+                                RuntimeError::new("bytes() expects 0 arguments".into()).at(span)
+                            );
+                        }
+                        let items: Vec<Value> = s.bytes().map(|b| Value::Int(b as i64)).collect();
+                        Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
+                            items,
+                        ))))
                     }
                     (Value::String(s), "runes") => {
                         if !args.is_empty() {

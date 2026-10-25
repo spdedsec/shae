@@ -1,0 +1,111 @@
+// Shae Self-Hosting Compiler Test: Codegen & Binary Bytecode Serialization
+// Verifies that pure-Shae codegen emits valid bytecode chunks and .shaec files.
+
+use {
+    OP_RETURN, OP_CONSTANT, OP_ADD, OP_SUBTRACT, OP_MULTIPLY, OP_EQUAL, OP_CALL
+} from "../../lib/compiler/opcode.shae"
+use {
+    make_chunk, chunk_write_opcode, chunk_add_constant, serialize_chunk
+} from "../../lib/compiler/chunk.shae"
+use {
+    disassemble_chunk
+} from "../../lib/compiler/disasm.shae"
+use {
+    compile_source_to_chunk, compile_file_to_shaec
+} from "../../lib/compiler/codegen.shae"
+use {
+    read, write, write_bytes, read_bytes, exists, remove
+} from "std:fs"
+use { exit } from "std:sys"
+
+print("=== Shae Phase 5 Stage 2: Self-Hosting Bytecode Codegen Test ===")
+
+// [1] Manual chunk construction and disassembly test
+print("\n[1] Testing manual chunk construction and disassembly...")
+let c = make_chunk()
+let idx1 = chunk_add_constant(c, 10)
+let idx2 = chunk_add_constant(c, 25)
+let idx3 = chunk_add_constant(c, 35)
+
+chunk_write_opcode(c, OP_CONSTANT, 1)
+c.code.push(idx1)
+c.lines.push(1)
+
+chunk_write_opcode(c, OP_CONSTANT, 1)
+c.code.push(idx2)
+c.lines.push(1)
+
+chunk_write_opcode(c, OP_ADD, 1)
+
+chunk_write_opcode(c, OP_RETURN, 1)
+
+let dis = disassemble_chunk(c, "test_manual")
+if (not dis.contains("Add")) or (not dis.contains("Return")) or (not dis.contains("Constant")) {
+    print("FAILED: Disassembly output does not contain expected instructions:\n" + dis)
+    exit(1)
+}
+print("   [✓] Manual chunk constructed and disassembled successfully.")
+
+// [2] Serializing manual chunk to .shaec binary format
+print("\n[2] Testing binary .shaec serialization...")
+let bytes = serialize_chunk(c)
+// Bytecode magic: \x7fSHAE = [127, 83, 72, 65, 69]
+if bytes[0] != 127 or bytes[1] != 83 or bytes[2] != 72 or bytes[3] != 65 or bytes[4] != 69 {
+    print("FAILED: Bytecode magic mismatch in serialized bytes!")
+    exit(1)
+}
+// Version 1 (u16 little-endian: [1, 0])
+if bytes[5] != 1 or bytes[6] != 0 {
+    print("FAILED: Bytecode version mismatch in serialized bytes!")
+    exit(1)
+}
+print("   [✓] Serialized " + str(bytes.len) + " bytes with valid magic \\x7fSHAE and version 1.")
+
+// [3] Testing AST-to-Bytecode codegen on arithmetic and variables
+print("\n[3] Testing AST-to-Bytecode compilation of arithmetic expressions...")
+let src1 = "let a = 15\nlet b = 27\nlet c = a + b * 2\nc\n"
+let chunk1 = compile_source_to_chunk(src1)
+let dis1 = disassemble_chunk(chunk1, "arithmetic_program")
+if (not dis1.contains("DefineGlobal")) or (not dis1.contains("Add")) or (not dis1.contains("Multiply")) {
+    print("FAILED: Codegen disassembly missing arithmetic/globals:\n" + dis1)
+    exit(1)
+}
+print("   [✓] Arithmetic expressions compiled to bytecode successfully.")
+
+// [4] Testing AST-to-Bytecode codegen on functions, if/else, and while loops
+print("\n[4] Testing functions, control flow jumps, and loop compilation...")
+let src2 = "fn factorial(n) \{\n    if n <= 1 \{\n        return 1\n    \}\n    return n * factorial(n - 1)\n\}\nlet res = factorial(5)\n"
+let chunk2 = compile_source_to_chunk(src2)
+let dis2 = disassemble_chunk(chunk2, "factorial_program")
+if (not dis2.contains("Closure")) or (not dis2.contains("JumpIfFalse")) or (not dis2.contains("Call")) {
+    print("FAILED: Codegen disassembly missing control flow:\n" + dis2)
+    exit(1)
+}
+print("   [✓] Functions, branches, and recursion compiled to bytecode successfully.")
+
+// [5] End-to-end file compilation: write source file, compile to .shaec, verify binary on disk
+print("\n[5] Testing End-to-End compile_file_to_shaec disk emission...")
+let test_src_path = "tests/test_codegen_temp.shae"
+let test_out_path = "tests/test_codegen_temp.shaec"
+
+write(test_src_path, "fn add(x, y) \{\n    return x + y\n\}\nlet answer = add(20, 22)\nanswer\n")
+let written_len = compile_file_to_shaec(test_src_path, test_out_path)
+
+if not exists(test_out_path) {
+    print("FAILED: Output .shaec file was not created!")
+    exit(1)
+}
+
+let read_back_bytes = read_bytes(test_out_path)
+if read_back_bytes.len != written_len {
+    print("FAILED: Read back byte length mismatch!")
+    exit(1)
+}
+
+// Clean up test files
+remove(test_src_path)
+remove(test_out_path)
+
+print("   [✓] End-to-End file compilation emitted valid .shaec (" + str(written_len) + " bytes).")
+
+print("\n=== All Phase 5 Stage 2 Self-Hosting Codegen Tests Passed! ===")

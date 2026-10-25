@@ -78,6 +78,10 @@ fn build_fs_module() -> Value {
         ("is_file", fs_is_file),
         ("isDir", fs_is_dir),
         ("is_dir", fs_is_dir),
+        ("write_bytes", fs_write_bytes),
+        ("writeBytes", fs_write_bytes),
+        ("read_bytes", fs_read_bytes),
+        ("readBytes", fs_read_bytes),
     ])
 }
 
@@ -128,6 +132,98 @@ fn fs_append(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value,
         Ok(Value::Bool(true))
     } else {
         Err(RuntimeError::new("fs.append expects (string path, string content)".into()).at(span))
+    }
+}
+
+fn fs_write_bytes(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("write_bytes", 2, &args, span)?;
+    let path = match &args[0] {
+        Value::String(s) => s.clone(),
+        _ => {
+            return Err(RuntimeError::new(
+                "fs.write_bytes expects path string as first argument".into(),
+            )
+            .at(span));
+        }
+    };
+    let bytes: Vec<u8> = match &args[1] {
+        Value::Array(arr) => {
+            let guard = arr.read().unwrap();
+            let mut buf = Vec::with_capacity(guard.len());
+            for (idx, item) in guard.iter().enumerate() {
+                match item {
+                    Value::Int(n) => {
+                        if *n < 0 || *n > 255 {
+                            return Err(RuntimeError::new(format!(
+                                "fs.write_bytes: byte at index {} out of range [0, 255]: {}",
+                                idx, n
+                            ))
+                            .at(span));
+                        }
+                        buf.push(*n as u8);
+                    }
+                    Value::Float(f) => {
+                        let n = *f as i64;
+                        if n < 0 || n > 255 {
+                            return Err(RuntimeError::new(format!(
+                                "fs.write_bytes: byte at index {} out of range [0, 255]: {}",
+                                idx, f
+                            ))
+                            .at(span));
+                        }
+                        buf.push(n as u8);
+                    }
+                    other => {
+                        return Err(RuntimeError::new(format!(
+                            "fs.write_bytes: expected integer byte at index {}, got {}",
+                            idx,
+                            other.type_name()
+                        ))
+                        .at(span));
+                    }
+                }
+            }
+            buf
+        }
+        Value::String(s) => s.as_bytes().to_vec(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "fs.write_bytes expects byte array or string, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    match fs::write(&path, &bytes) {
+        Ok(_) => Ok(Value::Bool(true)),
+        Err(e) => Err(RuntimeError::new(format!(
+            "fs.write_bytes: Failed to write '{}': {}",
+            path, e
+        ))
+        .at(span)),
+    }
+}
+
+fn fs_read_bytes(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("read_bytes", 1, &args, span)?;
+    let path = match &args[0] {
+        Value::String(s) => s.clone(),
+        _ => return Err(RuntimeError::new("fs.read_bytes expects path string".into()).at(span)),
+    };
+    match fs::read(&path) {
+        Ok(bytes) => {
+            let items: Vec<Value> = bytes.into_iter().map(|b| Value::Int(b as i64)).collect();
+            Ok(Value::Array(Arc::new(RwLock::new(items))))
+        }
+        Err(e) => Err(RuntimeError::new(format!(
+            "fs.read_bytes: Failed to read '{}': {}",
+            path, e
+        ))
+        .at(span)),
     }
 }
 
