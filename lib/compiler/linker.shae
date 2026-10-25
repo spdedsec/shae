@@ -1,0 +1,44 @@
+// Shae Self-Hosting Compiler: Universal Native Linker
+// Direct linking of pure-Shae AST and bytecode into standalone ELF and PE executables.
+
+use { compile_source_to_chunk } from "./codegen.shae"
+use { serialize_chunk } from "./chunk.shae"
+use { build_standalone_elf, emit_elf_file } from "./elf.shae"
+use { build_standalone_pe, emit_pe_file } from "./pe.shae"
+use { read, exists, read_bytes } from "std:fs"
+use { platform } from "std:sys"
+
+fn link_source_to_elf(source, output_path, stub_path, arch) {
+    let chunk = compile_source_to_chunk(source)
+    let bytecode_bytes = serialize_chunk(chunk)
+    let stub_bytes = null
+    if stub_path != null and exists(stub_path) {
+        stub_bytes = read_bytes(stub_path)
+    }
+    return emit_elf_file(output_path, bytecode_bytes, stub_bytes, arch)
+}
+
+fn link_source_to_pe(source, output_path, stub_path) {
+    let chunk = compile_source_to_chunk(source)
+    let bytecode_bytes = serialize_chunk(chunk)
+    let stub_bytes = null
+    if stub_path != null and exists(stub_path) {
+        stub_bytes = read_bytes(stub_path)
+    }
+    return emit_pe_file(output_path, bytecode_bytes, stub_bytes)
+}
+
+fn link_file(input_path, output_path, format, stub_path, arch) {
+    let source = read(input_path)
+    if format == "elf" {
+        return link_source_to_elf(source, output_path, stub_path, arch)
+    } else if format == "pe" {
+        return link_source_to_pe(source, output_path, stub_path)
+    } else {
+        let host_os = platform()
+        if host_os == "windows" {
+            return link_source_to_pe(source, output_path, stub_path)
+        }
+        return link_source_to_elf(source, output_path, stub_path, arch)
+    }
+}

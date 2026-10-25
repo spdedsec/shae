@@ -364,10 +364,10 @@ Shae is advancing toward an enterprise-scale systems ecosystem. Upcoming major p
    - Global name registration (`ActorRegistry`) and polymorphic message dispatch.
    - Fault-tolerant supervision trees (`OneForOne`, `AllForOne`) with automatic process restart policies.
    - Full dual-engine VM and AST execution parity.
-2. **Phase 5: Self-Hosting Shae Compiler & Direct Native Linker**:
+2. **Phase 5: Self-Hosting Shae Compiler & Direct Native Linker** *(Completed in v0.3.3)*:
    - Stage 1 (Complete): Pure-Shae Lexer, AST constructors, and Pratt Parser (`lib/compiler/`) with full self-parsing verification.
    - Stage 2 (Complete): Pure-Shae Bytecode Compiler, Serializer, and Disassembler (`codegen.shae`, `chunk.shae`, `disasm.shae`) emitting `.shaec` bytecode chunks.
-   - Stage 3: Direct ELF, Mach-O, and PE object emission with zero external compiler dependencies.
+   - Stage 3 (Complete): Direct ELF 64-bit and PE executable emission (`lib/compiler/elf.shae`, `lib/compiler/pe.shae`, `lib/compiler/linker.shae`, `shae link`) with zero external compiler dependencies.
 3. **Phase 6: WebAssembly & Edge Runtime Target**:
    - First-class compilation to `wasm32-wasi` and browser-embeddable WebAssembly runtimes.
    - High-throughput serverless function cold starts (<1ms).

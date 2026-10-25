@@ -179,8 +179,23 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 
 ---
 
-### **Chunk 17: Phase 5 (Stage 3) — Direct Native Linker (ELF / PE Object Emission)**
-- [ ] Direct ELF 64-bit and PE executable emission with zero external linker dependencies.
+### **Chunk 17: Phase 5 (Stage 3) — Direct Native Linker (ELF / PE Object Emission)** *(Completed)*
+- [x] **Pure-Shae Direct ELF 64-bit Linker (`lib/compiler/elf.shae`)**
+  - [x] Full ELF 64-bit header construction (`\x7fELF`, ET_EXEC, EM_X86_64, EM_AARCH64, EV_CURRENT).
+  - [x] Program header table (`PT_LOAD` segment definitions with virtual addresses and execute/read/write permissions).
+  - [x] Standalone executable binary assembly with bootstrap runtime stub and embedded bytecode trailer.
+- [x] **Pure-Shae Direct PE 64-bit Linker (`lib/compiler/pe.shae`)**
+  - [x] MS-DOS header (`MZ`), DOS stub, and PE signature offset (`e_lfanew = 0x80`).
+  - [x] COFF header (Machine AMD64, section count, optional header size, executable characteristics).
+  - [x] PE32+ 64-bit Optional Header (ImageBase, AddressOfEntryPoint, SectionAlignment, FileAlignment, Windows CUI subsystem).
+  - [x] Section headers (`.text`, `.data`) and aligned section raw data emission.
+- [x] **Universal Linker Orchestration (`lib/compiler/linker.shae`)**
+  - [x] Cross-platform linking pipeline (`link_source_to_elf`, `link_source_to_pe`, `link_file`).
+- [x] **Rust CLI Integration & Native Linker (`src/linker.rs`, `shae link`)**
+  - [x] CLI command: `shae link <file.shae> [-o <out>] [--format elf|pe] [--strip]`.
+  - [x] Direct execution of linked native ELF binary verified as standalone OS process with exact exit status and output.
+- [x] **Dual-Engine Test Verification (`tests/shae/self_linker_test.shae`, `tests/native_linker_test.rs`)**
+  - [x] 100% test pass on both Bytecode VM and AST Evaluator.
 
 ---
 

@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
-const BUNDLE_MAGIC: &[u8; 23] = b"SHAE_BUNDLE_PAYLOAD_V1\n";
+pub const BUNDLE_MAGIC: &[u8; 23] = b"SHAE_BUNDLE_PAYLOAD_V1\n";
 
 #[derive(Debug, thiserror::Error)]
 pub enum BundleError {

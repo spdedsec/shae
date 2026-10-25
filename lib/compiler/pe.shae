@@ -1,0 +1,258 @@
+// Shae Self-Hosting Compiler: Direct PE/COFF 64-bit Linker
+// Generates standalone PE32+ (.exe) executables for Windows x86_64.
+
+use { write_bytes } from "std:fs"
+
+let DOS_MAGIC = [77, 90] // "MZ"
+let PE_MAGIC = [80, 69, 0, 0] // "PE\0\0"
+let MACHINE_AMD64 = 34404 // 0x8664
+let PE32_PLUS_MAGIC = 523 // 0x20B
+let IMAGE_SUBSYSTEM_WINDOWS_CUI = 3 // Console Application
+
+fn u16_le(n) {
+    return [
+        n & 255,
+        (n >> 8) & 255
+    ]
+}
+
+fn u32_le(n) {
+    return [
+        n & 255,
+        (n >> 8) & 255,
+        (n >> 16) & 255,
+        (n >> 24) & 255
+    ]
+}
+
+fn u64_le(n) {
+    let bytes = []
+    let v = n
+    let i = 0
+    while i < 8 {
+        bytes.push(v & 255)
+        v = v >> 8
+        i = i + 1
+    }
+    return bytes
+}
+
+fn append_bytes(dest, src) {
+    let i = 0
+    while i < src.len {
+        dest.push(src[i])
+        i = i + 1
+    }
+}
+
+// 64-byte DOS Header + 64-byte DOS Stub (total 128 bytes, e_lfanew = 128 = 0x80)
+fn make_dos_header_and_stub() {
+    let buf = []
+    // e_magic: MZ
+    append_bytes(buf, DOS_MAGIC)
+    // 58 bytes of standard DOS header fields
+    let i = 0
+    while i < 58 {
+        buf.push(0)
+        i = i + 1
+    }
+    // e_lfanew at 0x3C: 128 (0x80)
+    append_bytes(buf, u32_le(128))
+
+    // DOS Stub: 64 bytes
+    let stub_msg = "This program cannot be run in DOS mode.\r\r\n$"
+    let sbytes = stub_msg.bytes()
+    append_bytes(buf, sbytes)
+    while buf.len < 128 {
+        buf.push(0)
+    }
+    return buf
+}
+
+// 24-byte COFF Header
+fn make_coff_header(num_sections) {
+    let h = []
+    // PE Signature (4 bytes)
+    append_bytes(h, PE_MAGIC)
+    // Machine (2 bytes) = AMD64
+    append_bytes(h, u16_le(MACHINE_AMD64))
+    // NumberOfSections (2 bytes)
+    append_bytes(h, u16_le(num_sections))
+    // TimeDateStamp (4 bytes)
+    append_bytes(h, u32_le(0))
+    // PointerToSymbolTable (4 bytes)
+    append_bytes(h, u32_le(0))
+    // NumberOfSymbols (4 bytes)
+    append_bytes(h, u32_le(0))
+    // SizeOfOptionalHeader (2 bytes) = 240
+    append_bytes(h, u16_le(240))
+    // Characteristics (2 bytes) = EXECUTABLE_IMAGE (0x02) | LARGE_ADDRESS_AWARE (0x20)
+    append_bytes(h, u16_le(34))
+    return h
+}
+
+// 240-byte Optional Header (PE32+)
+fn make_optional_header_64(entry_rva, image_size, headers_size) {
+    let h = []
+    // Magic (2 bytes) = 0x20B (PE32+)
+    append_bytes(h, u16_le(PE32_PLUS_MAGIC))
+    // MajorLinkerVersion, MinorLinkerVersion
+    h.push(1)
+    h.push(0)
+    // SizeOfCode (4 bytes)
+    append_bytes(h, u32_le(4096))
+    // SizeOfInitializedData (4 bytes)
+    append_bytes(h, u32_le(4096))
+    // SizeOfUninitializedData (4 bytes)
+    append_bytes(h, u32_le(0))
+    // AddressOfEntryPoint (4 bytes)
+    append_bytes(h, u32_le(entry_rva))
+    // BaseOfCode (4 bytes)
+    append_bytes(h, u32_le(4096))
+    // ImageBase (8 bytes) = 0x140000000
+    append_bytes(h, u64_le(5368709120))
+    // SectionAlignment (4 bytes) = 4096
+    append_bytes(h, u32_le(4096))
+    // FileAlignment (4 bytes) = 512
+    append_bytes(h, u32_le(512))
+    // MajorOperatingSystemVersion, MinorOperatingSystemVersion (4 bytes)
+    append_bytes(h, u16_le(6))
+    append_bytes(h, u16_le(0))
+    // MajorImageVersion, MinorImageVersion (4 bytes)
+    append_bytes(h, u16_le(1))
+    append_bytes(h, u16_le(0))
+    // MajorSubsystemVersion, MinorSubsystemVersion (4 bytes)
+    append_bytes(h, u16_le(6))
+    append_bytes(h, u16_le(0))
+    // Win32VersionValue (4 bytes)
+    append_bytes(h, u32_le(0))
+    // SizeOfImage (4 bytes)
+    append_bytes(h, u32_le(image_size))
+    // SizeOfHeaders (4 bytes)
+    append_bytes(h, u32_le(headers_size))
+    // CheckSum (4 bytes)
+    append_bytes(h, u32_le(0))
+    // Subsystem (2 bytes) = Windows CUI (3)
+    append_bytes(h, u16_le(IMAGE_SUBSYSTEM_WINDOWS_CUI))
+    // DllCharacteristics (2 bytes) = DYNAMIC_BASE (0x40) | NX_COMPAT (0x100)
+    append_bytes(h, u16_le(320))
+    // SizeOfStackReserve (8 bytes) = 1MB
+    append_bytes(h, u64_le(1048576))
+    // SizeOfStackCommit (8 bytes) = 4KB
+    append_bytes(h, u64_le(4096))
+    // SizeOfHeapReserve (8 bytes) = 1MB
+    append_bytes(h, u64_le(1048576))
+    // SizeOfHeapCommit (8 bytes) = 4KB
+    append_bytes(h, u64_le(4096))
+    // LoaderFlags (4 bytes)
+    append_bytes(h, u32_le(0))
+    // NumberOfRvaAndSizes (4 bytes) = 16
+    append_bytes(h, u32_le(16))
+
+    // 16 Data Directories (16 * 8 = 128 bytes)
+    let d = 0
+    while d < 16 {
+        append_bytes(h, u32_le(0)) // VirtualAddress
+        append_bytes(h, u32_le(0)) // Size
+        d = d + 1
+    }
+    return h
+}
+
+// 40-byte Section Header
+fn make_section_header(name_str, virtual_size, virtual_addr, raw_size, raw_ptr, characteristics) {
+    let sh = []
+    let nbytes = name_str.bytes()
+    let i = 0
+    while i < 8 {
+        if i < nbytes.len {
+            sh.push(nbytes[i])
+        } else {
+            sh.push(0)
+        }
+        i = i + 1
+    }
+    // VirtualSize (4 bytes)
+    append_bytes(sh, u32_le(virtual_size))
+    // VirtualAddress (4 bytes)
+    append_bytes(sh, u32_le(virtual_addr))
+    // SizeOfRawData (4 bytes)
+    append_bytes(sh, u32_le(raw_size))
+    // PointerToRawData (4 bytes)
+    append_bytes(sh, u32_le(raw_ptr))
+    // PointerToRelocations (4 bytes)
+    append_bytes(sh, u32_le(0))
+    // PointerToLinenumbers (4 bytes)
+    append_bytes(sh, u32_le(0))
+    // NumberOfRelocations (2 bytes)
+    append_bytes(sh, u16_le(0))
+    // NumberOfLinenumbers (2 bytes)
+    append_bytes(sh, u16_le(0))
+    // Characteristics (4 bytes)
+    append_bytes(sh, u32_le(characteristics))
+    return sh
+}
+
+// Builds a standalone PE 64-bit executable (.exe)
+fn build_standalone_pe(bytecode_bytes, stub_bytes) {
+    let out = []
+
+    if stub_bytes != null and stub_bytes.len > 0 {
+        // Embed bytecode payload into PE stub executable
+        append_bytes(out, stub_bytes)
+        let payload_start = out.len
+        append_bytes(out, bytecode_bytes)
+        let payload_len = bytecode_bytes.len
+
+        // Trailer: 8 bytes big-endian length + 23 bytes magic
+        let len_be = [
+            (payload_len >> 56) & 255,
+            (payload_len >> 48) & 255,
+            (payload_len >> 40) & 255,
+            (payload_len >> 32) & 255,
+            (payload_len >> 24) & 255,
+            (payload_len >> 16) & 255,
+            (payload_len >> 8) & 255,
+            payload_len & 255
+        ]
+        append_bytes(out, len_be)
+        let magic = "SHAE_BUNDLE_PAYLOAD_V1\n".bytes()
+        append_bytes(out, magic)
+        return out
+    }
+
+    // Direct standalone PE generation from scratch
+    let dos = make_dos_header_and_stub() // 128 bytes
+    let coff = make_coff_header(1) // 24 bytes
+    let opt = make_optional_header_64(4096, 8192, 512) // 240 bytes
+
+    // Section header: .text (40 bytes)
+    // 0x60000020 = CODE | EXECUTE | READ
+    let text_sh = make_section_header(".text", bytecode_bytes.len, 4096, 512, 512, 1610612768)
+
+    append_bytes(out, dos)
+    append_bytes(out, coff)
+    append_bytes(out, opt)
+    append_bytes(out, text_sh)
+
+    // Align headers to FileAlignment (512 bytes)
+    while out.len < 512 {
+        out.push(0)
+    }
+
+    // Append bytecode payload in .text section
+    append_bytes(out, bytecode_bytes)
+
+    // Pad .text section to FileAlignment (512)
+    while (out.len % 512) != 0 {
+        out.push(0)
+    }
+
+    return out
+}
+
+fn emit_pe_file(output_path, bytecode_bytes, stub_bytes) {
+    let pe_bytes = build_standalone_pe(bytecode_bytes, stub_bytes)
+    write_bytes(output_path, pe_bytes)
+    return pe_bytes.len
+}

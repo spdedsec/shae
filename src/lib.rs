@@ -16,6 +16,7 @@ pub mod fmt;
 pub mod gc;
 pub mod jit;
 pub mod lexer;
+pub mod linker;
 pub mod linter;
 pub mod lsp;
 pub mod opcode;

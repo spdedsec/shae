@@ -1,0 +1,99 @@
+// Shae Self-Hosting Compiler: Native Linker Test
+// Verifies pure-Shae direct ELF and PE binary emission.
+
+use {
+    build_standalone_elf, emit_elf_file
+} from "../../lib/compiler/elf.shae"
+use {
+    build_standalone_pe, emit_pe_file
+} from "../../lib/compiler/pe.shae"
+use {
+    link_source_to_elf, link_source_to_pe
+} from "../../lib/compiler/linker.shae"
+use {
+    read, exists, read_bytes, remove
+} from "std:fs"
+
+print("=== Shae Phase 5 Stage 3: Self-Hosting Native Linker Test ===")
+
+// [1] Testing ELF 64-bit Header & Binary Construction
+print("\n[1] Testing direct ELF64 standalone binary construction...")
+let fake_bytecode = [127, 83, 72, 65, 69, 1, 0, 0, 0] // \x7fSHAE ...
+let elf_bytes = build_standalone_elf(fake_bytecode, null, "x86_64")
+
+// \x7fELF = [127, 69, 76, 70]
+if elf_bytes[0] != 127 or elf_bytes[1] != 69 or elf_bytes[2] != 76 or elf_bytes[3] != 70 {
+    print("FAILED: ELF magic header mismatch!")
+    exit(1)
+}
+// EI_CLASS = 2 (64-bit)
+if elf_bytes[4] != 2 {
+    print("FAILED: ELF class should be 2 (64-bit)!")
+    exit(1)
+}
+// EI_DATA = 1 (Little-endian)
+if elf_bytes[5] != 1 {
+    print("FAILED: ELF data encoding should be 1 (Little-endian)!")
+    exit(1)
+}
+// Machine = 62 (x86_64: [62, 0])
+if elf_bytes[18] != 62 or elf_bytes[19] != 0 {
+    print("FAILED: ELF machine should be 62 (x86_64)!")
+    exit(1)
+}
+print("   [✓] ELF 64-bit binary constructed with valid header (size: " + str(elf_bytes.len) + " bytes).")
+
+// [2] Testing PE 64-bit Header & Binary Construction
+print("\n[2] Testing direct PE32+ standalone binary construction...")
+let pe_bytes = build_standalone_pe(fake_bytecode, null)
+
+// DOS Magic: MZ = [77, 90]
+if pe_bytes[0] != 77 or pe_bytes[1] != 90 {
+    print("FAILED: DOS magic header mismatch!")
+    exit(1)
+}
+// e_lfanew at 0x3C = 128 (0x80)
+if pe_bytes[60] != 128 or pe_bytes[61] != 0 {
+    print("FAILED: DOS e_lfanew mismatch!")
+    exit(1)
+}
+// PE Signature at 128: PE\0\0 = [80, 69, 0, 0]
+if pe_bytes[128] != 80 or pe_bytes[129] != 69 or pe_bytes[130] != 0 or pe_bytes[131] != 0 {
+    print("FAILED: PE signature mismatch at offset 128!")
+    exit(1)
+}
+// Machine at 132: AMD64 (0x8664 = [0x64, 0x86] = [100, 134])
+if pe_bytes[132] != 100 or pe_bytes[133] != 134 {
+    print("FAILED: PE COFF machine mismatch!")
+    exit(1)
+}
+// PE32+ Magic at 152: 0x20B = [11, 2]
+if pe_bytes[152] != 11 or pe_bytes[153] != 2 {
+    print("FAILED: PE32+ optional header magic mismatch!")
+    exit(1)
+}
+print("   [✓] PE 64-bit binary constructed with valid headers (size: " + str(pe_bytes.len) + " bytes).")
+
+// [3] End-to-End source linking to ELF and PE
+print("\n[3] Testing End-to-End source linking to native files...")
+let sample_src = "let msg = \"Hello from Native Linked Shae!\"\nprint(msg)\n"
+let elf_out = "tests/test_linked_sample.elf"
+let pe_out = "tests/test_linked_sample.exe"
+
+let elf_written = link_source_to_elf(sample_src, elf_out, null, "x86_64")
+if not exists(elf_out) {
+    print("FAILED: ELF output file was not created!")
+    exit(1)
+}
+remove(elf_out)
+
+let pe_written = link_source_to_pe(sample_src, pe_out, null)
+if not exists(pe_out) {
+    print("FAILED: PE output file was not created!")
+    exit(1)
+}
+remove(pe_out)
+
+print("   [✓] End-to-End source linking successfully emitted ELF and PE files.")
+
+print("\n=== All Phase 5 Stage 3 Self-Hosting Native Linker Tests Passed! ===")

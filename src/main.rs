@@ -39,6 +39,9 @@ fn show_help() {
     println!(
         "  shae bundle <entry.shae>   Bundle application into a standalone binary (--strip, --no-bytecode)"
     );
+    println!(
+        "  shae link <entry.shae>     Direct native linker for standalone ELF and PE executables (-o, --format, --strip)"
+    );
     println!("  shae lsp                   Start Language Server Protocol (LSP) server");
     println!("  shae dap                   Start Debug Adapter Protocol (DAP) server");
     println!("  shae debug <file.shae>     Start interactive step debugger");
@@ -855,6 +858,61 @@ fn main() {
                 }
                 Err(e) => {
                     eprintln!("Error bundling application: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
+        "link" => {
+            if args.len() < 3 {
+                eprintln!(
+                    "Usage: shae link <entry.shae> [-o <output_binary>] [--format elf|pe] [--strip]"
+                );
+                process::exit(1);
+            }
+            let entry = Path::new(&args[2]);
+            let mut output = None;
+            let mut format = shae::linker::LinkFormat::Auto;
+            let mut strip = false;
+            let mut i = 3;
+            while i < args.len() {
+                if (args[i] == "-o" || args[i] == "--output") && i + 1 < args.len() {
+                    output = Some(args[i + 1].clone());
+                    i += 2;
+                } else if (args[i] == "--format" || args[i] == "-f") && i + 1 < args.len() {
+                    format = shae::linker::LinkFormat::from_str(&args[i + 1])
+                        .unwrap_or(shae::linker::LinkFormat::Auto);
+                    i += 2;
+                } else if args[i] == "--strip" {
+                    strip = true;
+                    i += 1;
+                } else {
+                    i += 1;
+                }
+            }
+            let out_path = output.unwrap_or_else(|| {
+                let stem = entry.file_stem().and_then(|s| s.to_str()).unwrap_or("app");
+                if format == shae::linker::LinkFormat::Pe64
+                    || (format == shae::linker::LinkFormat::Auto && cfg!(windows))
+                {
+                    format!("{}.exe", stem)
+                } else {
+                    stem.to_string()
+                }
+            });
+            match shae::linker::NativeLinker::link_with_format(
+                entry,
+                Path::new(&out_path),
+                format,
+                strip,
+            ) {
+                Ok(bytes) => {
+                    println!(
+                        "⚡ Successfully linked standalone binary: {} ({} bytes)",
+                        out_path, bytes
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Link error: {}", e);
                     process::exit(1);
                 }
             }

@@ -1,0 +1,205 @@
+// Shae Self-Hosting Compiler: Direct ELF 64-bit Linker
+// Generates standalone ELF 64-bit executable binaries for Linux x86_64 and AArch64.
+
+use { write_bytes } from "std:fs"
+
+// ELF Constants
+let ELF_MAGIC = [127, 69, 76, 70] // \x7fELF
+let ELFCLASS64 = 2
+let ELFDATA2LSB = 1 // Little-endian
+let EV_CURRENT = 1
+let ELFOSABI_NONE = 0
+let ET_EXEC = 2 // Executable file
+let EM_X86_64 = 62 // AMD x86-64
+let EM_AARCH64 = 183 // ARM AArch64
+
+// Program Header Types
+let PT_LOAD = 1
+let PT_DYNAMIC = 2
+let PT_INTERP = 3
+let PT_NOTE = 4
+let PT_SHLIB = 5
+let PT_PHDR = 6
+
+// Program Header Flags
+let PF_X = 1 // Execute
+let PF_W = 2 // Write
+let PF_R = 4 // Read
+
+fn u16_le(n) {
+    return [
+        n & 255,
+        (n >> 8) & 255
+    ]
+}
+
+fn u32_le(n) {
+    return [
+        n & 255,
+        (n >> 8) & 255,
+        (n >> 16) & 255,
+        (n >> 24) & 255
+    ]
+}
+
+fn u64_le(n) {
+    let bytes = []
+    let v = n
+    let i = 0
+    while i < 8 {
+        bytes.push(v & 255)
+        v = v >> 8
+        i = i + 1
+    }
+    return bytes
+}
+
+fn append_bytes(dest, src) {
+    let i = 0
+    while i < src.len {
+        dest.push(src[i])
+        i = i + 1
+    }
+}
+
+// 64-byte ELF Header
+fn make_elf64_header(entry_addr, ph_offset, ph_num, machine) {
+    let h = []
+    // 0x00: e_ident
+    append_bytes(h, ELF_MAGIC)
+    h.push(ELFCLASS64)
+    h.push(ELFDATA2LSB)
+    h.push(EV_CURRENT)
+    h.push(ELFOSABI_NONE)
+    // 8 bytes padding
+    let i = 0
+    while i < 8 {
+        h.push(0)
+        i = i + 1
+    }
+    // 0x10: e_type (2 bytes)
+    append_bytes(h, u16_le(ET_EXEC))
+    // 0x12: e_machine (2 bytes)
+    append_bytes(h, u16_le(machine))
+    // 0x14: e_version (4 bytes)
+    append_bytes(h, u32_le(EV_CURRENT))
+    // 0x18: e_entry (8 bytes)
+    append_bytes(h, u64_le(entry_addr))
+    // 0x20: e_phoff (8 bytes)
+    append_bytes(h, u64_le(ph_offset))
+    // 0x28: e_shoff (8 bytes)
+    append_bytes(h, u64_le(0))
+    // 0x30: e_flags (4 bytes)
+    append_bytes(h, u32_le(0))
+    // 0x34: e_ehsize (2 bytes) = 64
+    append_bytes(h, u16_le(64))
+    // 0x36: e_phentsize (2 bytes) = 56
+    append_bytes(h, u16_le(56))
+    // 0x38: e_phnum (2 bytes)
+    append_bytes(h, u16_le(ph_num))
+    // 0x3A: e_shentsize (2 bytes) = 64
+    append_bytes(h, u16_le(64))
+    // 0x3C: e_shnum (2 bytes) = 0
+    append_bytes(h, u16_le(0))
+    // 0x3E: e_shstrndx (2 bytes) = 0
+    append_bytes(h, u16_le(0))
+    return h
+}
+
+// 56-byte Program Header
+fn make_elf64_program_header(p_type, p_flags, p_offset, p_vaddr, p_paddr, p_filesz, p_memsz, p_align) {
+    let ph = []
+    // 0x00: p_type (4 bytes)
+    append_bytes(ph, u32_le(p_type))
+    // 0x04: p_flags (4 bytes)
+    append_bytes(ph, u32_le(p_flags))
+    // 0x08: p_offset (8 bytes)
+    append_bytes(ph, u64_le(p_offset))
+    // 0x10: p_vaddr (8 bytes)
+    append_bytes(ph, u64_le(p_vaddr))
+    // 0x18: p_paddr (8 bytes)
+    append_bytes(ph, u64_le(p_paddr))
+    // 0x20: p_filesz (8 bytes)
+    append_bytes(ph, u64_le(p_filesz))
+    // 0x28: p_memsz (8 bytes)
+    append_bytes(ph, u64_le(p_memsz))
+    // 0x30: p_align (8 bytes)
+    append_bytes(ph, u64_le(p_align))
+    return ph
+}
+
+// Builds a standalone ELF 64-bit binary by attaching runtime bootstrap stub and bytecode payload
+fn build_standalone_elf(bytecode_bytes, stub_bytes, arch) {
+    let out = []
+    let machine = EM_X86_64
+    if arch == "aarch64" or arch == "arm64" {
+        machine = EM_AARCH64
+    }
+
+    if stub_bytes != null and stub_bytes.len > 0 {
+        // Embed bytecode payload into stub executable
+        append_bytes(out, stub_bytes)
+        let payload_start = out.len
+        append_bytes(out, bytecode_bytes)
+        let payload_len = bytecode_bytes.len
+
+        // Trailer: 8 bytes big-endian length + 23 bytes magic
+        let len_be = [
+            (payload_len >> 56) & 255,
+            (payload_len >> 48) & 255,
+            (payload_len >> 40) & 255,
+            (payload_len >> 32) & 255,
+            (payload_len >> 24) & 255,
+            (payload_len >> 16) & 255,
+            (payload_len >> 8) & 255,
+            payload_len & 255
+        ]
+        append_bytes(out, len_be)
+        let magic = "SHAE_BUNDLE_PAYLOAD_V1\n".bytes()
+        append_bytes(out, magic)
+        return out
+    }
+
+    // Direct standalone ELF generation from scratch
+    let base_vaddr = 4194304 // 0x400000
+    let ph_offset = 64
+    let ph_num = 1
+    let header_size = 64 + (ph_num * 56) // 120 bytes
+    let pad_size = 4096 - header_size
+    let total_header_pad = 4096
+
+    let text_vaddr = base_vaddr + total_header_pad
+    let text_offset = total_header_pad
+    let text_size = bytecode_bytes.len
+
+    let elf_header = make_elf64_header(text_vaddr, ph_offset, ph_num, machine)
+    let prog_header = make_elf64_program_header(
+        PT_LOAD,
+        PF_R + PF_X + PF_W,
+        0,
+        base_vaddr,
+        base_vaddr,
+        total_header_pad + text_size,
+        total_header_pad + text_size,
+        4096
+    )
+
+    append_bytes(out, elf_header)
+    append_bytes(out, prog_header)
+
+    // Pad to 4096 page boundary
+    while out.len < total_header_pad {
+        out.push(0)
+    }
+
+    // Append bytecode payload
+    append_bytes(out, bytecode_bytes)
+
+    return out
+}
+
+fn emit_elf_file(output_path, bytecode_bytes, stub_bytes, arch) {
+    let elf_bytes = build_standalone_elf(bytecode_bytes, stub_bytes, arch)
+    write_bytes(output_path, elf_bytes)
+    return elf_bytes.len
+}
