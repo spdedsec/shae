@@ -1496,6 +1496,60 @@ impl VM {
                                 );
                             }
                         }
+                        Value::RemoteActor(ref _rem) => {
+                            if matches!(
+                                property.as_str(),
+                                "send" | "ask" | "is_alive" | "isAlive" | "node" | "name"
+                            ) {
+                                self.stack.push(Value::BoundMethod {
+                                    object: Box::new(target.clone()),
+                                    method: property,
+                                });
+                            } else if is_safe {
+                                self.stack.push(Value::Null);
+                            } else {
+                                runtime_error!(
+                                    self,
+                                    format!("RemoteActor has no property or method '{}'", property)
+                                );
+                            }
+                        }
+                        Value::ClusterNode(ref _node) => {
+                            if matches!(
+                                property.as_str(),
+                                "connect"
+                                    | "join"
+                                    | "peers"
+                                    | "nodes"
+                                    | "actor"
+                                    | "whereis"
+                                    | "spawn"
+                                    | "register"
+                                    | "unregister"
+                                    | "registered"
+                                    | "send"
+                                    | "ask"
+                                    | "broadcast"
+                                    | "on_broadcast"
+                                    | "stop"
+                                    | "is_alive"
+                                    | "isAlive"
+                                    | "name"
+                                    | "address"
+                            ) {
+                                self.stack.push(Value::BoundMethod {
+                                    object: Box::new(target.clone()),
+                                    method: property,
+                                });
+                            } else if is_safe {
+                                self.stack.push(Value::Null);
+                            } else {
+                                runtime_error!(
+                                    self,
+                                    format!("ClusterNode has no property or method '{}'", property)
+                                );
+                            }
+                        }
                         Value::Supervisor(ref _sup) => {
                             if matches!(
                                 property.as_str(),

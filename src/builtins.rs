@@ -1435,11 +1435,33 @@ fn builtin_send(
                 .map_err(|e| e.to_runtime_error(span))?;
             Ok(Value::Null)
         }
+        Value::RemoteActor(rem) => {
+            rem.send(args[1].clone())
+                .map_err(|e| e.to_runtime_error(span))?;
+            Ok(Value::Null)
+        }
         Value::String(name) => {
             if let Some(act) = crate::actor::ActorRegistry::whereis(name) {
                 act.send(args[1].clone())
                     .map_err(|e| e.to_runtime_error(span))?;
                 Ok(Value::Null)
+            } else if name.contains('@') {
+                let parts: Vec<&str> = name.splitn(2, '@').collect();
+                if let Some(node) = crate::actor_cluster::get_global_cluster() {
+                    node.send_to_remote(parts[1], parts[0], args[1].clone())
+                        .map_err(|e| e.to_runtime_error(span))?;
+                    Ok(Value::Null)
+                } else {
+                    Err(crate::actor::ActorError::NameNotFound(name.clone()).to_runtime_error(span))
+                }
+            } else if let Some(node) = crate::actor_cluster::get_global_cluster() {
+                if let Some(Value::RemoteActor(rem)) = node.whereis(name, None) {
+                    rem.send(args[1].clone())
+                        .map_err(|e| e.to_runtime_error(span))?;
+                    Ok(Value::Null)
+                } else {
+                    Err(crate::actor::ActorError::NameNotFound(name.clone()).to_runtime_error(span))
+                }
             } else {
                 Err(crate::actor::ActorError::NameNotFound(name.clone()).to_runtime_error(span))
             }

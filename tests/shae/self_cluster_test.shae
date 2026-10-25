@@ -1,0 +1,109 @@
+// Pure-Shae Distributed Actor Mesh Integration Test
+// tests/shae/self_cluster_test.shae
+
+let cluster = use "std:actor:cluster"
+let actor = use "std:actor"
+use { make_worker_pool, make_leader_election } from "../../lib/actor/cluster.shae"
+
+println("=== Shae Phase 7: Distributed Actor Mesh (std:actor:cluster) Test ===")
+
+// [1] Initialize Cluster Nodes
+println("\n[1] Initializing Cluster Nodes on Ephemeral Loopback Ports...")
+let node_a = cluster.node("node_alpha", "127.0.0.1:0", { "cookie": "shae_mesh_token" })
+let node_b = cluster.node("node_beta", "127.0.0.1:0", { "cookie": "shae_mesh_token" })
+
+println("   [✓] Node Alpha bound to:", node_a.address())
+println("   [✓] Node Beta bound to:", node_b.address())
+
+if not node_a.is_alive() or not node_b.is_alive() {
+    println("FAILED: Nodes should be alive after initialization")
+    return 1
+}
+
+// [2] Spawn Stateful Actor on Node Alpha
+println("\n[2] Spawning Supervised Actor 'calc_service' on Node Alpha...")
+let calc_pid = node_a.spawn("calc_service", 0, fn(state, msg) {
+    if msg["op"] == "add" {
+        let next_val = state + msg["val"]
+        return { "state": next_val, "reply": next_val }
+    } else if msg["op"] == "mult" {
+        let next_val = state * msg["val"]
+        return { "state": next_val, "reply": next_val }
+    } else if msg["op"] == "get" {
+        return { "state": state, "reply": state }
+    }
+    return state
+})
+
+println("   [✓] calc_service active on Node Alpha. Registered list:", node_a.registered())
+
+// [3] Connect Node Beta to Node Alpha Mesh
+println("\n[3] Connecting Node Beta to Node Alpha Mesh...")
+let connect_ok = node_b.connect(node_a.address())
+if not connect_ok {
+    println("FAILED: node_b failed to connect to node_a")
+    return 1
+}
+println("   [✓] Handshake succeeded. Node Beta peers:", node_b.peers())
+
+// [4] Remote Actor Resolution & Cross-Node Ask
+println("\n[4] Resolving 'calc_service' from Node Beta...")
+let remote_calc = node_b.actor("calc_service", node_a.name())
+println("   [✓] Remote actor handle obtained:", remote_calc.name(), "at", remote_calc.node())
+
+let ans1 = remote_calc.ask({ "op": "add", "val": 10 }, 5000)
+println("   [✓] Ask (add 10) =>", ans1)
+if ans1 != 10 {
+    println("FAILED: Expected 10, got:", ans1)
+    return 1
+}
+
+let ans2 = remote_calc.ask({ "op": "mult", "val": 4 }, 5000)
+println("   [✓] Ask (mult 4) =>", ans2)
+if ans2 != 40 {
+    println("FAILED: Expected 40, got:", ans2)
+    return 1
+}
+
+let ans3 = remote_calc.ask({ "op": "add", "val": 2 }, 5000)
+println("   [✓] Ask (add 2) =>", ans3)
+if ans3 != 42 {
+    println("FAILED: Expected 42, got:", ans3)
+    return 1
+}
+
+// [5] Pure-Shae Worker Pool Abstraction
+println("\n[5] Testing Pure-Shae Distributed Worker Pool...")
+let pool = make_worker_pool([remote_calc])
+if pool.count() != 1 {
+    println("FAILED: Expected 1 worker in pool, got:", pool.count())
+    return 1
+}
+
+let pool_res = pool.ask({ "op": "get" }, 5000)
+println("   [✓] Worker pool routed request =>", pool_res)
+if pool_res != 42 {
+    println("FAILED: Expected 42 from worker pool, got:", pool_res)
+    return 1
+}
+
+// [6] Pure-Shae Leader Election
+println("\n[6] Testing Pure-Shae Leader Election...")
+let candidates = [node_a.name(), node_b.name()]
+let election = make_leader_election(node_a, candidates)
+let elected = election.elect()
+println("   [✓] Leader election outcome:", elected, "(local role:", election.role(), ")")
+if elected != "node_beta" {
+    println("FAILED: Expected node_beta as lexicographically highest leader, got:", elected)
+    return 1
+}
+
+// [7] Graceful Teardown
+println("\n[7] Graceful Teardown of Cluster Nodes...")
+calc_pid.stop()
+node_b.stop()
+node_a.stop()
+println("   [✓] All nodes stopped cleanly.")
+
+println("\n=== All Phase 7 Distributed Actor Mesh Tests Passed! ===")
+return 0

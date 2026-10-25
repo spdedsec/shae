@@ -1585,6 +1585,62 @@ impl Evaluator {
                             .at(*span))
                         }
                     }
+                    Value::RemoteActor(rem) => {
+                        if matches!(
+                            property.as_str(),
+                            "send" | "ask" | "is_alive" | "isAlive" | "node" | "name"
+                        ) {
+                            Ok(Some(Value::BoundMethod {
+                                object: Box::new(Value::RemoteActor(rem.clone())),
+                                method: property.clone(),
+                            }))
+                        } else if *safe || lenient {
+                            Ok(None)
+                        } else {
+                            Err(RuntimeError::new(format!(
+                                "RemoteActor has no property or method '{}'",
+                                property
+                            ))
+                            .at(*span))
+                        }
+                    }
+                    Value::ClusterNode(node) => {
+                        if matches!(
+                            property.as_str(),
+                            "connect"
+                                | "join"
+                                | "peers"
+                                | "nodes"
+                                | "actor"
+                                | "whereis"
+                                | "spawn"
+                                | "register"
+                                | "unregister"
+                                | "registered"
+                                | "send"
+                                | "ask"
+                                | "broadcast"
+                                | "on_broadcast"
+                                | "stop"
+                                | "is_alive"
+                                | "isAlive"
+                                | "name"
+                                | "address"
+                        ) {
+                            Ok(Some(Value::BoundMethod {
+                                object: Box::new(Value::ClusterNode(node.clone())),
+                                method: property.clone(),
+                            }))
+                        } else if *safe || lenient {
+                            Ok(None)
+                        } else {
+                            Err(RuntimeError::new(format!(
+                                "ClusterNode has no property or method '{}'",
+                                property
+                            ))
+                            .at(*span))
+                        }
+                    }
                     Value::Supervisor(sup) => {
                         if matches!(
                             property.as_str(),
@@ -3361,6 +3417,436 @@ impl Evaluator {
                             Err(RuntimeError::new("status() expects 0 arguments".into()).at(span))
                         } else {
                             Ok(Value::String(act.status().as_str().to_string()))
+                        }
+                    }
+
+                    // -------------------------------------------------------------
+                    // RemoteActor bound methods
+                    // -------------------------------------------------------------
+                    (Value::RemoteActor(rem), "send") => {
+                        if args.len() != 1 {
+                            Err(RuntimeError::new("send() expects 1 argument".into()).at(span))
+                        } else {
+                            rem.send(args[0].clone())
+                                .map(|()| Value::Null)
+                                .map_err(|e| e.to_runtime_error(span))
+                        }
+                    }
+                    (Value::RemoteActor(rem), "ask") => {
+                        let timeout = if args.len() == 1 {
+                            None
+                        } else if args.len() == 2 {
+                            match args[1] {
+                                Value::Int(ms) if ms >= 0 => {
+                                    Some(std::time::Duration::from_millis(ms as u64))
+                                }
+                                Value::Float(ms) | Value::Number(ms) if ms >= 0.0 => {
+                                    Some(std::time::Duration::from_millis(ms as u64))
+                                }
+                                Value::Null => None,
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "ask() timeout must be a non-negative number".into(),
+                                    )
+                                    .at(span));
+                                }
+                            }
+                        } else {
+                            return Err(RuntimeError::new(
+                                "ask() expects 1 or 2 arguments: ask(msg, [timeout_ms])".into(),
+                            )
+                            .at(span));
+                        };
+
+                        rem.ask(args[0].clone(), timeout)
+                            .map_err(|e| e.to_runtime_error(span))
+                    }
+                    (Value::RemoteActor(rem), "is_alive" | "isAlive") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("is_alive() expects 0 arguments".into()).at(span))
+                        } else {
+                            Ok(Value::Bool(rem.is_alive()))
+                        }
+                    }
+                    (Value::RemoteActor(rem), "node") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("node() expects 0 arguments".into()).at(span))
+                        } else {
+                            Ok(Value::String(rem.node().to_string()))
+                        }
+                    }
+                    (Value::RemoteActor(rem), "name") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("name() expects 0 arguments".into()).at(span))
+                        } else {
+                            Ok(Value::String(rem.name().to_string()))
+                        }
+                    }
+
+                    // -------------------------------------------------------------
+                    // ClusterNode bound methods
+                    // -------------------------------------------------------------
+                    (Value::ClusterNode(node), "connect" | "join") => {
+                        if args.len() != 1 {
+                            Err(RuntimeError::new(
+                                "connect() expects 1 argument (peer_address)".into(),
+                            )
+                            .at(span))
+                        } else {
+                            match &args[0] {
+                                Value::String(s) => node
+                                    .connect(s)
+                                    .map(|_| Value::Bool(true))
+                                    .map_err(|e| e.to_runtime_error(span)),
+                                other => Err(RuntimeError::new(format!(
+                                    "connect() expects string peer_address, got {}",
+                                    other.type_name()
+                                ))
+                                .at(span)),
+                            }
+                        }
+                    }
+                    (Value::ClusterNode(node), "peers" | "nodes") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("peers() expects 0 arguments".into()).at(span))
+                        } else {
+                            let peers = node.peers();
+                            let values: Vec<Value> = peers.into_iter().map(Value::String).collect();
+                            Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
+                                values,
+                            ))))
+                        }
+                    }
+                    (Value::ClusterNode(node), "actor") => {
+                        if args.len() != 2 {
+                            Err(RuntimeError::new(
+                                "actor() expects 2 arguments: actor(name, peer_node)".into(),
+                            )
+                            .at(span))
+                        } else {
+                            let name = match &args[0] {
+                                Value::String(s) => s.clone(),
+                                other => {
+                                    return Err(RuntimeError::new(format!(
+                                        "actor() expects string name, got {}",
+                                        other.type_name()
+                                    ))
+                                    .at(span));
+                                }
+                            };
+                            let peer = match &args[1] {
+                                Value::String(s) => s.clone(),
+                                other => {
+                                    return Err(RuntimeError::new(format!(
+                                        "actor() expects string peer_node, got {}",
+                                        other.type_name()
+                                    ))
+                                    .at(span));
+                                }
+                            };
+                            Ok(Value::RemoteActor(node.actor(&name, &peer)))
+                        }
+                    }
+                    (Value::ClusterNode(node), "whereis") => {
+                        if args.is_empty() || args.len() > 2 {
+                            Err(RuntimeError::new(
+                                "whereis() expects 1 or 2 arguments: whereis(name, [node_hint])"
+                                    .into(),
+                            )
+                            .at(span))
+                        } else {
+                            let name = match &args[0] {
+                                Value::String(s) => s.clone(),
+                                other => {
+                                    return Err(RuntimeError::new(format!(
+                                        "whereis() expects string name, got {}",
+                                        other.type_name()
+                                    ))
+                                    .at(span));
+                                }
+                            };
+                            let hint = match args.get(1) {
+                                Some(Value::String(s)) => Some(s.clone()),
+                                _ => None,
+                            };
+                            Ok(node.whereis(&name, hint.as_deref()).unwrap_or(Value::Null))
+                        }
+                    }
+                    (Value::ClusterNode(node), "spawn") => {
+                        if args.len() == 2 {
+                            let name = match &args[0] {
+                                Value::String(s) => s.clone(),
+                                other => {
+                                    return Err(RuntimeError::new(format!(
+                                        "spawn() expects string name, got {}",
+                                        other.type_name()
+                                    ))
+                                    .at(span));
+                                }
+                            };
+                            let act = node
+                                .spawn_actor(&name, None, args[1].clone())
+                                .map_err(|e| e.to_runtime_error(span))?;
+                            Ok(Value::Actor(act))
+                        } else if args.len() == 3 {
+                            let name = match &args[0] {
+                                Value::String(s) => s.clone(),
+                                other => {
+                                    return Err(RuntimeError::new(format!(
+                                        "spawn() expects string name, got {}",
+                                        other.type_name()
+                                    ))
+                                    .at(span));
+                                }
+                            };
+                            let act = node
+                                .spawn_actor(&name, Some(args[1].clone()), args[2].clone())
+                                .map_err(|e| e.to_runtime_error(span))?;
+                            Ok(Value::Actor(act))
+                        } else {
+                            Err(RuntimeError::new(
+                                "spawn() expects 2 or 3 arguments: spawn(name, [state], handler)"
+                                    .into(),
+                            )
+                            .at(span))
+                        }
+                    }
+                    (Value::ClusterNode(node), "register") => {
+                        if args.len() != 2 {
+                            Err(RuntimeError::new(
+                                "register() expects 2 arguments: register(name, actor)".into(),
+                            )
+                            .at(span))
+                        } else {
+                            let name = match &args[0] {
+                                Value::String(s) => s.clone(),
+                                other => {
+                                    return Err(RuntimeError::new(format!(
+                                        "register() expects string name, got {}",
+                                        other.type_name()
+                                    ))
+                                    .at(span));
+                                }
+                            };
+                            let act = match &args[1] {
+                                Value::Actor(a) => std::sync::Arc::clone(a),
+                                other => {
+                                    return Err(RuntimeError::new(format!(
+                                        "register() expects actor handle, got {}",
+                                        other.type_name()
+                                    ))
+                                    .at(span));
+                                }
+                            };
+                            node.register(&name, act);
+                            Ok(Value::Null)
+                        }
+                    }
+                    (Value::ClusterNode(node), "unregister") => {
+                        if args.len() != 1 {
+                            Err(
+                                RuntimeError::new("unregister() expects 1 argument (name)".into())
+                                    .at(span),
+                            )
+                        } else {
+                            match &args[0] {
+                                Value::String(s) => {
+                                    node.unregister(s);
+                                    Ok(Value::Null)
+                                }
+                                other => Err(RuntimeError::new(format!(
+                                    "unregister() expects string name, got {}",
+                                    other.type_name()
+                                ))
+                                .at(span)),
+                            }
+                        }
+                    }
+                    (Value::ClusterNode(node), "registered") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("registered() expects 0 arguments".into())
+                                .at(span))
+                        } else {
+                            let list = node.registered();
+                            let values: Vec<Value> = list.into_iter().map(Value::String).collect();
+                            Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
+                                values,
+                            ))))
+                        }
+                    }
+                    (Value::ClusterNode(node), "send") => {
+                        if args.len() != 2 {
+                            Err(RuntimeError::new(
+                                "send() expects 2 arguments: send(target, msg)".into(),
+                            )
+                            .at(span))
+                        } else {
+                            match &args[0] {
+                                Value::RemoteActor(rem) => rem
+                                    .send(args[1].clone())
+                                    .map(|()| Value::Null)
+                                    .map_err(|e| e.to_runtime_error(span)),
+                                Value::Actor(act) => act
+                                    .send(args[1].clone())
+                                    .map(|()| Value::Null)
+                                    .map_err(|e| e.to_runtime_error(span)),
+                                Value::String(s) => {
+                                    if s.contains('@') {
+                                        let parts: Vec<&str> = s.splitn(2, '@').collect();
+                                        node.send_to_remote(parts[1], parts[0], args[1].clone())
+                                            .map(|()| Value::Null)
+                                            .map_err(|e| e.to_runtime_error(span))
+                                    } else if let Some(Value::RemoteActor(rem)) =
+                                        node.whereis(s, None)
+                                    {
+                                        rem.send(args[1].clone())
+                                            .map(|()| Value::Null)
+                                            .map_err(|e| e.to_runtime_error(span))
+                                    } else if let Some(act) =
+                                        crate::actor::ActorRegistry::whereis(s)
+                                    {
+                                        act.send(args[1].clone())
+                                            .map(|()| Value::Null)
+                                            .map_err(|e| e.to_runtime_error(span))
+                                    } else {
+                                        Err(crate::actor::ActorError::NameNotFound(s.clone())
+                                            .to_runtime_error(span))
+                                    }
+                                }
+                                other => Err(RuntimeError::new(format!(
+                                    "send() target must be an actor or string, got {}",
+                                    other.type_name()
+                                ))
+                                .at(span)),
+                            }
+                        }
+                    }
+                    (Value::ClusterNode(node), "ask") => {
+                        if args.len() < 2 || args.len() > 3 {
+                            Err(RuntimeError::new(
+                                "ask() expects 2 or 3 arguments: ask(target, msg, [timeout_ms])"
+                                    .into(),
+                            )
+                            .at(span))
+                        } else {
+                            let timeout = if args.len() == 3 {
+                                match args[2] {
+                                    Value::Int(ms) if ms >= 0 => {
+                                        Some(std::time::Duration::from_millis(ms as u64))
+                                    }
+                                    Value::Float(ms) | Value::Number(ms) if ms >= 0.0 => {
+                                        Some(std::time::Duration::from_millis(ms as u64))
+                                    }
+                                    Value::Null => None,
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "ask() timeout must be a non-negative number".into(),
+                                        )
+                                        .at(span));
+                                    }
+                                }
+                            } else {
+                                None
+                            };
+
+                            match &args[0] {
+                                Value::RemoteActor(rem) => rem
+                                    .ask(args[1].clone(), timeout)
+                                    .map_err(|e| e.to_runtime_error(span)),
+                                Value::Actor(act) => act
+                                    .ask(args[1].clone(), timeout)
+                                    .map_err(|e| e.to_runtime_error(span)),
+                                Value::String(s) => {
+                                    if s.contains('@') {
+                                        let parts: Vec<&str> = s.splitn(2, '@').collect();
+                                        node.ask_remote(
+                                            parts[1],
+                                            parts[0],
+                                            args[1].clone(),
+                                            timeout,
+                                        )
+                                        .map_err(|e| e.to_runtime_error(span))
+                                    } else if let Some(Value::RemoteActor(rem)) =
+                                        node.whereis(s, None)
+                                    {
+                                        rem.ask(args[1].clone(), timeout)
+                                            .map_err(|e| e.to_runtime_error(span))
+                                    } else if let Some(act) =
+                                        crate::actor::ActorRegistry::whereis(s)
+                                    {
+                                        act.ask(args[1].clone(), timeout)
+                                            .map_err(|e| e.to_runtime_error(span))
+                                    } else {
+                                        Err(crate::actor::ActorError::NameNotFound(s.clone())
+                                            .to_runtime_error(span))
+                                    }
+                                }
+                                other => Err(RuntimeError::new(format!(
+                                    "ask() target must be an actor or string, got {}",
+                                    other.type_name()
+                                ))
+                                .at(span)),
+                            }
+                        }
+                    }
+                    (Value::ClusterNode(node), "broadcast") => {
+                        if args.len() != 2 {
+                            Err(RuntimeError::new(
+                                "broadcast() expects 2 arguments: broadcast(topic, msg)".into(),
+                            )
+                            .at(span))
+                        } else {
+                            match &args[0] {
+                                Value::String(topic) => {
+                                    node.broadcast(topic, args[1].clone());
+                                    Ok(Value::Null)
+                                }
+                                other => Err(RuntimeError::new(format!(
+                                    "broadcast() expects string topic, got {}",
+                                    other.type_name()
+                                ))
+                                .at(span)),
+                            }
+                        }
+                    }
+                    (Value::ClusterNode(node), "on_broadcast") => {
+                        if args.len() != 1 {
+                            Err(RuntimeError::new(
+                                "on_broadcast() expects 1 argument (callback)".into(),
+                            )
+                            .at(span))
+                        } else {
+                            node.on_broadcast(args[0].clone());
+                            Ok(Value::Null)
+                        }
+                    }
+                    (Value::ClusterNode(node), "stop") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("stop() expects 0 arguments".into()).at(span))
+                        } else {
+                            node.stop();
+                            Ok(Value::Bool(true))
+                        }
+                    }
+                    (Value::ClusterNode(node), "is_alive" | "isAlive") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("is_alive() expects 0 arguments".into()).at(span))
+                        } else {
+                            Ok(Value::Bool(node.is_alive()))
+                        }
+                    }
+                    (Value::ClusterNode(node), "name") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("name() expects 0 arguments".into()).at(span))
+                        } else {
+                            Ok(Value::String(node.name().to_string()))
+                        }
+                    }
+                    (Value::ClusterNode(node), "address") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("address() expects 0 arguments".into()).at(span))
+                        } else {
+                            Ok(Value::String(node.address()))
                         }
                     }
 

@@ -39,8 +39,9 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "sqlite" | "sql" => Ok(build_sqlite_module()),
         "unicode" => Ok(build_unicode_module()),
         "actor" | "actors" => Ok(build_actor_module()),
+        "actor:cluster" | "cluster" => Ok(build_cluster_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster",
             clean_name
         ))
         .at(span)),
@@ -3016,8 +3017,9 @@ fn unicode_category(
 // -------------------------------------------------------------
 
 fn build_actor_module() -> Value {
-    make_map(vec![
-        ("spawn", actor_spawn),
+    let mut map = IndexMap::new();
+    let entries = vec![
+        ("spawn", actor_spawn as crate::value::BuiltinFn),
         ("spawn_named", actor_spawn_named),
         ("spawnNamed", actor_spawn_named),
         ("send", actor_send),
@@ -3036,6 +3038,40 @@ fn build_actor_module() -> Value {
         ("whereis", actor_whereis),
         ("unregister", actor_unregister),
         ("registered", actor_registered),
+        ("cluster_init", cluster_start),
+        ("cluster_start", cluster_start),
+        ("cluster_join", cluster_join),
+        ("cluster_nodes", cluster_peers),
+        ("cluster_whereis", cluster_whereis),
+    ];
+    for (name, func) in entries {
+        map.insert(
+            name.to_string(),
+            Value::Builtin {
+                name: name.to_string(),
+                func,
+            },
+        );
+    }
+    map.insert("cluster".to_string(), build_cluster_module());
+    Value::Map(Arc::new(RwLock::new(map)))
+}
+
+pub fn build_cluster_module() -> Value {
+    make_map(vec![
+        ("node", cluster_node_init),
+        ("start", cluster_start),
+        ("connect", cluster_join),
+        ("join", cluster_join),
+        ("peers", cluster_peers),
+        ("nodes", cluster_peers),
+        ("actor", cluster_actor),
+        ("whereis", cluster_whereis),
+        ("send", actor_send),
+        ("ask", actor_ask),
+        ("broadcast", cluster_broadcast),
+        ("on_broadcast", cluster_on_broadcast),
+        ("stop", cluster_stop),
     ])
 }
 
@@ -3208,11 +3244,33 @@ fn actor_send(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value
                 .map_err(|e| e.to_runtime_error(span))?;
             Ok(Value::Null)
         }
+        Value::RemoteActor(rem) => {
+            rem.send(args[1].clone())
+                .map_err(|e| e.to_runtime_error(span))?;
+            Ok(Value::Null)
+        }
         Value::String(name) => {
             if let Some(act) = ActorRegistry::whereis(name) {
                 act.send(args[1].clone())
                     .map_err(|e| e.to_runtime_error(span))?;
                 Ok(Value::Null)
+            } else if name.contains('@') {
+                let parts: Vec<&str> = name.splitn(2, '@').collect();
+                if let Some(node) = crate::actor_cluster::get_global_cluster() {
+                    node.send_to_remote(parts[1], parts[0], args[1].clone())
+                        .map_err(|e| e.to_runtime_error(span))?;
+                    Ok(Value::Null)
+                } else {
+                    Err(ActorError::NameNotFound(name.clone()).to_runtime_error(span))
+                }
+            } else if let Some(node) = crate::actor_cluster::get_global_cluster() {
+                if let Some(Value::RemoteActor(rem)) = node.whereis(name, None) {
+                    rem.send(args[1].clone())
+                        .map_err(|e| e.to_runtime_error(span))?;
+                    Ok(Value::Null)
+                } else {
+                    Err(ActorError::NameNotFound(name.clone()).to_runtime_error(span))
+                }
             } else {
                 Err(ActorError::NameNotFound(name.clone()).to_runtime_error(span))
             }
@@ -3236,18 +3294,6 @@ fn actor_ask(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value,
         .at(span));
     }
 
-    let actor = match &args[0] {
-        Value::Actor(act) => Arc::clone(act),
-        Value::String(name) => ActorRegistry::whereis(name)
-            .ok_or_else(|| ActorError::NameNotFound(name.clone()).to_runtime_error(span))?,
-        _ => {
-            return Err(RuntimeError::new(
-                "ask expects an actor or registered actor name as first argument".into(),
-            )
-            .at(span));
-        }
-    };
-
     let timeout = if args.len() == 3 {
         match &args[2] {
             Value::Int(ms) if *ms >= 0 => Some(Duration::from_millis(*ms as u64)),
@@ -3266,10 +3312,49 @@ fn actor_ask(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value,
         None
     };
 
-    let reply = actor
-        .ask(args[1].clone(), timeout)
-        .map_err(|e| e.to_runtime_error(span))?;
-    Ok(reply)
+    match &args[0] {
+        Value::Actor(act) => {
+            let reply = act
+                .ask(args[1].clone(), timeout)
+                .map_err(|e| e.to_runtime_error(span))?;
+            Ok(reply)
+        }
+        Value::RemoteActor(rem) => {
+            let reply = rem
+                .ask(args[1].clone(), timeout)
+                .map_err(|e| e.to_runtime_error(span))?;
+            Ok(reply)
+        }
+        Value::String(name) => {
+            if let Some(act) = ActorRegistry::whereis(name) {
+                let reply = act
+                    .ask(args[1].clone(), timeout)
+                    .map_err(|e| e.to_runtime_error(span))?;
+                Ok(reply)
+            } else if name.contains('@') {
+                let parts: Vec<&str> = name.splitn(2, '@').collect();
+                if let Some(node) = crate::actor_cluster::get_global_cluster() {
+                    node.ask_remote(parts[1], parts[0], args[1].clone(), timeout)
+                        .map_err(|e| e.to_runtime_error(span))
+                } else {
+                    Err(ActorError::NameNotFound(name.clone()).to_runtime_error(span))
+                }
+            } else if let Some(node) = crate::actor_cluster::get_global_cluster() {
+                if let Some(Value::RemoteActor(rem)) = node.whereis(name, None) {
+                    rem.ask(args[1].clone(), timeout)
+                        .map_err(|e| e.to_runtime_error(span))
+                } else {
+                    Err(ActorError::NameNotFound(name.clone()).to_runtime_error(span))
+                }
+            } else {
+                Err(ActorError::NameNotFound(name.clone()).to_runtime_error(span))
+            }
+        }
+        _ => Err(RuntimeError::new(
+            "ask expects an actor or registered actor name as first argument".into(),
+        )
+        .at(span)),
+    }
 }
 
 fn actor_stop(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
@@ -3567,4 +3652,378 @@ fn actor_supervisor(
     .map_err(|e| e.to_runtime_error(span))?;
 
     Ok(Value::Supervisor(sup))
+}
+
+// -------------------------------------------------------------
+// std:actor:cluster builtin functions
+// -------------------------------------------------------------
+
+fn cluster_node_init(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.len() < 2 || args.len() > 3 {
+        return Err(RuntimeError::new(
+            "cluster.node() expects 2 or 3 arguments: node(name, address, [options_or_cookie])"
+                .into(),
+        )
+        .at(span));
+    }
+
+    let name = match &args[0] {
+        Value::String(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "cluster.node() expects string name, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+
+    let address = match &args[1] {
+        Value::String(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "cluster.node() expects string address, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+
+    let cookie = if args.len() == 3 {
+        match &args[2] {
+            Value::String(s) => Some(s.clone()),
+            Value::Map(m) => {
+                let g = m.read().unwrap();
+                g.get("cookie")
+                    .or_else(|| g.get("secret"))
+                    .and_then(|v| match v {
+                        Value::String(s) => Some(s.clone()),
+                        _ => None,
+                    })
+            }
+            Value::Null => None,
+            _ => {
+                return Err(RuntimeError::new(
+                    "cluster.node() 3rd argument must be a string cookie or options map".into(),
+                )
+                .at(span));
+            }
+        }
+    } else {
+        None
+    };
+
+    let node = crate::actor_cluster::ClusterNode::start(name, address, cookie)
+        .map_err(|e| e.to_runtime_error(span))?;
+
+    if crate::actor_cluster::get_global_cluster().is_none() {
+        crate::actor_cluster::set_global_cluster(Arc::clone(&node));
+    }
+
+    Ok(Value::ClusterNode(node))
+}
+
+fn cluster_start(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    let val = cluster_node_init(ev, args, span)?;
+    if let Value::ClusterNode(ref node) = val {
+        crate::actor_cluster::set_global_cluster(Arc::clone(node));
+    }
+    Ok(val)
+}
+
+fn cluster_join(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(RuntimeError::new(
+            "cluster.join() expects 1 or 2 arguments: join([node], peer_address)".into(),
+        )
+        .at(span));
+    }
+
+    let (node, peer_addr) = if args.len() == 1 {
+        let global = crate::actor_cluster::get_global_cluster().ok_or_else(|| {
+            RuntimeError::new("No active cluster node found. Start a node first with cluster.node() or cluster.start()".into()).at(span)
+        })?;
+        let addr = match &args[0] {
+            Value::String(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "join() expects string address, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        };
+        (global, addr)
+    } else {
+        let n = match &args[0] {
+            Value::ClusterNode(node) => Arc::clone(node),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "join() expects cluster_node as first argument, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        };
+        let addr = match &args[1] {
+            Value::String(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "join() expects string address, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        };
+        (n, addr)
+    };
+
+    node.connect(&peer_addr)
+        .map_err(|e| e.to_runtime_error(span))?;
+    Ok(Value::Bool(true))
+}
+
+fn cluster_peers(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    let node = if args.is_empty() {
+        crate::actor_cluster::get_global_cluster()
+            .ok_or_else(|| RuntimeError::new("No active cluster node found".into()).at(span))?
+    } else {
+        match &args[0] {
+            Value::ClusterNode(node) => Arc::clone(node),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "peers() expects cluster_node, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        }
+    };
+
+    let peers = node.peers();
+    let values: Vec<Value> = peers.into_iter().map(Value::String).collect();
+    Ok(Value::Array(Arc::new(RwLock::new(values))))
+}
+
+fn cluster_actor(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() < 2 || args.len() > 3 {
+        return Err(RuntimeError::new(
+            "cluster.actor() expects 2 or 3 arguments: actor([node], actor_name, peer_node)".into(),
+        )
+        .at(span));
+    }
+
+    let (node, name, peer) = if args.len() == 2 {
+        let global = crate::actor_cluster::get_global_cluster()
+            .ok_or_else(|| RuntimeError::new("No active cluster node found".into()).at(span))?;
+        let name_str = match &args[0] {
+            Value::String(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "actor() expects string name, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        };
+        let peer_str = match &args[1] {
+            Value::String(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "actor() expects string peer_node, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        };
+        (global, name_str, peer_str)
+    } else {
+        let n = match &args[0] {
+            Value::ClusterNode(node) => Arc::clone(node),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "actor() expects cluster_node, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        };
+        let name_str = match &args[1] {
+            Value::String(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "actor() expects string name, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        };
+        let peer_str = match &args[2] {
+            Value::String(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "actor() expects string peer_node, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        };
+        (n, name_str, peer_str)
+    };
+
+    Ok(Value::RemoteActor(node.actor(&name, &peer)))
+}
+
+fn cluster_whereis(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.is_empty() || args.len() > 3 {
+        return Err(RuntimeError::new(
+            "cluster.whereis() expects 1, 2, or 3 arguments: whereis([node], actor_name, [node_hint])".into(),
+        )
+        .at(span));
+    }
+
+    let (node, name, hint) = if matches!(args.first(), Some(Value::ClusterNode(_))) {
+        let n = match &args[0] {
+            Value::ClusterNode(node) => Arc::clone(node),
+            _ => unreachable!(),
+        };
+        let name_str = match args.get(1) {
+            Some(Value::String(s)) => s.clone(),
+            _ => {
+                return Err(
+                    RuntimeError::new("whereis() expects string actor_name".into()).at(span),
+                );
+            }
+        };
+        let hint_str = match args.get(2) {
+            Some(Value::String(s)) => Some(s.clone()),
+            _ => None,
+        };
+        (n, name_str, hint_str)
+    } else {
+        let global = crate::actor_cluster::get_global_cluster()
+            .ok_or_else(|| RuntimeError::new("No active cluster node found".into()).at(span))?;
+        let name_str = match &args[0] {
+            Value::String(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "whereis() expects string actor_name, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        };
+        let hint_str = match args.get(1) {
+            Some(Value::String(s)) => Some(s.clone()),
+            _ => None,
+        };
+        (global, name_str, hint_str)
+    };
+
+    Ok(node.whereis(&name, hint.as_deref()).unwrap_or(Value::Null))
+}
+
+fn cluster_broadcast(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.len() < 2 || args.len() > 3 {
+        return Err(RuntimeError::new(
+            "cluster.broadcast() expects 2 or 3 arguments: broadcast([node], topic, message)"
+                .into(),
+        )
+        .at(span));
+    }
+
+    let (node, topic, msg) = if matches!(args.first(), Some(Value::ClusterNode(_))) {
+        let n = match &args[0] {
+            Value::ClusterNode(node) => Arc::clone(node),
+            _ => unreachable!(),
+        };
+        let topic_str = match &args[1] {
+            Value::String(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "broadcast() expects string topic, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        };
+        (n, topic_str, args[2].clone())
+    } else {
+        let global = crate::actor_cluster::get_global_cluster()
+            .ok_or_else(|| RuntimeError::new("No active cluster node found".into()).at(span))?;
+        let topic_str = match &args[0] {
+            Value::String(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "broadcast() expects string topic, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        };
+        (global, topic_str, args[1].clone())
+    };
+
+    node.broadcast(&topic, msg);
+    Ok(Value::Null)
+}
+
+fn cluster_on_broadcast(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(RuntimeError::new(
+            "cluster.on_broadcast() expects 1 or 2 arguments: on_broadcast([node], callback)"
+                .into(),
+        )
+        .at(span));
+    }
+
+    let (node, cb) = if matches!(args.first(), Some(Value::ClusterNode(_))) {
+        let n = match &args[0] {
+            Value::ClusterNode(node) => Arc::clone(node),
+            _ => unreachable!(),
+        };
+        (n, args[1].clone())
+    } else {
+        let global = crate::actor_cluster::get_global_cluster()
+            .ok_or_else(|| RuntimeError::new("No active cluster node found".into()).at(span))?;
+        (global, args[0].clone())
+    };
+
+    node.on_broadcast(cb);
+    Ok(Value::Null)
+}
+
+fn cluster_stop(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        crate::actor_cluster::clear_global_cluster();
+        Ok(Value::Bool(true))
+    } else {
+        match &args[0] {
+            Value::ClusterNode(node) => {
+                node.stop();
+                Ok(Value::Bool(true))
+            }
+            other => Err(RuntimeError::new(format!(
+                "stop() expects cluster_node, got {}",
+                other.type_name()
+            ))
+            .at(span)),
+        }
+    }
 }

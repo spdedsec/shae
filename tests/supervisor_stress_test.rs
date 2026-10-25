@@ -42,12 +42,15 @@ fn get_os_thread_count() -> Option<usize> {
     None
 }
 
+static SERIAL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 // =============================================================================
 // DIMENSION 1: Thread Count Stability & Zero Leaked OS Threads
 // =============================================================================
 
 #[test]
 fn test_stress_thread_count_stability_across_supervision_cycles() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     let initial_threads = get_os_thread_count().expect("Must read /proc/self/status");
 
     const NUM_SUPERVISORS: usize = 15;
@@ -132,6 +135,7 @@ fn test_stress_thread_count_stability_across_supervision_cycles() {
 
 #[test]
 fn test_stress_rapid_crashing_one_for_one_hundreds_of_restarts() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     const TOTAL_CRASHES: usize = 120;
     let sup_id = unique_id("rapid_one_for_one");
     let config = SupervisorConfig {
@@ -237,6 +241,7 @@ fn test_stress_rapid_crashing_one_for_one_hundreds_of_restarts() {
 
 #[test]
 fn test_stress_rapid_crashing_all_for_one_sibling_cascades() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     const TOTAL_CYCLES: usize = 30;
     let sup_id = unique_id("rapid_all_for_one");
     let config = SupervisorConfig {
@@ -349,6 +354,7 @@ fn test_stress_rapid_crashing_all_for_one_sibling_cascades() {
 
 #[test]
 fn test_stress_concurrent_client_requests_during_continuous_restarts() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     let sup_id = unique_id("concurrent_clients");
     let config = SupervisorConfig {
         strategy: RestartStrategy::OneForOne,
@@ -476,6 +482,7 @@ fn test_stress_concurrent_client_requests_during_continuous_restarts() {
 
 #[test]
 fn test_stress_sliding_window_rate_limiting_exact_boundary() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     let sup_id = unique_id("sliding_window");
     const MAX_RESTARTS: usize = 4;
     const WINDOW_SECS: f64 = 0.6; // 600 ms window
@@ -583,6 +590,7 @@ fn test_stress_sliding_window_rate_limiting_exact_boundary() {
 
 #[test]
 fn test_stress_sliding_window_zero_restart_threshold() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     let sup_id = unique_id("zero_restart");
     let config = SupervisorConfig {
         strategy: RestartStrategy::OneForOne,
@@ -629,6 +637,7 @@ fn test_stress_sliding_window_zero_restart_threshold() {
 
 #[test]
 fn test_stress_dynamic_child_concurrent_add_and_stop() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     let sup_id = unique_id("dyn_concurrency");
     let sup = Supervisor::start_named(sup_id.clone(), SupervisorConfig::default(), Vec::new())
         .expect("Supervisor start");
@@ -710,6 +719,7 @@ fn test_stress_dynamic_child_concurrent_add_and_stop() {
 
 #[test]
 fn test_stress_restart_child_semantics_and_leak_check() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     let sup_id = unique_id("manual_restart");
     let sup = Supervisor::start_named(sup_id.clone(), SupervisorConfig::default(), Vec::new())
         .expect("Supervisor start");
@@ -756,6 +766,7 @@ fn test_stress_restart_child_semantics_and_leak_check() {
 
 #[test]
 fn test_empirical_reproduce_restart_child_race_condition() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     let sup_id = unique_id("restart_race");
     let sup = Supervisor::start_named(sup_id.clone(), SupervisorConfig::default(), Vec::new())
         .expect("Supervisor start");
@@ -820,6 +831,7 @@ fn test_empirical_reproduce_restart_child_race_condition() {
 
 #[test]
 fn test_stress_concurrent_restarts_and_stops_no_thread_leak() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     let initial_threads = get_os_thread_count().expect("Must read /proc/self/status");
     let sup_id = unique_id("concurrent_stress");
     let config = SupervisorConfig {
@@ -967,6 +979,7 @@ fn test_stress_concurrent_restarts_and_stops_no_thread_leak() {
 
 #[test]
 fn test_stress_restart_child_when_factory_panics() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     let sup_id = unique_id("factory_panic");
     let config = SupervisorConfig {
         strategy: RestartStrategy::OneForOne,

@@ -1,0 +1,80 @@
+// Shae Distributed Actor Mesh & Cluster Showcase
+// examples/actor_cluster_demo.shae
+
+let cluster = use "std:actor:cluster"
+let actor = use "std:actor"
+use { make_worker_pool, make_leader_election } from "../lib/actor/cluster.shae"
+
+println("=============================================================")
+println("    Shae Distributed Actor Mesh (std:actor:cluster) Demo     ")
+println("=============================================================\n")
+
+// 1. Initialize two isolated cluster nodes on loopback
+println("[1] Bootstrapping cluster nodes...")
+let node_primary = cluster.node("primary_node", "127.0.0.1:0", { "cookie": "demo_secret" })
+let node_worker = cluster.node("worker_node", "127.0.0.1:0", { "cookie": "demo_secret" })
+
+println("  • Primary Node bound to:", node_primary.address())
+println("  • Worker Node bound to: ", node_worker.address())
+
+// 2. Spawn a stateful analytics service on the Worker Node
+println("\n[2] Spawning stateful 'analytics_engine' actor on worker_node...")
+let analytics_actor = node_worker.spawn("analytics_engine", { "queries": 0, "total": 0 }, fn(state, msg) {
+    if msg["action"] == "record" {
+        let new_queries = state["queries"] + 1
+        let new_total = state["total"] + msg["value"]
+        let next_state = { "queries": new_queries, "total": new_total }
+        return { "state": next_state, "reply": next_state }
+    } else if msg["action"] == "summary" {
+        return { "state": state, "reply": state }
+    }
+    return state
+})
+
+println("  • Local registry on worker_node:", node_worker.registered())
+
+// 3. Connect Primary Node to Worker Node
+println("\n[3] Connecting primary_node to worker_node mesh...")
+let joined = node_primary.connect(node_worker.address())
+println("  • Connection established:", joined)
+println("  • Primary Node peers:    ", node_primary.peers())
+
+// 4. Remote Request-Response across TCP mesh
+println("\n[4] Querying remote 'analytics_engine' from primary_node...")
+let remote_service = node_primary.actor("analytics_engine", "worker_node")
+println("  • Obtained handle: ", remote_service.name(), "on", remote_service.node())
+
+let res1 = remote_service.ask({ "action": "record", "value": 150 }, 5000)
+println("  • Batch 1 recorded =>", res1)
+
+let res2 = remote_service.ask({ "action": "record", "value": 270 }, 5000)
+println("  • Batch 2 recorded =>", res2)
+
+let summary = remote_service.ask({ "action": "summary" }, 5000)
+println("  • Remote Analytics Summary => Queries:", summary["queries"], "| Total:", summary["total"])
+
+// 5. Distributed Worker Pool
+println("\n[5] Dispatching via Distributed Worker Pool...")
+let pool = make_worker_pool([remote_service])
+println("  • Pool capacity:", pool.count(), "active workers")
+
+let pool_res = pool.ask({ "action": "record", "value": 80 }, 5000)
+println("  • Pool execution result => Total:", pool_res["total"])
+
+// 6. Cluster Leader Election
+println("\n[6] Running Distributed Bully Leader Election...")
+let cluster_nodes = [node_primary.name(), node_worker.name()]
+let election = make_leader_election(node_primary, cluster_nodes)
+let leader = election.elect()
+println("  • Elected Leader Node:", leader, "(Local Role:", election.role(), ")")
+
+// 7. Graceful Mesh Teardown
+println("\n[7] Gracefully shutting down cluster mesh...")
+analytics_actor.stop()
+node_worker.stop()
+node_primary.stop()
+println("  • Cluster shutdown complete.")
+
+println("\n=============================================================")
+println("    Distributed Actor Mesh Demo Completed Successfully!      ")
+println("=============================================================")

@@ -184,6 +184,8 @@ pub enum Value {
     FfiLibrary(Arc<crate::ffi::DynamicLibrary>),
     FfiFunction(Arc<crate::ffi::DynamicFunction>),
     Actor(Arc<crate::actor::ActorRef>),
+    RemoteActor(Arc<crate::actor_cluster::RemoteActorRef>),
+    ClusterNode(Arc<crate::actor_cluster::ClusterNode>),
     Supervisor(Arc<crate::actor::SupervisorRef>),
 }
 
@@ -214,6 +216,8 @@ impl Value {
             Value::FfiLibrary(_) => "ffi_library",
             Value::FfiFunction(_) => "ffi_function",
             Value::Actor(_) => "actor",
+            Value::RemoteActor(_) => "remote_actor",
+            Value::ClusterNode(_) => "cluster_node",
             Value::Supervisor(_) => "supervisor",
         }
     }
@@ -256,6 +260,8 @@ impl Value {
             | Value::FfiLibrary(_)
             | Value::FfiFunction(_)
             | Value::Actor(_)
+            | Value::RemoteActor(_)
+            | Value::ClusterNode(_)
             | Value::Supervisor(_) => true,
         }
     }
@@ -362,6 +368,8 @@ impl Value {
             Value::FfiLibrary(lib) => format!("<ffi_library \"{}\">", lib.path),
             Value::FfiFunction(func) => format!("<ffi_function {}()>", func.name),
             Value::Actor(act) => act.to_string(),
+            Value::RemoteActor(rem) => rem.to_string(),
+            Value::ClusterNode(node) => node.to_string(),
             Value::Supervisor(sup) => sup.to_string(),
         }
     }
@@ -455,6 +463,17 @@ impl Value {
                 JsonValue::String(format!("<ffi_function {}()>", func.name))
             }
             Value::Actor(act) => JsonValue::String(act.to_string()),
+            Value::RemoteActor(rem) => {
+                let mut map = serde_json::Map::new();
+                map.insert("__remote_actor__".to_string(), JsonValue::Bool(true));
+                map.insert("node".to_string(), JsonValue::String(rem.node_name.clone()));
+                map.insert(
+                    "name".to_string(),
+                    JsonValue::String(rem.actor_name.clone()),
+                );
+                JsonValue::Object(map)
+            }
+            Value::ClusterNode(node) => JsonValue::String(node.to_string()),
             Value::Supervisor(sup) => JsonValue::String(sup.to_string()),
         }
     }
@@ -500,6 +519,8 @@ impl Value {
             Value::Channel(c) => Value::Channel(Arc::clone(c)),
             Value::Task(t) => Value::Task(Arc::clone(t)),
             Value::Actor(a) => Value::Actor(Arc::clone(a)),
+            Value::RemoteActor(r) => Value::RemoteActor(Arc::clone(r)),
+            Value::ClusterNode(c) => Value::ClusterNode(Arc::clone(c)),
             Value::Supervisor(s) => Value::Supervisor(Arc::clone(s)),
             Value::FfiLibrary(l) => Value::FfiLibrary(Arc::clone(l)),
             Value::FfiFunction(f) => Value::FfiFunction(Arc::clone(f)),
@@ -671,6 +692,8 @@ impl Value {
             Value::Channel(c) => Value::Channel(Arc::clone(c)),
             Value::Task(t) => Value::Task(Arc::clone(t)),
             Value::Actor(a) => Value::Actor(Arc::clone(a)),
+            Value::RemoteActor(r) => Value::RemoteActor(Arc::clone(r)),
+            Value::ClusterNode(c) => Value::ClusterNode(Arc::clone(c)),
             Value::Supervisor(s) => Value::Supervisor(Arc::clone(s)),
             Value::FfiLibrary(l) => Value::FfiLibrary(Arc::clone(l)),
             Value::FfiFunction(f) => Value::FfiFunction(Arc::clone(f)),
@@ -770,6 +793,8 @@ impl PartialEq for Value {
             (Value::FfiLibrary(a), Value::FfiLibrary(b)) => Arc::ptr_eq(a, b),
             (Value::FfiFunction(a), Value::FfiFunction(b)) => Arc::ptr_eq(a, b),
             (Value::Actor(a), Value::Actor(b)) => a == b,
+            (Value::RemoteActor(a), Value::RemoteActor(b)) => a == b,
+            (Value::ClusterNode(a), Value::ClusterNode(b)) => a == b,
             (Value::Supervisor(a), Value::Supervisor(b)) => a == b,
             (Value::CompiledFunction(a), Value::CompiledFunction(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::Closure(a), Value::Closure(b)) => Arc::ptr_eq(a, b) || a == b,
@@ -947,6 +972,14 @@ impl Hash for Value {
             Value::Actor(a) => {
                 27u8.hash(state);
                 a.hash(state);
+            }
+            Value::RemoteActor(r) => {
+                29u8.hash(state);
+                r.hash(state);
+            }
+            Value::ClusterNode(c) => {
+                30u8.hash(state);
+                c.hash(state);
             }
             Value::Supervisor(s) => {
                 28u8.hash(state);

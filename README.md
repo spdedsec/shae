@@ -296,6 +296,7 @@ println("Running on:", sys.platform(), sys.arch())
 Explore ready-to-run examples in the [`examples/`](examples) directory:
 
 - 🎭 [**Actor Concurrency & Supervision Demo**](examples/actor_demo.shae): Stateful actors, request-reply `ask`, named registry, and `OneForOne` supervisor crash recovery.
+- 🌐 [**Distributed Actor Mesh Demo**](examples/actor_cluster_demo.shae): TCP clustering, cross-node discovery, remote actor `ask`, distributed worker pools, and bully leader election.
 - 🚀 [**Production Microservice Showcase**](examples/realworld_service/): Complete real-world HTTP microservice integrating SQLite telemetry persistence and CSV bulk import/export.
 - 🔤 [**Unicode & Grapheme Demo**](examples/unicode_demo.shae): Extended grapheme clusters, emoji sequences, and rune slicing.
 - 🚦 [**OS Signals Demo**](examples/signals_demo.shae): Cross-platform interrupt handling and graceful server teardown.
@@ -374,8 +375,11 @@ Shae is advancing toward an enterprise-scale systems ecosystem. Upcoming major p
    - WebAssembly binary emission (`lib/compiler/wasm.shae`, `shae wasm`).
    - Integrated zero-dependency `WasmRunner` interpreter with full nested call support.
    - Browser execution playground with live instantiation (`examples/wasm_demo/`).
-4. **Phase 7: Distributed Actor Mesh (`std:actor:cluster`)**:
-   - Distributed network clustering over TCP/TLS with cross-node actor discovery and messaging.
+4. **Phase 7: Distributed Actor Mesh (`std:actor:cluster`)** *(Completed in v0.3.5)*:
+   - Distributed TCP network clustering with binary length-prefixed framing (`src/actor_cluster.rs`).
+   - Node discovery, authentication cookie handshakes, and peer registry synchronization.
+   - Remote actor handles (`RemoteActorRef`), asynchronous `send()`, and synchronous `ask()` across nodes.
+   - Pure-Shae distributed worker pools and leader election (`lib/actor/cluster.shae`).
 
 ---
 

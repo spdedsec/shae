@@ -1,0 +1,88 @@
+// Shae Distributed Actor Mesh & Cluster Coordination Library
+// lib/actor/cluster.shae
+
+let cluster = use "std:actor:cluster"
+let actor = use "std:actor"
+
+// Distributed round-robin worker pool across cluster nodes
+fn make_worker_pool(initial_workers) {
+    let workers = []
+    let i = 0
+    while i < initial_workers.len {
+        workers.push(initial_workers[i])
+        i = i + 1
+    }
+    let cur_index = 0
+
+    return {
+        "workers": workers,
+        "count": fn() {
+            return workers.len
+        },
+        "add": fn(worker) {
+            workers.push(worker)
+        },
+        "next": fn() {
+            if workers.len == 0 {
+                return null
+            }
+            let w = workers[cur_index % workers.len]
+            cur_index = (cur_index + 1) % workers.len
+            return w
+        },
+        "dispatch": fn(msg) {
+            if workers.len == 0 {
+                return null
+            }
+            let w = workers[cur_index % workers.len]
+            cur_index = (cur_index + 1) % workers.len
+            return w.send(msg)
+        },
+        "ask": fn(msg, timeout) {
+            if workers.len == 0 {
+                return null
+            }
+            let w = workers[cur_index % workers.len]
+            cur_index = (cur_index + 1) % workers.len
+            if timeout != null {
+                return w.ask(msg, timeout)
+            }
+            return w.ask(msg)
+        }
+    }
+}
+
+// Distributed Leader Election using node priority ranking (bully algorithm)
+fn make_leader_election(local_node, candidate_nodes) {
+    let leader = null
+    let role = "follower"
+
+    return {
+        "leader": fn() {
+            return leader
+        },
+        "role": fn() {
+            return role
+        },
+        "elect": fn() {
+            let my_name = local_node.name()
+            let highest = my_name
+            let idx = 0
+            while idx < candidate_nodes.len {
+                let candidate = candidate_nodes[idx]
+                if candidate > highest {
+                    highest = candidate
+                }
+                idx = idx + 1
+            }
+
+            leader = highest
+            if leader == my_name {
+                role = "leader"
+            } else {
+                role = "follower"
+            }
+            return leader
+        }
+    }
+}
