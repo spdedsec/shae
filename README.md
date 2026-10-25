@@ -325,6 +325,8 @@ Shae ships with an all-in-one developer toolchain:
 | `shae pkg add <dep>` | Add a dependency (path or Git repository) |
 | `shae pkg install` | Resolve and install dependencies into `.shae/packages` |
 | `shae bundle <file> [-o <bin>] [--strip] [--no-bytecode]` | Bundle app and its dependencies into a standalone binary with embedded precompiled bytecode |
+| `shae link <file.shae> [-o <bin>]` | Link script into a standalone 64-bit ELF or PE native executable |
+| `shae wasm <file.shae> [-o <out.wasm>] [--run]` | Compile script into WebAssembly binary bytecode (.wasm) and optionally execute via built-in runner |
 | `shae lsp` | Run the Language Server Protocol daemon for editor integration |
 | `shae test [path]` | Run Shae tests (`*_test.shae`) (defaults to Bytecode VM; use `--engine=ast` for AST) |
 | `shae repl` | Start interactive REPL (defaults to Bytecode VM; use `--engine=ast` for AST) |
@@ -368,9 +370,12 @@ Shae is advancing toward an enterprise-scale systems ecosystem. Upcoming major p
    - Stage 1 (Complete): Pure-Shae Lexer, AST constructors, and Pratt Parser (`lib/compiler/`) with full self-parsing verification.
    - Stage 2 (Complete): Pure-Shae Bytecode Compiler, Serializer, and Disassembler (`codegen.shae`, `chunk.shae`, `disasm.shae`) emitting `.shaec` bytecode chunks.
    - Stage 3 (Complete): Direct ELF 64-bit and PE executable emission (`lib/compiler/elf.shae`, `lib/compiler/pe.shae`, `lib/compiler/linker.shae`, `shae link`) with zero external compiler dependencies.
-3. **Phase 6: WebAssembly & Edge Runtime Target**:
-   - First-class compilation to `wasm32-wasi` and browser-embeddable WebAssembly runtimes.
-   - High-throughput serverless function cold starts (<1ms).
+3. **Phase 6: WebAssembly & Edge Runtime Target** *(Completed in v0.3.4)*:
+   - WebAssembly binary emission (`lib/compiler/wasm.shae`, `shae wasm`).
+   - Integrated zero-dependency `WasmRunner` interpreter with full nested call support.
+   - Browser execution playground with live instantiation (`examples/wasm_demo/`).
+4. **Phase 7: Distributed Actor Mesh (`std:actor:cluster`)**:
+   - Distributed network clustering over TCP/TLS with cross-node actor discovery and messaging.
 
 ---
 

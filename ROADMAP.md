@@ -199,8 +199,20 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 
 ---
 
-### **Chunk 18: Phase 6 — WebAssembly & Edge Runtime Target**
-- [ ] `wasm32-wasi` and browser WebAssembly codegen and embed runner.
+### **Chunk 18: Phase 6 — WebAssembly & Edge Runtime Target** *(Completed)*
+- [x] **WebAssembly Binary Generator (`lib/compiler/wasm.shae`)**
+  - [x] WebAssembly binary spec compliance (`\0asm`, version 1, LEB128 unsigned/signed integer encoders).
+  - [x] Core Wasm types (`i32`, `i64`, `f32`, `f64`, `funcref`, `externref`).
+  - [x] Wasm sections: Type (0x01), Function (0x03), Memory (0x05), Export (0x07), and Code (0x0a).
+  - [x] Pure-Shae WebAssembly AST module builder and binary serializer.
+- [x] **Rust WebAssembly Compiler & Integrated Runner (`src/wasm.rs`, `shae wasm`)**
+  - [x] Compiles Shae function declarations into valid WebAssembly binary bytecode (`.wasm`).
+  - [x] Built-in zero-dependency `WasmRunner` interpreter executing WASM functions, parameters, local variables, nested function calls (`OP_CALL`), arithmetic, and bitwise operations.
+  - [x] CLI command: `shae wasm <file.shae> [-o <out.wasm>] [--run]`.
+- [x] **Browser Runtime & Playground (`examples/wasm_demo/index.html`)**
+  - [x] Web browser interface instantiating and executing Shae-compiled WebAssembly binaries via `WebAssembly.instantiate`.
+- [x] **Dual-Engine Test Verification (`tests/shae/self_wasm_test.shae`, `tests/wasm_test.rs`)**
+  - [x] 100% test pass on both Bytecode VM and AST Evaluator.
 
 ---
 

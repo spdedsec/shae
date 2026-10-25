@@ -1,0 +1,283 @@
+// Shae Self-Hosting Compiler: WebAssembly Binary Generator (wasm32-wasi & Web Target)
+// Emits compliant WebAssembly binary modules (.wasm) directly from pure Shae.
+
+use { write_bytes } from "std:fs"
+
+// WebAssembly Binary Magic & Version
+let WASM_MAGIC = [0, 97, 115, 109] // \0asm = 0x00, 0x61, 0x73, 0x6D
+let WASM_VERSION = [1, 0, 0, 0] // 0x01, 0x00, 0x00, 0x00
+
+// Value Types
+let TYPE_I32 = 127 // 0x7F
+let TYPE_I64 = 126 // 0x7E
+let TYPE_F32 = 125 // 0x7D
+let TYPE_F64 = 124 // 0x7C
+let TYPE_FUNC = 96 // 0x60
+
+// Section IDs
+let SEC_TYPE = 1
+let SEC_IMPORT = 2
+let SEC_FUNCTION = 3
+let SEC_TABLE = 4
+let SEC_MEMORY = 5
+let SEC_GLOBAL = 6
+let SEC_EXPORT = 7
+let SEC_START = 8
+let SEC_ELEMENT = 9
+let SEC_CODE = 10
+let SEC_DATA = 11
+
+// Export Kinds
+let EXPORT_FUNC = 0
+let EXPORT_TABLE = 1
+let EXPORT_MEM = 2
+let EXPORT_GLOBAL = 3
+
+// Core WASM Opcodes
+let OP_UNREACHABLE = 0
+let OP_NOP = 1
+let OP_BLOCK = 2
+let OP_LOOP = 3
+let OP_IF = 4
+let OP_ELSE = 5
+let OP_END = 11
+let OP_BR = 12
+let OP_BR_IF = 13
+let OP_RETURN = 15
+let OP_CALL = 16
+let OP_DROP = 26
+let OP_LOCAL_GET = 32 // 0x20
+let OP_LOCAL_SET = 33 // 0x21
+let OP_LOCAL_TEE = 34 // 0x22
+let OP_GLOBAL_GET = 35 // 0x23
+let OP_GLOBAL_SET = 36 // 0x24
+let OP_I32_CONST = 65 // 0x41
+let OP_I64_CONST = 66 // 0x42
+let OP_I64_EQZ = 80 // 0x50
+let OP_I64_EQ = 81 // 0x51
+let OP_I64_NE = 82 // 0x52
+let OP_I64_LT_S = 83 // 0x53
+let OP_I64_GT_S = 85 // 0x55
+let OP_I64_LE_S = 87 // 0x57
+let OP_I64_GE_S = 89 // 0x59
+let OP_I64_ADD = 124 // 0x7C
+let OP_I64_SUB = 125 // 0x7D
+let OP_I64_MUL = 126 // 0x7E
+let OP_I64_DIV_S = 127 // 0x7F
+let OP_I64_REM_S = 129 // 0x81
+let OP_I64_AND = 131 // 0x83
+let OP_I64_OR = 132 // 0x84
+let OP_I64_XOR = 133 // 0x85
+let OP_I64_SHL = 134 // 0x86
+let OP_I64_SHR_S = 135 // 0x87
+
+fn append_bytes(dest, src) {
+    let i = 0
+    while i < src.len {
+        dest.push(src[i])
+        i = i + 1
+    }
+}
+
+// Unsigned LEB128 encoding
+fn encode_u32_leb128(val) {
+    let bytes = []
+    let v = val
+    while true {
+        let byte = v & 127
+        v = v >> 7
+        if v != 0 {
+            byte = byte | 128
+            bytes.push(byte)
+        } else {
+            bytes.push(byte)
+            break
+        }
+    }
+    return bytes
+}
+
+// Signed LEB128 encoding
+fn encode_i64_leb128(val) {
+    let bytes = []
+    let v = val
+    let more = true
+    while more {
+        let byte = v & 127
+        v = v >> 7
+        let sign_bit = (byte & 64) != 0
+        if (v == 0 and not sign_bit) or (v == -1 and sign_bit) {
+            more = false
+        } else {
+            byte = byte | 128
+        }
+        bytes.push(byte)
+    }
+    return bytes
+}
+
+// Vector encoding: length (u32-leb128) + elements
+fn encode_vec(items_bytes) {
+    let out = []
+    append_bytes(out, encode_u32_leb128(items_bytes.len))
+    append_bytes(out, items_bytes)
+    return out
+}
+
+// Section encoding: section_id + payload_len (u32-leb128) + payload
+fn encode_section(sec_id, payload) {
+    let out = []
+    out.push(sec_id)
+    append_bytes(out, encode_u32_leb128(payload.len))
+    append_bytes(out, payload)
+    return out
+}
+
+fn make_wasm_module() {
+    return {
+        types: [],
+        functions: [], // array of type indices
+        exports: [],
+        codes: [], // array of { locals: [], body: [] }
+        has_memory: false,
+        memory_min: 1,
+        memory_max: null
+    }
+}
+
+fn wasm_add_type(m, param_types, result_types) {
+    let type_bytes = []
+    type_bytes.push(TYPE_FUNC)
+    append_bytes(type_bytes, encode_u32_leb128(param_types.len))
+    let p = 0
+    while p < param_types.len {
+        type_bytes.push(param_types[p])
+        p = p + 1
+    }
+    append_bytes(type_bytes, encode_u32_leb128(result_types.len))
+    let r = 0
+    while r < result_types.len {
+        type_bytes.push(result_types[r])
+        r = r + 1
+    }
+    m.types.push(type_bytes)
+    return m.types.len - 1
+}
+
+fn wasm_add_function(m, type_idx, locals_count, body_bytes) {
+    m.functions.push(type_idx)
+    let code_buf = []
+    // Locals declaration vector
+    if locals_count > 0 {
+        append_bytes(code_buf, encode_u32_leb128(1)) // 1 local entry
+        append_bytes(code_buf, encode_u32_leb128(locals_count))
+        code_buf.push(TYPE_I64)
+    } else {
+        append_bytes(code_buf, encode_u32_leb128(0))
+    }
+    append_bytes(code_buf, body_bytes)
+    code_buf.push(OP_END)
+
+    let full_func_body = []
+    append_bytes(full_func_body, encode_u32_leb128(code_buf.len))
+    append_bytes(full_func_body, code_buf)
+    m.codes.push(full_func_body)
+
+    return m.functions.len - 1
+}
+
+fn wasm_add_export(m, name, export_kind, index) {
+    m.exports.push({
+        name: name,
+        kind: export_kind,
+        index: index
+    })
+}
+
+fn wasm_enable_memory(m, min_pages, max_pages) {
+    m.has_memory = true
+    m.memory_min = min_pages
+    m.memory_max = max_pages
+}
+
+fn build_wasm_binary(m) {
+    let out = []
+    // 1. Magic & Version Header
+    append_bytes(out, WASM_MAGIC)
+    append_bytes(out, WASM_VERSION)
+
+    // 2. Type Section (1)
+    if m.types.len > 0 {
+        let type_sec = []
+        append_bytes(type_sec, encode_u32_leb128(m.types.len))
+        let t = 0
+        while t < m.types.len {
+            append_bytes(type_sec, m.types[t])
+            t = t + 1
+        }
+        append_bytes(out, encode_section(SEC_TYPE, type_sec))
+    }
+
+    // 3. Function Section (3)
+    if m.functions.len > 0 {
+        let func_sec = []
+        append_bytes(func_sec, encode_u32_leb128(m.functions.len))
+        let f = 0
+        while f < m.functions.len {
+            append_bytes(func_sec, encode_u32_leb128(m.functions[f]))
+            f = f + 1
+        }
+        append_bytes(out, encode_section(SEC_FUNCTION, func_sec))
+    }
+
+    // 4. Memory Section (5)
+    if m.has_memory {
+        let mem_sec = []
+        append_bytes(mem_sec, encode_u32_leb128(1)) // 1 memory definition
+        if m.memory_max != null {
+            mem_sec.push(1) // flags = has_max
+            append_bytes(mem_sec, encode_u32_leb128(m.memory_min))
+            append_bytes(mem_sec, encode_u32_leb128(m.memory_max))
+        } else {
+            mem_sec.push(0) // flags = no_max
+            append_bytes(mem_sec, encode_u32_leb128(m.memory_min))
+        }
+        append_bytes(out, encode_section(SEC_MEMORY, mem_sec))
+    }
+
+    // 5. Export Section (7)
+    if m.exports.len > 0 {
+        let exp_sec = []
+        append_bytes(exp_sec, encode_u32_leb128(m.exports.len))
+        let e = 0
+        while e < m.exports.len {
+            let exp = m.exports[e]
+            let nbytes = exp.name.bytes()
+            append_bytes(exp_sec, encode_u32_leb128(nbytes.len))
+            append_bytes(exp_sec, nbytes)
+            exp_sec.push(exp.kind)
+            append_bytes(exp_sec, encode_u32_leb128(exp.index))
+            e = e + 1
+        }
+        append_bytes(out, encode_section(SEC_EXPORT, exp_sec))
+    }
+
+    // 6. Code Section (10)
+    if m.codes.len > 0 {
+        let code_sec = []
+        append_bytes(code_sec, encode_u32_leb128(m.codes.len))
+        let c = 0
+        while c < m.codes.len {
+            append_bytes(code_sec, m.codes[c])
+            c = c + 1
+        }
+        append_bytes(out, encode_section(SEC_CODE, code_sec))
+    }
+
+    return out
+}
+
+fn emit_wasm_file(output_path, wasm_bytes) {
+    write_bytes(output_path, wasm_bytes)
+    return wasm_bytes.len
+}

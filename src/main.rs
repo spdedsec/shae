@@ -42,6 +42,9 @@ fn show_help() {
     println!(
         "  shae link <entry.shae>     Direct native linker for standalone ELF and PE executables (-o, --format, --strip)"
     );
+    println!(
+        "  shae wasm <entry.shae>     Compile Shae to WebAssembly binary (.wasm) for web & wasi (-o, --run)"
+    );
     println!("  shae lsp                   Start Language Server Protocol (LSP) server");
     println!("  shae dap                   Start Debug Adapter Protocol (DAP) server");
     println!("  shae debug <file.shae>     Start interactive step debugger");
@@ -913,6 +916,65 @@ fn main() {
                 }
                 Err(e) => {
                     eprintln!("Link error: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
+        "wasm" => {
+            if args.len() < 3 {
+                eprintln!("Usage: shae wasm <entry.shae> [-o <out.wasm>] [--run]");
+                process::exit(1);
+            }
+            let entry = Path::new(&args[2]);
+            let mut output = None;
+            let mut should_run = false;
+            let mut i = 3;
+            while i < args.len() {
+                if (args[i] == "-o" || args[i] == "--output") && i + 1 < args.len() {
+                    output = Some(args[i + 1].clone());
+                    i += 2;
+                } else if args[i] == "--run" {
+                    should_run = true;
+                    i += 1;
+                } else {
+                    i += 1;
+                }
+            }
+            let src = match fs::read_to_string(entry) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Failed to read file '{}': {}", entry.display(), e);
+                    process::exit(1);
+                }
+            };
+            let mut compiler = shae::wasm::WasmCompiler::new();
+            match compiler.compile_source(&src) {
+                Ok(wasm_bytes) => {
+                    let out_path = output.unwrap_or_else(|| {
+                        let stem = entry
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("module");
+                        format!("{}.wasm", stem)
+                    });
+                    if let Err(e) = fs::write(&out_path, &wasm_bytes) {
+                        eprintln!("Failed to write wasm file: {}", e);
+                        process::exit(1);
+                    }
+                    println!(
+                        "🌐 Successfully compiled WebAssembly module: {} ({} bytes)",
+                        out_path,
+                        wasm_bytes.len()
+                    );
+                    if should_run {
+                        match shae::wasm::WasmRunner::execute_function(&wasm_bytes, "main", &[]) {
+                            Ok(res) => println!("WASM Execution Result: {}", res),
+                            Err(e) => eprintln!("WASM Execution Error: {}", e),
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("WASM compilation error: {}", e);
                     process::exit(1);
                 }
             }

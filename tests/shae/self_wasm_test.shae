@@ -1,0 +1,80 @@
+// Shae Self-Hosting Compiler: WebAssembly Binary Generator Test
+// Verifies pure-Shae wasm32 binary emission.
+
+use {
+    make_wasm_module, wasm_add_type, wasm_add_function, wasm_add_export,
+    wasm_enable_memory, build_wasm_binary, emit_wasm_file,
+    TYPE_I64, EXPORT_FUNC, OP_LOCAL_GET, OP_I64_ADD, OP_I64_CONST,
+    encode_i64_leb128
+} from "../../lib/compiler/wasm.shae"
+use {
+    read, exists, read_bytes, remove
+} from "std:fs"
+
+print("=== Shae Phase 6: WebAssembly & Edge Runtime Target Test ===")
+
+// [1] Constructing WebAssembly Module in pure Shae
+print("\n[1] Constructing WebAssembly module with exported functions...")
+let m = make_wasm_module()
+wasm_enable_memory(m, 1, 2) // 1 min page, 2 max pages
+
+// Type 0: (i64, i64) -> i64
+let type_add = wasm_add_type(m, [TYPE_I64, TYPE_I64], [TYPE_I64])
+
+// Function 0: add(x, y) = x + y
+let body_add = [
+    OP_LOCAL_GET, 0,
+    OP_LOCAL_GET, 1,
+    OP_I64_ADD
+]
+let fn_add_idx = wasm_add_function(m, type_add, 0, body_add)
+wasm_add_export(m, "add", EXPORT_FUNC, fn_add_idx)
+
+// Type 1: () -> i64
+let type_main = wasm_add_type(m, [], [TYPE_I64])
+
+// Function 1: main() = 42
+let body_main = [
+    OP_I64_CONST, 42
+]
+let fn_main_idx = wasm_add_function(m, type_main, 0, body_main)
+wasm_add_export(m, "main", EXPORT_FUNC, fn_main_idx)
+
+print("   [✓] WebAssembly AST constructed with 2 types and 2 exported functions.")
+
+// [2] Serializing WASM module to binary format
+print("\n[2] Serializing to binary WebAssembly format (.wasm)...")
+let wasm_bytes = build_wasm_binary(m)
+
+// Check \0asm magic: [0, 97, 115, 109]
+if wasm_bytes[0] != 0 or wasm_bytes[1] != 97 or wasm_bytes[2] != 115 or wasm_bytes[3] != 109 {
+    print("FAILED: WebAssembly magic mismatch in binary!")
+    exit(1)
+}
+// Check version 1: [1, 0, 0, 0]
+if wasm_bytes[4] != 1 or wasm_bytes[5] != 0 or wasm_bytes[6] != 0 or wasm_bytes[7] != 0 {
+    print("FAILED: WebAssembly version mismatch in binary!")
+    exit(1)
+}
+print("   [✓] Binary wasm emitted with valid \\0asm header (size: " + str(wasm_bytes.len) + " bytes).")
+
+// [3] End-to-End file emission
+print("\n[3] Testing WebAssembly file emission on disk...")
+let test_wasm_path = "tests/test_module_temp.wasm"
+let written_len = emit_wasm_file(test_wasm_path, wasm_bytes)
+
+if not exists(test_wasm_path) {
+    print("FAILED: Output .wasm file was not created!")
+    exit(1)
+}
+
+let read_back = read_bytes(test_wasm_path)
+if read_back.len != written_len {
+    print("FAILED: Read back byte length mismatch!")
+    exit(1)
+}
+
+remove(test_wasm_path)
+print("   [✓] WebAssembly file written and verified on disk (" + str(written_len) + " bytes).")
+
+print("\n=== All Phase 6 WebAssembly Tests Passed! ===")

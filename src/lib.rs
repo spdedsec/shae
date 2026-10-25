@@ -32,6 +32,7 @@ pub mod typecheck;
 pub mod unicode;
 pub mod value;
 pub mod vm;
+pub mod wasm;
 
 use thiserror::Error;
 

@@ -850,7 +850,7 @@ impl JitEngine {
                     builder.seal_block(in_bounds_block);
 
                     // Address computation: target_val + 8 + (index_val * 8)
-                    let index_bytes = builder.ins().ishl_imm(index_val, 3);
+                    let index_bytes = builder.ins().ishl_imm_u(index_val, 3);
                     let elem_addr = builder.ins().iadd(target_val, index_bytes);
                     let loaded_val = builder.ins().load(val_type, mem_flags(), elem_addr, 8);
 
