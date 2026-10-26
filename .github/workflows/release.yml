@@ -58,7 +58,7 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get update -y
-          sudo -E apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+          sudo -E apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
