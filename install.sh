@@ -57,7 +57,7 @@ detect_os() {
         Linux*)
             OS="linux"
             # Detect glibc vs musl
-            if [ -f /etc/alpine-release ] || ldd --version 2>&1 | grep -qi musl || ls /lib/ld-musl* >/dev/null 2>&1; then
+            if [ -f /etc/alpine-release ] || ldd --version 2>&1 | grep -qi musl || ldd "$(command -v sh 2>/dev/null || echo /bin/sh)" 2>&1 | grep -qi musl; then
                 LIBC="musl"
             else
                 LIBC="gnu"
@@ -180,9 +180,9 @@ download_file() {
     local dest="$2"
 
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$url" -o "$dest"
+        curl -fsSL "$url" -o "$dest" || { rm -f "$dest"; return 1; }
     elif command -v wget >/dev/null 2>&1; then
-        wget -q "$url" -O "$dest"
+        wget -q "$url" -O "$dest" || { rm -f "$dest"; return 1; }
     else
         error "Neither curl nor wget is installed. Please install curl or wget to continue."
     fi
@@ -197,6 +197,8 @@ compute_sha256() {
         shasum -a 256 "$file" | awk '{print $1}'
     elif command -v openssl >/dev/null 2>&1; then
         openssl dgst -sha256 "$file" | awk '{print $NF}'
+    elif command -v certutil >/dev/null 2>&1; then
+        certutil -hashfile "$file" SHA256 2>/dev/null | sed -n '2p' | tr -d ' \r\n'
     else
         echo ""
     fi
@@ -237,9 +239,9 @@ main() {
     # Checksum Verification
     info "Verifying cryptographic SHA-256 checksum..."
     if download_file "$CHECKSUMS_URL" "$TMP_DIR/SHA256SUMS.txt" 2>/dev/null; then
-        EXPECTED_HASH="$(grep "$ASSET_NAME" "$TMP_DIR/SHA256SUMS.txt" | head -n1 | awk '{print $1}' || true)"
+        EXPECTED_HASH="$(grep "$ASSET_NAME" "$TMP_DIR/SHA256SUMS.txt" | head -n1 | awk '{print $1}' | tr '[:upper:]' '[:lower:]' || true)"
         if [ -n "$EXPECTED_HASH" ]; then
-            ACTUAL_HASH="$(compute_sha256 "$TMP_DIR/$ASSET_NAME")"
+            ACTUAL_HASH="$(compute_sha256 "$TMP_DIR/$ASSET_NAME" | tr '[:upper:]' '[:lower:]')"
             if [ -n "$ACTUAL_HASH" ]; then
                 if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
                     error "Checksum verification failed! Expected ${EXPECTED_HASH}, but got ${ACTUAL_HASH}."
@@ -262,6 +264,8 @@ main() {
     elif [ "$EXT" = "zip" ]; then
         if command -v unzip >/dev/null 2>&1; then
             unzip -q -o "$TMP_DIR/$ASSET_NAME" -d "$TMP_DIR"
+        elif command -v powershell >/dev/null 2>&1; then
+            powershell -NoProfile -Command "Expand-Archive -Path '$TMP_DIR/$ASSET_NAME' -DestinationPath '$TMP_DIR' -Force"
         else
             error "'unzip' command not found. Please install unzip to extract Windows release packages."
         fi

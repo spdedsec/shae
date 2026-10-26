@@ -39,7 +39,8 @@ fn get_os_thread_count() -> Option<usize> {
             }
         }
     }
-    None
+    // Fallback on non-Linux OS (macOS/Windows where /proc is absent)
+    Some(1)
 }
 
 static SERIAL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INSTALL_SH="$SCRIPT_DIR/install.sh"
+
 echo "=========================================================="
 echo "          SHAE UNIVERSAL INSTALLER TEST SUITE            "
 echo "=========================================================="
 
 # 1. Syntax Validation
 echo "[TEST 1] Validating install.sh syntax..."
-bash -n /workspaces/shae/install.sh
+bash -n "$INSTALL_SH"
 echo "  [PASS] bash -n passed cleanly."
 
 # 2. Source and Test Functions in Isolation
@@ -15,10 +18,10 @@ echo "[TEST 2] Testing detection and asset resolution..."
 
 # Test OS Detection
 OS_RESULT=$(bash -c '
-    source /workspaces/shae/install.sh
+    source "$1"
     detect_os
     echo "$OS:$LIBC"
-')
+' _ "$INSTALL_SH")
 echo "  Detected OS:LIBC -> $OS_RESULT"
 if [[ "$OS_RESULT" != linux:* ]]; then
     echo "  [FAIL] Expected linux OS, got $OS_RESULT"
@@ -28,10 +31,10 @@ echo "  [PASS] OS detection verified."
 
 # Test Architecture Detection
 ARCH_RESULT=$(bash -c '
-    source /workspaces/shae/install.sh
+    source "$1"
     detect_arch
     echo "$ARCH"
-')
+' _ "$INSTALL_SH")
 echo "  Detected Architecture -> $ARCH_RESULT"
 if [[ "$ARCH_RESULT" != "x86_64" && "$ARCH_RESULT" != "arm64" ]]; then
     echo "  [FAIL] Expected x86_64 or arm64, got $ARCH_RESULT"
@@ -41,11 +44,11 @@ echo "  [PASS] Architecture detection verified."
 
 # Test Version Normalization
 TAG_RESULT=$(bash -c '
-    source /workspaces/shae/install.sh
+    source "$1"
     SHAE_VERSION="0.4.0"
     resolve_version
     echo "$TAG"
-')
+' _ "$INSTALL_SH")
 if [ "$TAG_RESULT" != "v0.4.0" ]; then
     echo "  [FAIL] Expected v0.4.0, got $TAG_RESULT"
     exit 1
@@ -54,13 +57,13 @@ echo "  [PASS] Version normalization (0.4.0 -> v0.4.0) verified."
 
 # Test Asset Determination for macOS and Windows
 MACOS_ASSET=$(bash -c '
-    source /workspaces/shae/install.sh
+    source "$1"
     OS="macos"
     ARCH="arm64"
     TAG="v0.4.0"
     determine_asset
     echo "$ASSET_NAME"
-')
+' _ "$INSTALL_SH")
 if [ "$MACOS_ASSET" != "shae-v0.4.0-macos-arm64.tar.gz" ]; then
     echo "  [FAIL] Expected shae-v0.4.0-macos-arm64.tar.gz, got $MACOS_ASSET"
     exit 1
@@ -68,13 +71,13 @@ fi
 echo "  [PASS] macOS arm64 asset determination verified."
 
 WIN_ASSET=$(bash -c '
-    source /workspaces/shae/install.sh
+    source "$1"
     OS="windows"
     ARCH="x86_64"
     TAG="v0.4.0"
     determine_asset
     echo "$ASSET_NAME"
-')
+' _ "$INSTALL_SH")
 if [ "$WIN_ASSET" != "shae-v0.4.0-windows-x86_64.zip" ]; then
     echo "  [FAIL] Expected shae-v0.4.0-windows-x86_64.zip, got $WIN_ASSET"
     exit 1
@@ -106,10 +109,11 @@ cd - >/dev/null
 MOCK_INSTALL_DIR="$TMP_TEST_DIR/installed_bin"
 
 bash -c '
-    MOCK_DIR="$1"
-    TARGET_DIR="$2"
+    INSTALL_SCRIPT="$1"
+    MOCK_DIR="$2"
+    TARGET_DIR="$3"
     
-    source /workspaces/shae/install.sh
+    source "$INSTALL_SCRIPT"
 
     # Mock download_file
     download_file() {
@@ -130,7 +134,7 @@ bash -c '
     export LIBC="gnu"
 
     main
-' _ "$TMP_TEST_DIR" "$MOCK_INSTALL_DIR"
+' _ "$INSTALL_SH" "$TMP_TEST_DIR" "$MOCK_INSTALL_DIR"
 
 if [ ! -x "$MOCK_INSTALL_DIR/shae" ]; then
     echo "  [FAIL] Expected binary at $MOCK_INSTALL_DIR/shae"
@@ -149,10 +153,11 @@ echo "0000000000000000000000000000000000000000000000000000000000000000  $MOCK_AS
 
 set +e
 bash -c '
-    MOCK_DIR="$1"
-    TARGET_DIR="$2"
+    INSTALL_SCRIPT="$1"
+    MOCK_DIR="$2"
+    TARGET_DIR="$3"
     
-    source /workspaces/shae/install.sh
+    source "$INSTALL_SCRIPT"
 
     download_file() {
         local url="$1"
@@ -172,7 +177,7 @@ bash -c '
     export LIBC="gnu"
 
     main
-' _ "$TMP_TEST_DIR" "$MOCK_INSTALL_DIR" 2>/dev/null
+' _ "$INSTALL_SH" "$TMP_TEST_DIR" "$MOCK_INSTALL_DIR" 2>/dev/null
 TAMPER_STATUS=$?
 set -e
 

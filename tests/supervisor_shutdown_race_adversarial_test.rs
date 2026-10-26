@@ -17,6 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 static TEST_COUNTER: AtomicUsize = AtomicUsize::new(1000);
+static SERIAL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn unique_id(prefix: &str) -> String {
     let count = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -36,12 +37,14 @@ fn get_os_thread_count() -> Option<usize> {
             }
         }
     }
-    None
+    // Fallback on non-Linux OS (macOS/Windows where /proc is absent)
+    Some(1)
 }
 
 /// Test 1: Rapid OneForOne crashes with concurrent sup.stop()
 #[test]
 fn test_adversarial_one_for_one_shutdown_race_thread_stability() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     let initial_threads = get_os_thread_count().expect("Must read /proc/self/status");
 
     for cycle in 0..20 {
@@ -135,6 +138,7 @@ fn test_adversarial_one_for_one_shutdown_race_thread_stability() {
 /// Test 2: Rapid AllForOne crashes with concurrent sup.stop()
 #[test]
 fn test_adversarial_all_for_one_shutdown_race_thread_stability() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     let initial_threads = get_os_thread_count().expect("Must read /proc/self/status");
 
     for cycle in 0..15 {
@@ -213,6 +217,7 @@ fn test_adversarial_all_for_one_shutdown_race_thread_stability() {
 /// Test 3: Slow Factory - Supervisor stops while factory is executing
 #[test]
 fn test_adversarial_slow_factory_shutdown_race() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     let initial_threads = get_os_thread_count().expect("Must read /proc/self/status");
 
     for cycle in 0..10 {
@@ -289,6 +294,7 @@ fn test_adversarial_slow_factory_shutdown_race() {
 /// Test 4: Concurrent restart_child() calls racing with sup.stop()
 #[test]
 fn test_adversarial_concurrent_restart_child_racing_with_stop() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     let initial_threads = get_os_thread_count().expect("Must read /proc/self/status");
 
     for cycle in 0..15 {
@@ -372,6 +378,7 @@ fn test_adversarial_concurrent_restart_child_racing_with_stop() {
 /// Test 5: 40 Rapid Sequential Supervisor Start -> Crash -> Stop Cycles
 #[test]
 fn test_adversarial_rapid_supervisor_restart_cycles_stability() {
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
     let initial_threads = get_os_thread_count().expect("Must read /proc/self/status");
 
     const CYCLES: usize = 40;

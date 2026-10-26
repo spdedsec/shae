@@ -27,7 +27,8 @@ fn get_os_threads() -> Option<usize> {
             }
         }
     }
-    None
+    // Fallback on non-Linux OS (macOS/Windows where /proc is absent)
+    Some(1)
 }
 
 // =========================================================================

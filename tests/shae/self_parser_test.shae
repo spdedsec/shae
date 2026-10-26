@@ -3,8 +3,8 @@
 // and self-parsing the compiler frontend's own source code.
 
 use { read } from "std:fs"
-use { tokenize } from "/home/spdedsec/teamwork_projects/shae/lib/compiler/lexer.shae"
-use { parse } from "/home/spdedsec/teamwork_projects/shae/lib/compiler/parser.shae"
+use { tokenize } from "../../lib/compiler/lexer.shae"
+use { parse } from "../../lib/compiler/parser.shae"
 
 println("=== Shae Phase 5: Self-Hosting Compiler Frontend Test ===")
 
@@ -59,25 +59,25 @@ println("   [✓] Structs and collections parsed successfully.")
 // -------------------------------------------------------------
 println("\n[4] Self-Hosting Verification: Parsing Compiler Source Files...")
 
-let token_src = read("/home/spdedsec/teamwork_projects/shae/lib/compiler/token.shae")
+let token_src = read("lib/compiler/token.shae")
 let token_tokens = tokenize(token_src)
 let token_ast = parse(token_tokens)
 println("   [✓] token.shae self-parsed: " + str(len(token_ast.statements)) + " statements (" + str(len(token_tokens)) + " tokens)")
 assert(len(token_ast.statements) > 10, "token.shae must contain >10 statements")
 
-let ast_src = read("/home/spdedsec/teamwork_projects/shae/lib/compiler/ast.shae")
+let ast_src = read("lib/compiler/ast.shae")
 let ast_tokens = tokenize(ast_src)
 let ast_ast = parse(ast_tokens)
 println("   [✓] ast.shae self-parsed: " + str(len(ast_ast.statements)) + " statements (" + str(len(ast_tokens)) + " tokens)")
 assert(len(ast_ast.statements) > 15, "ast.shae must contain >15 statements")
 
-let lexer_src = read("/home/spdedsec/teamwork_projects/shae/lib/compiler/lexer.shae")
+let lexer_src = read("lib/compiler/lexer.shae")
 let lexer_tokens = tokenize(lexer_src)
 let lexer_ast = parse(lexer_tokens)
 println("   [✓] lexer.shae self-parsed: " + str(len(lexer_ast.statements)) + " statements (" + str(len(lexer_tokens)) + " tokens)")
 assert(len(lexer_ast.statements) > 5, "lexer.shae must contain >5 statements")
 
-let parser_src = read("/home/spdedsec/teamwork_projects/shae/lib/compiler/parser.shae")
+let parser_src = read("lib/compiler/parser.shae")
 let parser_tokens = tokenize(parser_src)
 let parser_ast = parse(parser_tokens)
 println("   [✓] parser.shae self-parsed: " + str(len(parser_ast.statements)) + " statements (" + str(len(parser_tokens)) + " tokens)")
