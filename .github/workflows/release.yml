@@ -48,15 +48,17 @@ jobs:
       - name: Install Linux musl dependencies
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools musl-dev
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update -y
+          sudo -E apt-get install -y --no-install-recommends musl-tools musl-dev
           sudo ln -sf $(which musl-gcc) /usr/local/bin/x86_64-linux-musl-gcc
 
       - name: Install Linux aarch64 cross-compiler
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update -y
+          sudo -E apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable

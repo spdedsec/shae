@@ -650,19 +650,26 @@ fn test_empirical_stop_discards_pending_asks_causing_timeout() {
     actor.send(Value::Int(2)).unwrap();
     actor.send(Value::Int(3)).unwrap();
 
-    // Now spawn a thread to do an ask with 200ms timeout
+    // Now spawn a thread to do an ask with 2000ms timeout
     let a_clone = Arc::clone(&actor);
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
     let ask_handle = thread::spawn(move || {
         let start = Instant::now();
+        started_tx.send(()).unwrap();
         let res = a_clone.ask(
             Value::String("query".into()),
-            Some(Duration::from_millis(200)),
+            Some(Duration::from_millis(2000)),
         );
         (res, start.elapsed())
     });
 
-    // Give it 5ms to enqueue
-    thread::sleep(Duration::from_millis(5));
+    started_rx.recv().unwrap();
+    let mut spins = 0;
+    while actor.mailbox_len() == 0 && spins < 50 {
+        thread::sleep(Duration::from_millis(2));
+        spins += 1;
+    }
+    thread::sleep(Duration::from_millis(15));
 
     // Call stop()
     actor.stop();
