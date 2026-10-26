@@ -33,6 +33,8 @@ cranelift-native = "0.136.2"
 cranelift-jit = "0.136.2"
 unicode-segmentation = "1.12"
 ctrlc = { version = "3.4", features = ["termination"] }
+flate2 = "1.1.10"
+tar = "0.4.46"
 
 [dev-dependencies]
 rcgen = "0.13"

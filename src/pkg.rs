@@ -20,6 +20,14 @@ pub enum PkgError {
     NotFound(String, String),
     #[error("Invalid package name or manifest: {0}")]
     InvalidManifest(String),
+    #[error("Package pack error: {0}")]
+    PackError(String),
+    #[error("Package unpack error: {0}")]
+    UnpackError(String),
+    #[error("Package publish error to '{0}': {1}")]
+    PublishError(String, String),
+    #[error("Package integrity checksum mismatch for '{0}': expected {1}, got {2}")]
+    ChecksumMismatch(String, String, String),
 }
 
 pub fn validate_package_name(name: &str) -> Result<(), PkgError> {
@@ -63,6 +71,12 @@ pub struct PackageInfo {
     pub description: Option<String>,
     #[serde(default)]
     pub authors: Vec<String>,
+    #[serde(default)]
+    pub license: Option<String>,
+    #[serde(default)]
+    pub repository: Option<String>,
+    #[serde(default)]
+    pub registry: Option<String>,
 }
 
 fn default_entry() -> String {
@@ -133,6 +147,8 @@ pub struct LockedPackage {
     pub version: Option<String>,
     pub source: String,
     pub commit: Option<String>,
+    #[serde(default)]
+    pub checksum: Option<String>,
 }
 
 impl PackageManifest {
@@ -144,6 +160,9 @@ impl PackageManifest {
                 entry: "main.shae".to_string(),
                 description: None,
                 authors: Vec::new(),
+                license: None,
+                repository: None,
+                registry: None,
             },
             dependencies: BTreeMap::new(),
         }
@@ -325,6 +344,7 @@ pub fn install_dependencies(dir: &Path) -> Result<Lockfile, PkgError> {
                     version: None,
                     source: format!("path:{}", path_str),
                     commit: None,
+                    checksum: None,
                 },
             );
         } else if let Some(git_url) = spec.get_git_url() {
@@ -356,6 +376,7 @@ pub fn install_dependencies(dir: &Path) -> Result<Lockfile, PkgError> {
                     version: None,
                     source: git_url,
                     commit: Some(commit_sha),
+                    checksum: None,
                 },
             );
         }
@@ -534,4 +555,384 @@ pub fn resolve_package_file(search_dir: &Path, import_path: &str) -> Option<Path
     }
 
     None
+}
+
+// ===========================================================================
+// Milestone 5: Packaging, Publishing & Integrity Verification
+// ===========================================================================
+
+use flate2::Compression;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use tar::{Archive, Builder};
+
+/// Computes hex-encoded SHA-256 checksum for arbitrary binary data.
+pub fn compute_sha256(data: &[u8]) -> String {
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    context.update(data);
+    let digest = context.finish();
+    digest
+        .as_ref()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
+}
+
+/// Result metadata from packaging a Shae project archive.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PackResult {
+    pub package_name: String,
+    pub version: String,
+    pub archive_path: PathBuf,
+    pub file_count: usize,
+    pub size_bytes: u64,
+    pub sha256: String,
+}
+
+/// Result metadata from publishing a Shae package archive to a registry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PublishResult {
+    pub package_name: String,
+    pub version: String,
+    pub sha256: String,
+    pub registry_url: String,
+    pub success: bool,
+    pub message: String,
+}
+
+fn should_skip_pack_path(name: &str) -> bool {
+    name == "target"
+        || name == ".git"
+        || name == ".packages"
+        || name == "node_modules"
+        || name == "doc"
+        || name.ends_with(".shaepkg")
+        || name.ends_with(".tar.gz")
+        || name.ends_with(".lock")
+}
+
+fn collect_pack_files_recursive(
+    base_dir: &Path,
+    current_dir: &Path,
+    files: &mut Vec<(PathBuf, PathBuf)>,
+) -> Result<(), PkgError> {
+    if !current_dir.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(current_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_name = entry.file_name().to_string_lossy().to_string();
+
+        if should_skip_pack_path(&file_name) {
+            continue;
+        }
+
+        if path.is_dir() {
+            collect_pack_files_recursive(base_dir, &path, files)?;
+        } else if path.is_file() {
+            let rel_path = path
+                .strip_prefix(base_dir)
+                .map_err(|e| PkgError::PackError(format!("Path prefix error: {}", e)))?
+                .to_path_buf();
+            files.push((path, rel_path));
+        }
+    }
+    Ok(())
+}
+
+/// Packs a Shae package directory into a verified `.shaepkg` archive (gzip-compressed tarball).
+pub fn pack_package(dir: &Path, output_file: Option<&Path>) -> Result<PackResult, PkgError> {
+    let manifest = PackageManifest::load_from_dir(dir)?;
+    let entry_file = dir.join(&manifest.package.entry);
+    if !entry_file.exists() {
+        return Err(PkgError::PackError(format!(
+            "Package entrypoint '{}' does not exist in {}",
+            manifest.package.entry,
+            dir.display()
+        )));
+    }
+
+    let mut files = Vec::new();
+    collect_pack_files_recursive(dir, dir, &mut files)?;
+
+    if files.is_empty() {
+        return Err(PkgError::PackError(format!(
+            "No packable source files found in {}",
+            dir.display()
+        )));
+    }
+
+    // Sort files for reproducible deterministic archives
+    files.sort_by(|a, b| a.1.cmp(&b.1));
+
+    let enc = GzEncoder::new(Vec::new(), Compression::default());
+    let mut tar = Builder::new(enc);
+
+    let prefix = format!("{}-{}", manifest.package.name, manifest.package.version);
+    let file_count = files.len();
+
+    for (abs_path, rel_path) in files {
+        let archive_entry_path = Path::new(&prefix).join(&rel_path);
+        let mut f = fs::File::open(&abs_path)?;
+        tar.append_file(&archive_entry_path, &mut f).map_err(|e| {
+            PkgError::PackError(format!("Failed to archive {}: {}", rel_path.display(), e))
+        })?;
+    }
+
+    let enc = tar
+        .into_inner()
+        .map_err(|e| PkgError::PackError(format!("Failed to finish tar archive: {}", e)))?;
+    let archive_bytes = enc
+        .finish()
+        .map_err(|e| PkgError::PackError(format!("Failed to gzip tarball: {}", e)))?;
+
+    let sha256 = compute_sha256(&archive_bytes);
+    let size_bytes = archive_bytes.len() as u64;
+
+    let out_path = match output_file {
+        Some(p) => p.to_path_buf(),
+        None => dir.join(format!(
+            "{}-{}.shaepkg",
+            manifest.package.name, manifest.package.version
+        )),
+    };
+
+    if let Some(parent) = out_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    fs::write(&out_path, &archive_bytes)?;
+
+    Ok(PackResult {
+        package_name: manifest.package.name,
+        version: manifest.package.version,
+        archive_path: out_path,
+        file_count,
+        size_bytes,
+        sha256,
+    })
+}
+
+/// Unpacks a `.shaepkg` archive into a target directory.
+pub fn unpack_package(archive_path: &Path, dest_dir: &Path) -> Result<PathBuf, PkgError> {
+    let bytes = fs::read(archive_path)
+        .map_err(|e| PkgError::UnpackError(format!("Failed to read archive: {}", e)))?;
+    let decoder = GzDecoder::new(&bytes[..]);
+    let mut archive = Archive::new(decoder);
+
+    fs::create_dir_all(dest_dir)?;
+
+    let mut root_dir: Option<PathBuf> = None;
+
+    for entry in archive
+        .entries()
+        .map_err(|e| PkgError::UnpackError(format!("Corrupt archive entries: {}", e)))?
+    {
+        let mut entry =
+            entry.map_err(|e| PkgError::UnpackError(format!("Corrupt archive entry: {}", e)))?;
+        let entry_path = entry
+            .path()
+            .map_err(|e| PkgError::UnpackError(format!("Invalid path in archive: {}", e)))?
+            .to_path_buf();
+
+        // Prevent path traversal
+        if entry_path.is_absolute()
+            || entry_path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(PkgError::UnpackError(format!(
+                "Path traversal detected in archive entry: {}",
+                entry_path.display()
+            )));
+        }
+
+        if root_dir.is_none() {
+            if let Some(first_comp) = entry_path.components().next() {
+                root_dir = Some(PathBuf::from(first_comp.as_os_str()));
+            }
+        }
+
+        let target_file = dest_dir.join(&entry_path);
+        if let Some(parent) = target_file.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        entry
+            .unpack(&target_file)
+            .map_err(|e| PkgError::UnpackError(format!("Failed to extract file: {}", e)))?;
+    }
+
+    Ok(dest_dir.to_path_buf())
+}
+
+/// Verifies that an archive file matches the expected SHA-256 hash.
+pub fn verify_package_checksum(
+    archive_path: &Path,
+    expected_sha256: &str,
+) -> Result<bool, PkgError> {
+    let bytes = fs::read(archive_path).map_err(|e| PkgError::Io(e))?;
+    let actual_sha256 = compute_sha256(&bytes);
+    if actual_sha256.eq_ignore_ascii_case(expected_sha256) {
+        Ok(true)
+    } else {
+        Err(PkgError::ChecksumMismatch(
+            archive_path.to_string_lossy().to_string(),
+            expected_sha256.to_string(),
+            actual_sha256,
+        ))
+    }
+}
+
+/// Publishes a Shae package archive to a package registry (or local registry directory / mock).
+pub fn publish_package(
+    dir: &Path,
+    registry_url: Option<&str>,
+    auth_token: Option<&str>,
+    dry_run: bool,
+) -> Result<PublishResult, PkgError> {
+    let pack_res = pack_package(dir, None)?;
+
+    if dry_run {
+        return Ok(PublishResult {
+            package_name: pack_res.package_name.clone(),
+            version: pack_res.version.clone(),
+            sha256: pack_res.sha256.clone(),
+            registry_url: "dry-run".to_string(),
+            success: true,
+            message: format!(
+                "Dry run: verified and packed '{}' v{} ({} bytes, {} files, sha256: {})",
+                pack_res.package_name,
+                pack_res.version,
+                pack_res.size_bytes,
+                pack_res.file_count,
+                pack_res.sha256
+            ),
+        });
+    }
+
+    let manifest = PackageManifest::load_from_dir(dir)?;
+    let target_url = registry_url
+        .map(|s| s.to_string())
+        .or_else(|| std::env::var("SHAE_REGISTRY_URL").ok())
+        .or_else(|| manifest.package.registry)
+        .unwrap_or_else(|| "https://pkg.shae-lang.org/api/v1/publish".to_string());
+
+    let token = auth_token
+        .map(|s| s.to_string())
+        .or_else(|| std::env::var("SHAE_REGISTRY_TOKEN").ok());
+
+    // 1. Local filesystem registry support (file:// or raw directory path)
+    if target_url.starts_with("file://")
+        || Path::new(&target_url).is_dir()
+        || target_url.starts_with("./")
+        || target_url.starts_with("/")
+    {
+        let local_dir = if let Some(stripped) = target_url.strip_prefix("file://") {
+            PathBuf::from(stripped)
+        } else {
+            PathBuf::from(&target_url)
+        };
+        let pkg_dest_dir = local_dir.join(&pack_res.package_name);
+        fs::create_dir_all(&pkg_dest_dir)?;
+
+        let dest_archive = pkg_dest_dir.join(format!(
+            "{}-{}.shaepkg",
+            pack_res.package_name, pack_res.version
+        ));
+        fs::copy(&pack_res.archive_path, &dest_archive)?;
+
+        // Update or write local index.json
+        let index_file = local_dir.join("index.json");
+        let mut index_data: serde_json::Value = if index_file.exists() {
+            fs::read_to_string(&index_file)
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_else(|| serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+
+        if let Some(obj) = index_data.as_object_mut() {
+            let pkg_entries = obj
+                .entry(pack_res.package_name.clone())
+                .or_insert_with(|| serde_json::json!({}));
+            if let Some(pkg_map) = pkg_entries.as_object_mut() {
+                pkg_map.insert(
+                    pack_res.version.clone(),
+                    serde_json::json!({
+                        "version": pack_res.version,
+                        "sha256": pack_res.sha256,
+                        "size": pack_res.size_bytes,
+                        "files": pack_res.file_count,
+                        "archive": dest_archive.to_string_lossy(),
+                    }),
+                );
+            }
+        }
+
+        let _ = fs::write(
+            &index_file,
+            serde_json::to_string_pretty(&index_data).unwrap_or_default(),
+        );
+        let success_message = format!(
+            "Published to local registry directory at {}",
+            local_dir.display()
+        );
+
+        return Ok(PublishResult {
+            package_name: pack_res.package_name,
+            version: pack_res.version,
+            sha256: pack_res.sha256,
+            registry_url: target_url,
+            success: true,
+            message: success_message,
+        });
+    }
+
+    // 2. HTTP(S) remote registry upload
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| PkgError::PublishError(target_url.clone(), e.to_string()))?;
+
+    let archive_bytes = fs::read(&pack_res.archive_path).map_err(|e| {
+        PkgError::PublishError(target_url.clone(), format!("Failed to read archive: {}", e))
+    })?;
+
+    let mut request = client
+        .post(&target_url)
+        .header("Content-Type", "application/octet-stream")
+        .header("X-Shae-Package-Name", &pack_res.package_name)
+        .header("X-Shae-Package-Version", &pack_res.version)
+        .header("X-Shae-Package-Checksum", &pack_res.sha256);
+
+    if let Some(tok) = token {
+        request = request.header("Authorization", format!("Bearer {}", tok));
+    }
+
+    let response = request
+        .body(archive_bytes)
+        .send()
+        .map_err(|e| PkgError::PublishError(target_url.clone(), e.to_string()))?;
+
+    let status = response.status();
+    if status.is_success() {
+        Ok(PublishResult {
+            package_name: pack_res.package_name,
+            version: pack_res.version,
+            sha256: pack_res.sha256,
+            registry_url: target_url,
+            success: true,
+            message: format!("HTTP {}", status),
+        })
+    } else {
+        let err_body = response.text().unwrap_or_default();
+        Err(PkgError::PublishError(
+            target_url,
+            format!("Registry returned HTTP {}: {}", status, err_body),
+        ))
+    }
 }

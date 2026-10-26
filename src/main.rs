@@ -38,7 +38,16 @@ fn show_help() {
     println!(
         "  shae install               Install dependencies into .shae/packages and update shae.lock"
     );
-    println!("  shae pkg <cmd>             Package manager subcommands (init, add, install)");
+    println!(
+        "  shae pkg <cmd>             Package manager (init, add, install, pack, publish, verify)"
+    );
+    println!("  shae pkg pack [dir]        Package project into verified .shaepkg archive (-o)");
+    println!(
+        "  shae pkg publish [dir]     Publish package to registry (--registry, --token, --dry-run)"
+    );
+    println!(
+        "  shae pkg verify <pkg> <sha> Verify SHA-256 integrity checksum of a package archive"
+    );
     println!(
         "  shae bundle <entry.shae>   Bundle application into a standalone binary (--strip, --no-bytecode)"
     );
@@ -593,7 +602,7 @@ fn main() {
         },
         "pkg" => {
             if args.len() < 3 {
-                println!("Usage: shae pkg <init|add|install>");
+                println!("Usage: shae pkg <init|add|install|pack|publish|verify>");
                 return;
             }
             match args[2].as_str() {
@@ -642,6 +651,119 @@ fn main() {
                         process::exit(1);
                     }
                 },
+                "pack" => {
+                    let mut dir = ".";
+                    let mut output_file = None;
+                    let mut i = 3;
+                    while i < args.len() {
+                        match args[i].as_str() {
+                            "-o" | "--output" => {
+                                if i + 1 < args.len() {
+                                    output_file = Some(args[i + 1].as_str());
+                                    i += 2;
+                                } else {
+                                    eprintln!("Error: -o requires an output path");
+                                    process::exit(1);
+                                }
+                            }
+                            arg if !arg.starts_with('-') => {
+                                dir = arg;
+                                i += 1;
+                            }
+                            _ => i += 1,
+                        }
+                    }
+                    match shae::pkg::pack_package(Path::new(dir), output_file.map(Path::new)) {
+                        Ok(res) => {
+                            println!(
+                                "📦 Packed package '{}' v{} ({} files, {} bytes)\n   Archive:  {}\n   SHA-256:  {}",
+                                res.package_name,
+                                res.version,
+                                res.file_count,
+                                res.size_bytes,
+                                res.archive_path.display(),
+                                res.sha256
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("Error packing package: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                "publish" => {
+                    let mut dir = ".";
+                    let mut registry = None;
+                    let mut token = None;
+                    let mut dry_run = false;
+                    let mut i = 3;
+                    while i < args.len() {
+                        match args[i].as_str() {
+                            "--registry" => {
+                                if i + 1 < args.len() {
+                                    registry = Some(args[i + 1].as_str());
+                                    i += 2;
+                                } else {
+                                    eprintln!(
+                                        "Error: --registry requires a registry URL or directory"
+                                    );
+                                    process::exit(1);
+                                }
+                            }
+                            "--token" => {
+                                if i + 1 < args.len() {
+                                    token = Some(args[i + 1].as_str());
+                                    i += 2;
+                                } else {
+                                    eprintln!("Error: --token requires an authentication token");
+                                    process::exit(1);
+                                }
+                            }
+                            "--dry-run" => {
+                                dry_run = true;
+                                i += 1;
+                            }
+                            arg if !arg.starts_with('-') => {
+                                dir = arg;
+                                i += 1;
+                            }
+                            _ => i += 1,
+                        }
+                    }
+                    match shae::pkg::publish_package(Path::new(dir), registry, token, dry_run) {
+                        Ok(res) => {
+                            if dry_run {
+                                println!("🧪 {}", res.message);
+                            } else {
+                                println!(
+                                    "🚀 Published '{}' v{} to {}\n   SHA-256:  {}",
+                                    res.package_name, res.version, res.registry_url, res.sha256
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error publishing package: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                "verify" => {
+                    if args.len() < 5 {
+                        eprintln!("Usage: shae pkg verify <archive.shaepkg> <expected_sha256>");
+                        process::exit(1);
+                    }
+                    let archive_path = Path::new(&args[3]);
+                    let expected_sha256 = &args[4];
+                    match shae::pkg::verify_package_checksum(archive_path, expected_sha256) {
+                        Ok(_) => {
+                            println!("🔒 Integrity verified for '{}'", archive_path.display());
+                        }
+                        Err(e) => {
+                            eprintln!("Verification failed: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
                 other => {
                     eprintln!("Unknown pkg command: {}", other);
                     process::exit(1);

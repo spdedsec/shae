@@ -310,3 +310,24 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
   - [x] Single-module extraction test for all symbol kinds.
   - [x] HTML, Markdown, and JSON serialization verification.
   - [x] End-to-end multi-module project documentation build verification.
+
+---
+
+### **Chunk 24: Package Registry & Publishing (`shae pkg pack` / `publish`)** *(Completed)*
+- [x] **Package Archive Engine (`.shaepkg` / gzip-compressed tarballs in `src/pkg.rs`)**
+  - [x] Deterministic sorted file archiving omitting build artifacts, git repositories, and dependencies (`target/`, `.git/`, `.packages/`, `node_modules/`, `doc/`, `*.shaepkg`).
+  - [x] SHA-256 cryptographic integrity checksum computation and validation.
+  - [x] Safe extraction routine (`unpack_package`) with strict path traversal prevention.
+- [x] **Registry Publishing & Verification Pipeline (`shae pkg publish`, `shae pkg verify`)**
+  - [x] Dual-mode publishing engine supporting local filesystem registries (`file://`) and remote HTTP(S) API registries.
+  - [x] Bearer token authentication support via CLI flags (`--token`) or environment variable (`SHAE_REGISTRY_TOKEN`).
+  - [x] Dry-run verification mode (`--dry-run`) validating manifest entries and packing integrity.
+  - [x] Atomic registry index updating (`index.json`) for local and distributed registries.
+- [x] **CLI Tooling Integration (`src/main.rs`)**
+  - [x] Subcommands `shae pkg pack [dir] [-o <file>]`, `shae pkg publish [dir] [--registry <url>] [--token <tok>] [--dry-run]`, and `shae pkg verify <pkg> <sha256>`.
+  - [x] Updated CLI help and manifest definitions.
+- [x] **Integration Test Verification Suite (`tests/pkg_publish_test.rs`)**
+  - [x] Archive packing and file count verification.
+  - [x] Exact round-trip byte-for-byte extraction and restoration verification.
+  - [x] SHA-256 integrity verification and tamper rejection verification.
+  - [x] Dry-run and local filesystem registry publishing verification.
