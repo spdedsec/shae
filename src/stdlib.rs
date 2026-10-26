@@ -4221,7 +4221,9 @@ fn async_race(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value
     let task_list: Vec<Value> = match &args[0] {
         Value::Array(arr) => arr.read().unwrap().clone(),
         _ => {
-            return Err(RuntimeError::new("async.race() expects an array of tasks".into()).at(span));
+            return Err(
+                RuntimeError::new("async.race() expects an array of tasks".into()).at(span),
+            );
         }
     };
     if task_list.is_empty() {

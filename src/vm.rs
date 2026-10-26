@@ -2182,8 +2182,15 @@ impl VM {
                                 );
                             }
                             if closure.function.is_async {
+                                self.close_upvalues_in_value(&Value::Closure(closure.clone()));
                                 let args: Vec<Value> =
                                     self.stack.drain(callee_slot + 1..).collect();
+                                for arg in &args {
+                                    self.close_upvalues_in_value(arg);
+                                }
+                                self.open_upvalues.retain(|uv| {
+                                    matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
+                                });
                                 self.stack.pop(); // pop callee
                                 let current_file = self.current_file.clone();
                                 let globals = self.globals.clone();
@@ -2259,8 +2266,15 @@ impl VM {
                                 module_globals: mod_globals,
                             });
                             if closure.function.is_async {
+                                self.close_upvalues_in_value(&Value::Closure(closure.clone()));
                                 let args: Vec<Value> =
                                     self.stack.drain(callee_slot + 1..).collect();
+                                for arg in &args {
+                                    self.close_upvalues_in_value(arg);
+                                }
+                                self.open_upvalues.retain(|uv| {
+                                    matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
+                                });
                                 self.stack.pop(); // pop callee
                                 let current_file = self.current_file.clone();
                                 let globals = self.globals.clone();
@@ -2502,8 +2516,15 @@ impl VM {
                                 );
                             }
                             if closure.function.is_async {
+                                self.close_upvalues_in_value(&Value::Closure(closure.clone()));
                                 let args: Vec<Value> =
                                     self.stack.drain(callee_slot + 1..).collect();
+                                for arg in &args {
+                                    self.close_upvalues_in_value(arg);
+                                }
+                                self.open_upvalues.retain(|uv| {
+                                    matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
+                                });
                                 self.stack.pop(); // pop callee
                                 let current_file = self.current_file.clone();
                                 let globals = self.globals.clone();
@@ -2617,8 +2638,15 @@ impl VM {
                                 module_globals: mod_globals,
                             });
                             if closure.function.is_async {
+                                self.close_upvalues_in_value(&Value::Closure(closure.clone()));
                                 let args: Vec<Value> =
                                     self.stack.drain(callee_slot + 1..).collect();
+                                for arg in &args {
+                                    self.close_upvalues_in_value(arg);
+                                }
+                                self.open_upvalues.retain(|uv| {
+                                    matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
+                                });
                                 self.stack.pop(); // pop callee
                                 let current_file = self.current_file.clone();
                                 let globals = self.globals.clone();

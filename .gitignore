@@ -5,3 +5,4 @@ node_modules/
 editors/vscode/out/
 .agents/
 ORIGINAL_REQUEST.md
+doc/

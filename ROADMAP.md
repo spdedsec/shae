@@ -291,3 +291,22 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
   - [x] Non-blocking completion predicates: `async.is_done(task)` and `async.status(task)`.
 - [x] **Dual-Engine Test Verification Suite (`tests/shae/async_coroutine_test.shae`, `tests/async_coroutine_test.rs`)**
   - [x] 100% test pass on both Tree-Walking AST Evaluator and Bytecode Stack VM.
+
+---
+
+### **Chunk 23: Standard Documentation Engine (`shae doc`)** *(Completed)*
+- [x] **Documentation Comment & Symbol Parser (`src/doc.rs`)**
+  - [x] Item doc comments (`///`) and inner module/file doc comments (`//!`).
+  - [x] Extraction of function signatures (`fn`, `async fn`), parameters, structs, enums with variants, and constants.
+  - [x] Line number and symbol location tracking.
+- [x] **Static HTML Site Generator & Markdown Renderer**
+  - [x] Self-contained responsive HTML site generation with dark theme, sidebar navigation, badges, and client-side instant search filtering.
+  - [x] Clean GitHub Flavored Markdown reference generation (`README.md`).
+  - [x] Structured JSON schema model export (`doc.json`).
+- [x] **Recursive Project Scanner & CLI Tooling (`shae doc`)**
+  - [x] Multi-file recursive project scanner reading `shae.toml` package metadata.
+  - [x] CLI subcommand `shae doc [path] [-o <DIR>] [--format html|md|json|all] [--open]`.
+- [x] **Integration Test Verification Suite (`tests/doc_gen_test.rs`)**
+  - [x] Single-module extraction test for all symbol kinds.
+  - [x] HTML, Markdown, and JSON serialization verification.
+  - [x] End-to-end multi-module project documentation build verification.

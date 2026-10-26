@@ -29,6 +29,9 @@ fn show_help() {
         "  shae test [path]           Run Shae tests (*_test.shae) (default: VM; use --engine=ast)"
     );
     println!("  shae fmt <file.shae>       Format a Shae script");
+    println!(
+        "  shae doc [path]            Generate documentation site & reference (-o, --format html|md|json, --open)"
+    );
     println!("  shae new <project_name>    Create a new Shae project folder");
     println!("  shae init [name]           Initialize package manifest (shae.toml)");
     println!("  shae add <dep> <source>    Add dependency (git URL or local path)");
@@ -688,6 +691,91 @@ fn main() {
                     "Usage: shae run <file.shae> [--vm] [--engine=vm|ast] [--disasm] [--profile]"
                 );
                 process::exit(1);
+            }
+        }
+        "doc" => {
+            let mut input_path = None;
+            let mut output_dir = None;
+            let mut format = None;
+            let mut open_browser = false;
+
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "-o" | "--output" => {
+                        if i + 1 < args.len() {
+                            output_dir = Some(args[i + 1].clone());
+                            i += 2;
+                        } else {
+                            eprintln!("Error: -o requires an output directory path");
+                            process::exit(1);
+                        }
+                    }
+                    "--format" => {
+                        if i + 1 < args.len() {
+                            format = Some(args[i + 1].clone());
+                            i += 2;
+                        } else {
+                            eprintln!("Error: --format requires format type (html, md, json)");
+                            process::exit(1);
+                        }
+                    }
+                    "--open" => {
+                        open_browser = true;
+                        i += 1;
+                    }
+                    "-h" | "--help" => {
+                        println!(
+                            "Usage: shae doc [PATH] [-o <DIR>] [--format html|md|json] [--open]\n"
+                        );
+                        println!(
+                            "Generate documentation site & reference for a Shae project or file.\n"
+                        );
+                        println!("Options:");
+                        println!("  -o, --output <DIR>   Output directory (default: doc)");
+                        println!(
+                            "  --format <FMT>       Output format: html, md, json, all (default: all)"
+                        );
+                        println!("  --open               Open generated documentation in browser");
+                        println!("  -h, --help           Show this help message");
+                        return;
+                    }
+                    arg if !arg.starts_with('-') && input_path.is_none() => {
+                        input_path = Some(arg.to_string());
+                        i += 1;
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+
+            let target_path = input_path.unwrap_or_else(|| ".".to_string());
+            let out_path = output_dir.unwrap_or_else(|| "doc".to_string());
+
+            match shae::doc::generate_docs(
+                Path::new(&target_path),
+                Path::new(&out_path),
+                format.as_deref(),
+            ) {
+                Ok(pkg_doc) => {
+                    let total_items: usize = pkg_doc.modules.iter().map(|m| m.items.len()).sum();
+                    println!(
+                        "📖 Generated documentation for '{}' ({} items across {} modules) in {}/",
+                        pkg_doc.package_name,
+                        total_items,
+                        pkg_doc.modules.len(),
+                        out_path
+                    );
+                    if open_browser {
+                        let html_file = Path::new(&out_path).join("index.html");
+                        println!("🌐 Opening documentation at: {}", html_file.display());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error generating documentation: {}", e);
+                    process::exit(1);
+                }
             }
         }
         "compile" => {

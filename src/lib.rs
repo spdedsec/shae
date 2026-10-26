@@ -10,6 +10,7 @@ pub mod compiler;
 pub mod csv;
 pub mod dap;
 pub mod debugger;
+pub mod doc;
 pub mod env;
 pub mod eval;
 pub mod ffi;
