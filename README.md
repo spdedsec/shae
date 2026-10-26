@@ -13,11 +13,11 @@
 **A modern, strict, and ergonomic systems scripting language with Cranelift JIT compilation.**  
 *Zero ceremony, native machine code JIT, embedded SQLite, RFC 4180 CSV, built-in TLS servers, channels, package manager, and standalone binary bundler.*
 
-[![Version](https://img.shields.io/badge/version-0.3.1-blue.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](Cargo.toml)
 [![Tests](https://img.shields.io/badge/tests-255%2B%20passing-brightgreen.svg)]()
 [![Rust](https://img.shields.io/badge/built%20with-Rust%202024-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![VS Code](https://img.shields.io/badge/VS%20Code-v0.3.1-purple.svg)](editors/vscode)
+[![VS Code](https://img.shields.io/badge/VS%20Code-v0.4.0-purple.svg)](editors/vscode)
 
 </div>
 
@@ -55,7 +55,14 @@ Shae is designed to hit the sweet spot between safety, ergonomics, raw utility, 
 
 ## 🚀 Installation & Quick Start
 
-### 1. Build and Install from Source
+### 1. Single-Line Universal Installer (macOS, Linux, Windows)
+Install the official pre-built standalone toolchain binary with a single command:
+```bash
+curl -fsSL https://shae-lang.org/install.sh | bash
+```
+*(Or via GitHub: `curl -fsSL https://raw.githubusercontent.com/spdedsec/shae/main/install.sh | bash`)*
+
+### 2. Build and Install from Source
 Ensure you have Rust and Cargo installed:
 ```bash
 git clone https://github.com/spdedsec/shae.git
@@ -68,7 +75,7 @@ Verify your installation:
 shae --version
 ```
 
-### 2. Hello World in 10 Seconds
+### 3. Hello World in 10 Seconds
 Create `hello.shae`:
 ```shae
 let name = "Developer"
@@ -341,7 +348,7 @@ Shae provides an official VS Code extension located at [`editors/vscode`](editor
 - **Language Server Protocol Integration**: Real-time compiler diagnostics, completions, and formatting powered by `shae lsp`.
 - **Install**:
   ```bash
-  code --install-extension editors/vscode/shae-vscode-0.3.1.vsix
+  code --install-extension editors/vscode/shae-vscode-0.4.0.vsix
   ```
 
 ---
@@ -380,6 +387,13 @@ Shae is advancing toward an enterprise-scale systems ecosystem. Upcoming major p
    - Node discovery, authentication cookie handshakes, and peer registry synchronization.
    - Remote actor handles (`RemoteActorRef`), asynchronous `send()`, and synchronous `ask()` across nodes.
    - Pure-Shae distributed worker pools and leader election (`lib/actor/cluster.shae`).
+5. **Phase 8: Enterprise Release & Systems Toolchain Ecosystem** *(Completed in v0.4.0)*:
+   - Official multi-platform distribution CI/CD (Linux glibc/musl, Linux aarch64, macOS arm64/x86_64, Windows x86_64).
+   - Single-line universal installer (`install.sh`) with automatic OS/arch detection and SHA-256 integrity verification.
+   - Cluster Transport Security: TLS & Mutual-TLS (mTLS) with CA peer verification (`std:actor:cluster`).
+   - First-class coroutines (`async` / `await`) and asynchronous concurrency combinators (`std:async`).
+   - Standard automated documentation engine (`shae doc`) with static HTML, Markdown, and JSON export.
+   - Package registry and publishing pipeline (`shae pkg pack` / `publish`) with `.shaepkg` archives.
 
 ---
 

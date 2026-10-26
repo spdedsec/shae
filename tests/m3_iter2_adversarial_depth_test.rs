@@ -334,6 +334,7 @@ let headroom_val = probe(50)
 // =========================================================================
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn test_synthetic_evaluator_underflow_and_residual_leak_probes() {
     let span = Span::new(1, 1);
     let mut eval = Evaluator::new();
