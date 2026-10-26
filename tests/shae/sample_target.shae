@@ -1,0 +1,8 @@
+// Sample program for compiler pipeline verification
+fn compute(x, y) {
+    let sum = x + y
+    return sum * 2
+}
+
+let result = compute(10, 11)
+return result

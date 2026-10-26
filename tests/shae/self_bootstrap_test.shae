@@ -1,0 +1,98 @@
+// Pure-Shae Self-Hosting Bootstrap Pipeline Test
+// tests/shae/self_bootstrap_test.shae
+
+use {
+    compile_to_bytecode,
+    disassemble_bytecode,
+    link_to_native,
+    compile_to_wasm,
+    driver_dispatch
+} from "../../lib/compiler/main.shae"
+use { read_bytes, remove, exists } from "std:fs"
+
+println("=== Shae Milestone 1: Complete Self-Hosting Bootstrap Pipeline Test ===")
+
+let sample_src_path = "tests/shae/sample_target.shae"
+let out_shaec = "tests/shae/sample_target.shaec"
+let out_elf = "tests/shae/sample_target.elf"
+let out_wasm = "tests/shae/sample_target.wasm"
+
+// Clean up any stale artifacts
+if exists(out_shaec) { remove(out_shaec) }
+if exists(out_elf) { remove(out_elf) }
+if exists(out_wasm) { remove(out_wasm) }
+
+// [1] Test compile_to_bytecode via driver
+println("\n[1] Compiling sample script to ahead-of-time .shaec bytecode...")
+let bc_size = compile_to_bytecode(sample_src_path, out_shaec)
+println("   [✓] Bytecode emitted successfully (", bc_size, "bytes)")
+if bc_size <= 0 or not exists(out_shaec) {
+    println("FAILED: Bytecode file was not emitted")
+    return 1
+}
+
+let shaec_header = read_bytes(out_shaec)
+if shaec_header.len < 8 or shaec_header[0] != 0x7f or shaec_header[1] != 83 or shaec_header[2] != 72 or shaec_header[3] != 65 or shaec_header[4] != 69 {
+    println("FAILED: Invalid .shaec magic header")
+    return 1
+}
+println("   [✓] Valid .shaec binary magic header verified")
+
+// [2] Test disassemble_bytecode via driver
+println("\n[2] Disassembling bytecode...")
+let disasm_text = disassemble_bytecode(sample_src_path)
+println("   [✓] Disassembly output generated (", disasm_text.len, "chars)")
+if disasm_text.len <= 0 {
+    println("FAILED: Disassembly text was empty")
+    return 1
+}
+
+// [3] Test link_to_native (ELF) via driver
+println("\n[3] Linking source to standalone 64-bit ELF binary...")
+let elf_size = link_to_native(sample_src_path, out_elf, "elf", null, null)
+println("   [✓] Native ELF emitted successfully (", elf_size, "bytes)")
+if elf_size <= 0 or not exists(out_elf) {
+    println("FAILED: ELF executable was not emitted")
+    return 1
+}
+
+let elf_header = read_bytes(out_elf)
+if elf_header.len < 4 or elf_header[0] != 0x7f or elf_header[1] != 69 or elf_header[2] != 76 or elf_header[3] != 70 {
+    println("FAILED: Invalid ELF magic header")
+    return 1
+}
+println("   [✓] Valid ELF 64-bit binary magic header verified")
+
+// [4] Test compile_to_wasm via driver
+println("\n[4] Compiling source to WebAssembly (.wasm) binary...")
+let wasm_size = compile_to_wasm(sample_src_path, out_wasm)
+println("   [✓] WebAssembly binary emitted successfully (", wasm_size, "bytes)")
+if wasm_size <= 0 or not exists(out_wasm) {
+    println("FAILED: WebAssembly binary was not emitted")
+    return 1
+}
+
+let wasm_header = read_bytes(out_wasm)
+if wasm_header.len < 4 or wasm_header[0] != 0x00 or wasm_header[1] != 97 or wasm_header[2] != 115 or wasm_header[3] != 109 {
+    println("FAILED: Invalid WebAssembly magic header")
+    return 1
+}
+println("   [✓] Valid WebAssembly binary magic header verified")
+
+// [5] Test unified driver_dispatch
+println("\n[5] Testing unified driver_dispatch entrypoint...")
+let dispatch_res = driver_dispatch("compile", sample_src_path, out_shaec, null)
+println("   [✓] driver_dispatch('compile') => ", dispatch_res)
+if dispatch_res <= 0 {
+    println("FAILED: driver_dispatch failed")
+    return 1
+}
+
+// Teardown artifacts
+remove(out_shaec)
+remove(out_elf)
+remove(out_wasm)
+println("   [✓] Temporary test artifacts cleaned up.")
+
+println("\n=== All Self-Hosting Bootstrap Pipeline Tests Passed! ===")
+return 0

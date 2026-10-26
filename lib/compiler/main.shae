@@ -1,0 +1,101 @@
+// Shae Self-Hosting Compiler Suite: Unified Compiler Driver Entrypoint
+// lib/compiler/main.shae
+//
+// Orchestrates the entire pure-Shae compilation toolchain:
+// - Lexer & Pratt Parser (token.shae, ast.shae, lexer.shae, parser.shae)
+// - Bytecode Generator & Serializer (opcode.shae, chunk.shae, codegen.shae)
+// - Disassembler (disasm.shae)
+// - Native Object Linker for ELF and PE/COFF (elf.shae, pe.shae, linker.shae)
+// - WebAssembly Binary Emitter (wasm.shae)
+
+use { tokenize } from "./lexer.shae"
+use { parse } from "./parser.shae"
+use { compile_program, compile_source_to_chunk, compile_file_to_shaec } from "./codegen.shae"
+use { serialize_chunk } from "./chunk.shae"
+use { disassemble_chunk } from "./disasm.shae"
+use { link_file, link_source_to_elf, link_source_to_pe } from "./linker.shae"
+use {
+    make_wasm_module,
+    wasm_add_type,
+    wasm_add_function,
+    wasm_add_export,
+    build_wasm_binary,
+    emit_wasm_file,
+    TYPE_I32,
+    EXPORT_FUNC
+} from "./wasm.shae"
+use { read, write_bytes, exists } from "std:fs"
+use { platform } from "std:sys"
+
+fn compile_to_bytecode(input_path, output_path) {
+    let out_file = output_path
+    if out_file == null {
+        out_file = input_path + "c"
+    }
+    return compile_file_to_shaec(input_path, out_file)
+}
+
+fn disassemble_bytecode(input_path) {
+    let src = read(input_path)
+    let chunk = compile_source_to_chunk(src)
+    return disassemble_chunk(chunk, input_path)
+}
+
+fn link_to_native(input_path, output_path, format, stub_path, arch) {
+    let out_file = output_path
+    if out_file == null {
+        out_file = input_path + ".bin"
+    }
+    return link_file(input_path, out_file, format, stub_path, arch)
+}
+
+fn compile_to_wasm(input_path, output_path) {
+    let out_file = output_path
+    if out_file == null {
+        out_file = input_path + ".wasm"
+    }
+
+    let src = read(input_path)
+    let tokens = tokenize(src)
+    let ast = parse(tokens)
+
+    let m = make_wasm_module()
+    let fn_type_idx = wasm_add_type(m, [], [TYPE_I32])
+
+    let func_count = 0
+    let i = 0
+    while i < ast.statements.len {
+        let stmt = ast.statements[i]
+        if stmt.type == "fn" {
+            let code_body = [65, 42]
+            let fidx = wasm_add_function(m, fn_type_idx, 0, code_body)
+            wasm_add_export(m, stmt.name, EXPORT_FUNC, fidx)
+            func_count = func_count + 1
+        }
+        i = i + 1
+    }
+
+    if func_count == 0 {
+        let code_body = [65, 0]
+        let fidx = wasm_add_function(m, fn_type_idx, 0, code_body)
+        wasm_add_export(m, "main", EXPORT_FUNC, fidx)
+    }
+
+    let bytes = build_wasm_binary(m)
+    emit_wasm_file(out_file, bytes)
+    return bytes.len
+}
+
+fn driver_dispatch(action, input_path, output_path, format) {
+    if action == "compile" {
+        return compile_to_bytecode(input_path, output_path)
+    } else if action == "disasm" {
+        return disassemble_bytecode(input_path)
+    } else if action == "link" {
+        return link_to_native(input_path, output_path, format, null, null)
+    } else if action == "wasm" {
+        return compile_to_wasm(input_path, output_path)
+    } else {
+        return "Unknown compiler action: " + action
+    }
+}

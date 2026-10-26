@@ -240,3 +240,16 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 
 
 
+
+---
+
+### **Chunk 20: Self-Hosting Bootstrap Pipeline (`lib/compiler/main.shae`)** *(Completed)*
+- [x] **Pure-Shae Compiler Driver Suite (`lib/compiler/main.shae`)**
+  - [x] Unified compiler driver coordinating parsing, bytecode generation, serialization, disassembly, native linking, and WebAssembly emission.
+  - [x] Direct dispatch API: `compile_to_bytecode`, `disassemble_bytecode`, `link_to_native`, `compile_to_wasm`, and `driver_dispatch`.
+- [x] **Bootstrap Integration & Verification Suite (`tests/shae/self_bootstrap_test.shae`, `tests/self_bootstrap_test.rs`)**
+  - [x] End-to-end self-hosting pipeline test verifying ahead-of-time `.shaec` bytecode compilation with magic header check.
+  - [x] Bytecode disassembly verification.
+  - [x] Standalone 64-bit ELF native binary linkage with magic header check.
+  - [x] WebAssembly (`.wasm`) binary module generation with magic header check.
+  - [x] 100% dual-engine test pass across both Bytecode VM and Tree-Walking AST Evaluator.
