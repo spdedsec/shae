@@ -40,6 +40,7 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "unicode" => Ok(build_unicode_module()),
         "actor" | "actors" => Ok(build_actor_module()),
         "actor:cluster" | "cluster" => Ok(build_cluster_module()),
+        "async" => Ok(build_async_module()),
         _ => Err(RuntimeError::new(format!(
             "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster",
             clean_name
@@ -4119,5 +4120,232 @@ fn cluster_stop(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
             ))
             .at(span)),
         }
+    }
+}
+
+// -------------------------------------------------------------
+// std:async
+// -------------------------------------------------------------
+pub fn build_async_module() -> Value {
+    make_map(vec![
+        ("spawn", async_spawn),
+        ("all", async_all),
+        ("join_all", async_all),
+        ("race", async_race),
+        ("race_all", async_race),
+        ("sleep", async_sleep),
+        ("timeout", async_timeout),
+        ("is_done", async_is_done),
+        ("is_finished", async_is_done),
+        ("status", async_status),
+        ("result", async_result),
+    ])
+}
+
+fn async_spawn(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(
+            RuntimeError::new("async.spawn() expects at least 1 callable argument".into()).at(span),
+        );
+    }
+    let func = args[0].clone();
+    let call_args: Vec<Value> = args[1..].to_vec();
+    let env = ev.global_env.clone();
+    let handle = std::thread::spawn(move || {
+        let mut spawn_eval = Evaluator::with_env(env);
+        spawn_eval.call_value(&func, call_args, span)
+    });
+    Ok(Value::Task(Arc::new(std::sync::Mutex::new(
+        crate::value::TaskInner::new(handle),
+    ))))
+}
+
+fn async_sleep(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(
+            RuntimeError::new("async.sleep() expects milliseconds duration".into()).at(span),
+        );
+    }
+    let ms = match &args[0] {
+        Value::Int(n) if *n >= 0 => *n as u64,
+        Value::Float(f) if *f >= 0.0 => *f as u64,
+        Value::Number(n) if *n >= 0.0 => *n as u64,
+        other => {
+            return Err(RuntimeError::new(format!(
+                "async.sleep() expects non-negative number, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    let handle = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(ms));
+        Ok(Value::Int(ms as i64))
+    });
+    Ok(Value::Task(Arc::new(std::sync::Mutex::new(
+        crate::value::TaskInner::new(handle),
+    ))))
+}
+
+fn async_all(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Ok(Value::Array(Arc::new(RwLock::new(Vec::new()))));
+    }
+    let tasks_val = &args[0];
+    let task_list: Vec<Value> = match tasks_val {
+        Value::Array(arr) => arr.read().unwrap().clone(),
+        _ => {
+            return Err(RuntimeError::new("async.all() expects an array of tasks".into()).at(span));
+        }
+    };
+    let mut results = Vec::with_capacity(task_list.len());
+    for item in task_list {
+        match item {
+            Value::Task(t) => {
+                let mut guard = t.lock().unwrap();
+                let res = guard.join().map_err(|e| e.or_at(span))?;
+                results.push(res);
+            }
+            other => {
+                results.push(other);
+            }
+        }
+    }
+    Ok(Value::Array(Arc::new(RwLock::new(results))))
+}
+
+fn async_race(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(RuntimeError::new("async.race() expects an array of tasks".into()).at(span));
+    }
+    let task_list: Vec<Value> = match &args[0] {
+        Value::Array(arr) => arr.read().unwrap().clone(),
+        _ => {
+            return Err(RuntimeError::new("async.race() expects an array of tasks".into()).at(span));
+        }
+    };
+    if task_list.is_empty() {
+        return Ok(Value::Null);
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    for item in task_list {
+        match item {
+            Value::Task(t) => {
+                let tx_clone = tx.clone();
+                std::thread::spawn(move || {
+                    let mut guard = t.lock().unwrap();
+                    let res = guard.join();
+                    let _ = tx_clone.send(res);
+                });
+            }
+            other => {
+                return Ok(other);
+            }
+        }
+    }
+    drop(tx);
+    match rx.recv() {
+        Ok(Ok(val)) => Ok(val),
+        Ok(Err(e)) => Err(e.or_at(span)),
+        Err(_) => Err(RuntimeError::new("All raced tasks failed or disconnected".into()).at(span)),
+    }
+}
+
+fn async_timeout(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() < 2 {
+        return Err(
+            RuntimeError::new("async.timeout(ms, task) expects 2 arguments".into()).at(span),
+        );
+    }
+    let ms = match &args[0] {
+        Value::Int(n) if *n >= 0 => *n as u64,
+        Value::Float(f) if *f >= 0.0 => *f as u64,
+        Value::Number(n) if *n >= 0.0 => *n as u64,
+        other => {
+            return Err(RuntimeError::new(format!(
+                "async.timeout() ms must be a number, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    let target = args[1].clone();
+    match target {
+        Value::Task(t) => {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let t_clone = Arc::clone(&t);
+            std::thread::spawn(move || {
+                let mut guard = t_clone.lock().unwrap();
+                let res = guard.join();
+                let _ = tx.send(res);
+            });
+            match rx.recv_timeout(Duration::from_millis(ms)) {
+                Ok(Ok(val)) => Ok(val),
+                Ok(Err(e)) => Err(e.or_at(span)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    Err(RuntimeError::new(format!("Operation timed out after {}ms", ms)).at(span))
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    Err(RuntimeError::new("Task panicked or disconnected".into()).at(span))
+                }
+            }
+        }
+        other => Ok(other),
+    }
+}
+
+fn async_is_done(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(RuntimeError::new("async.is_done(task) expects 1 argument".into()).at(span));
+    }
+    match &args[0] {
+        Value::Task(t) => {
+            let guard = t.lock().unwrap();
+            Ok(Value::Bool(guard.is_finished()))
+        }
+        _ => Ok(Value::Bool(true)),
+    }
+}
+
+fn async_status(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(RuntimeError::new("async.status(task) expects 1 argument".into()).at(span));
+    }
+    match &args[0] {
+        Value::Task(t) => {
+            let guard = t.lock().unwrap();
+            let s = if let Some(ref res) = guard.cached_result {
+                match res {
+                    Ok(_) => "completed",
+                    Err(_) => "failed",
+                }
+            } else if guard.is_finished() {
+                "completed"
+            } else {
+                "pending"
+            };
+            Ok(Value::String(s.to_string()))
+        }
+        _ => Ok(Value::String("completed".into())),
+    }
+}
+
+fn async_result(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(RuntimeError::new("async.result(task) expects 1 argument".into()).at(span));
+    }
+    match &args[0] {
+        Value::Task(t) => {
+            let guard = t.lock().unwrap();
+            if let Some(ref res) = guard.cached_result {
+                match res {
+                    Ok(v) => Ok(v.clone()),
+                    Err(e) => Err(e.clone().or_at(span)),
+                }
+            } else {
+                Ok(Value::Null)
+            }
+        }
+        other => Ok(other.clone()),
     }
 }

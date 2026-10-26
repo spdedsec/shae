@@ -1469,6 +1469,33 @@ impl VM {
                                 );
                             }
                         }
+                        Value::Task(ref _t) => {
+                            if matches!(
+                                property.as_str(),
+                                "join"
+                                    | "wait"
+                                    | "is_done"
+                                    | "is_finished"
+                                    | "isDone"
+                                    | "isFinished"
+                                    | "is_ready"
+                                    | "isReady"
+                                    | "status"
+                                    | "result"
+                            ) {
+                                self.stack.push(Value::BoundMethod {
+                                    object: Box::new(target.clone()),
+                                    method: property,
+                                });
+                            } else if is_safe {
+                                self.stack.push(Value::Null);
+                            } else {
+                                runtime_error!(
+                                    self,
+                                    format!("Task has no property or method '{}'", property)
+                                );
+                            }
+                        }
                         Value::Actor(ref _act) => {
                             if matches!(
                                 property.as_str(),
@@ -2176,8 +2203,9 @@ impl VM {
                                         }
                                     }
                                 });
-                                self.stack
-                                    .push(Value::Task(Arc::new(Mutex::new(Some(handle)))));
+                                self.stack.push(Value::Task(Arc::new(Mutex::new(
+                                    crate::value::TaskInner::new(handle),
+                                ))));
                                 continue;
                             }
                             if let Some(res) = self.try_exec_jit(&closure.function, callee_slot) {
@@ -2252,8 +2280,9 @@ impl VM {
                                         }
                                     }
                                 });
-                                self.stack
-                                    .push(Value::Task(Arc::new(Mutex::new(Some(handle)))));
+                                self.stack.push(Value::Task(Arc::new(Mutex::new(
+                                    crate::value::TaskInner::new(handle),
+                                ))));
                                 continue;
                             }
                             if let Some(res) = self.try_exec_jit(&closure.function, callee_slot) {
@@ -2494,7 +2523,9 @@ impl VM {
                                         }
                                     }
                                 });
-                                let val = Value::Task(Arc::new(Mutex::new(Some(handle))));
+                                let val = Value::Task(Arc::new(Mutex::new(
+                                    crate::value::TaskInner::new(handle),
+                                )));
                                 if has_try {
                                     self.stack.push(val);
                                 } else {
@@ -2607,7 +2638,9 @@ impl VM {
                                         }
                                     }
                                 });
-                                let val = Value::Task(Arc::new(Mutex::new(Some(handle))));
+                                let val = Value::Task(Arc::new(Mutex::new(
+                                    crate::value::TaskInner::new(handle),
+                                )));
                                 if has_try {
                                     self.stack.push(val);
                                 } else {
@@ -3002,20 +3035,13 @@ impl VM {
                     match val {
                         Value::Task(t) => {
                             let mut guard = t.lock().unwrap();
-                            if let Some(handle) = guard.take() {
-                                match handle.join() {
-                                    Ok(Ok(resolved)) => {
-                                        self.stack.push(resolved);
-                                    }
-                                    Ok(Err(e)) => {
-                                        runtime_error!(self, e.message);
-                                    }
-                                    Err(_) => {
-                                        runtime_error!(self, "Async task panicked");
-                                    }
+                            match guard.join() {
+                                Ok(resolved) => {
+                                    self.stack.push(resolved);
                                 }
-                            } else {
-                                runtime_error!(self, "Task already awaited or joined");
+                                Err(e) => {
+                                    runtime_error!(self, e.message);
+                                }
                             }
                         }
                         other => {

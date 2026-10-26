@@ -1357,7 +1357,9 @@ fn builtin_spawn(
         let mut spawn_eval = Evaluator::with_env(env);
         spawn_eval.call_value(&func, vec![], span)
     });
-    Ok(Value::Task(Arc::new(std::sync::Mutex::new(Some(handle)))))
+    Ok(Value::Task(Arc::new(std::sync::Mutex::new(
+        crate::value::TaskInner::new(handle),
+    ))))
 }
 
 fn builtin_join(
@@ -1369,15 +1371,7 @@ fn builtin_join(
     match &args[0] {
         Value::Task(t) => {
             let mut guard = t.lock().unwrap();
-            if let Some(handle) = guard.take() {
-                match handle.join() {
-                    Ok(Ok(val)) => Ok(val),
-                    Ok(Err(e)) => Err(e),
-                    Err(_) => Err(RuntimeError::new("Spawned task panicked".into()).at(span)),
-                }
-            } else {
-                Ok(Value::Null)
-            }
+            guard.join().map_err(|e| e.or_at(span))
         }
         other => Err(RuntimeError::new(format!(
             "join() expects a task, got {}",

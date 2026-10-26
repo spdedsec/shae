@@ -1,0 +1,150 @@
+// tests/shae/async_coroutine_test.shae
+// First-Class async / await Coroutines and std:async Test Suite
+
+use { spawn, all, race, sleep, timeout, is_done, status, result } from "std:async"
+
+println("=== Testing Shae Milestone 3: First-Class async / await Coroutines ===")
+
+// ---------------------------------------------------------------------------
+// 1. Basic async fn and await
+// ---------------------------------------------------------------------------
+println("\n[1] Testing basic async fn declaration and await expression...")
+
+async fn calculate_square(x) {
+    return x * x
+}
+
+let task_sq = calculate_square(12)
+let val_sq = await task_sq
+println("   [✓] calculate_square(12) => ", val_sq)
+if val_sq != 144 {
+    println("FAILED: Expected 144, got ", val_sq)
+    return 1
+}
+
+// ---------------------------------------------------------------------------
+// 2. Multiple awaits on the same task (cached result idempotency)
+// ---------------------------------------------------------------------------
+println("\n[2] Testing repeated await idempotency (cached resolution)...")
+let repeat_a = await task_sq
+let repeat_b = await task_sq
+println("   [✓] Repeated await: ", repeat_a, " == ", repeat_b)
+if repeat_a != 144 or repeat_b != 144 {
+    println("FAILED: Idempotent await returned unexpected value")
+    return 1
+}
+
+// ---------------------------------------------------------------------------
+// 3. First-Class Task Methods: is_done(), status(), result(), join()
+// ---------------------------------------------------------------------------
+println("\n[3] Testing first-class Task instance methods...")
+
+async fn delayed_message() {
+    return "shae_coroutine_ok"
+}
+
+let t_msg = delayed_message()
+let res_joined = t_msg.join()
+println("   [✓] t_msg.join() => ", res_joined)
+if res_joined != "shae_coroutine_ok" {
+    println("FAILED: Expected 'shae_coroutine_ok', got ", res_joined)
+    return 1
+}
+
+let done_flag = t_msg.is_done()
+let stat_str = t_msg.status()
+let cached_val = t_msg.result()
+println("   [✓] t_msg.is_done() => ", done_flag)
+println("   [✓] t_msg.status() => ", stat_str)
+println("   [✓] t_msg.result() => ", cached_val)
+
+if not done_flag or stat_str != "completed" or cached_val != "shae_coroutine_ok" {
+    println("FAILED: Task methods returned unexpected status")
+    return 1
+}
+
+// ---------------------------------------------------------------------------
+// 4. std:async::spawn (anonymous callable execution)
+// ---------------------------------------------------------------------------
+println("\n[4] Testing std:async::spawn with custom callable closures...")
+
+fn compute_fib(n) {
+    if n <= 1 {
+        return n
+    }
+    return compute_fib(n - 1) + compute_fib(n - 2)
+}
+
+let task_fib = spawn(compute_fib, 10)
+let fib_res = await task_fib
+println("   [✓] spawn(compute_fib, 10) => ", fib_res)
+if fib_res != 55 {
+    println("FAILED: Expected fib(10) == 55, got ", fib_res)
+    return 1
+}
+
+// ---------------------------------------------------------------------------
+// 5. std:async::sleep
+// ---------------------------------------------------------------------------
+println("\n[5] Testing std:async::sleep coroutine timer...")
+let sleep_task = sleep(10)
+let sleep_res = await sleep_task
+println("   [✓] sleep(10) resumed successfully")
+
+// ---------------------------------------------------------------------------
+// 6. std:async::all (join_all concurrent aggregation)
+// ---------------------------------------------------------------------------
+println("\n[6] Testing std:async::all concurrent aggregation...")
+
+async fn worker_job(id, factor) {
+    return id * factor
+}
+
+let t1 = worker_job(10, 2)
+let t2 = worker_job(20, 3)
+let t3 = worker_job(30, 4)
+
+let all_results = all([t1, t2, t3])
+println("   [✓] all([t1, t2, t3]) => ", all_results)
+
+if all_results.len != 3 or all_results[0] != 20 or all_results[1] != 60 or all_results[2] != 120 {
+    println("FAILED: all() aggregation failed")
+    return 1
+}
+
+// ---------------------------------------------------------------------------
+// 7. std:async::race (first-completion winner)
+// ---------------------------------------------------------------------------
+println("\n[7] Testing std:async::race concurrent selection...")
+
+async fn quick_worker() {
+    return "fast_result"
+}
+
+async fn slow_worker() {
+    let ignored = await sleep(50)
+    return "slow_result"
+}
+
+let race_res = race([quick_worker(), slow_worker()])
+println("   [✓] race([quick, slow]) winner => ", race_res)
+if race_res != "fast_result" {
+    println("FAILED: Expected 'fast_result', got ", race_res)
+    return 1
+}
+
+// ---------------------------------------------------------------------------
+// 8. std:async::timeout
+// ---------------------------------------------------------------------------
+println("\n[8] Testing std:async::timeout enforcement...")
+
+let quick_task = quick_worker()
+let timeout_ok = timeout(500, quick_task)
+println("   [✓] timeout(500, quick_task) => ", timeout_ok)
+if timeout_ok != "fast_result" {
+    println("FAILED: timeout() failed to return quick result")
+    return 1
+}
+
+println("\n=== All First-Class async / await Coroutine Tests Passed! ===")
+return 0

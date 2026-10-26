@@ -1,3 +1,61 @@
+/// State container for an asynchronous task or coroutine handle.
+pub struct TaskInner {
+    pub handle: Option<std::thread::JoinHandle<Result<Value, crate::eval::RuntimeError>>>,
+    pub cached_result: Option<Result<Value, crate::eval::RuntimeError>>,
+}
+
+impl TaskInner {
+    pub fn new(handle: std::thread::JoinHandle<Result<Value, crate::eval::RuntimeError>>) -> Self {
+        Self {
+            handle: Some(handle),
+            cached_result: None,
+        }
+    }
+
+    pub fn completed(val: Value) -> Self {
+        Self {
+            handle: None,
+            cached_result: Some(Ok(val)),
+        }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        if self.cached_result.is_some() {
+            true
+        } else if let Some(ref h) = self.handle {
+            h.is_finished()
+        } else {
+            true
+        }
+    }
+
+    pub fn join(&mut self) -> Result<Value, crate::eval::RuntimeError> {
+        if let Some(ref res) = self.cached_result {
+            return res.clone();
+        }
+        if let Some(h) = self.handle.take() {
+            let res = match h.join() {
+                Ok(r) => r,
+                Err(_) => Err(crate::eval::RuntimeError::new(
+                    "Async task panicked".to_string(),
+                )),
+            };
+            self.cached_result = Some(res.clone());
+            res
+        } else {
+            Err(crate::eval::RuntimeError::new(
+                "Task already awaited or joined".to_string(),
+            ))
+        }
+    }
+}
+
+impl fmt::Debug for TaskInner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TaskInner(finished={})", self.is_finished())
+    }
+}
+
 use crate::ast::Stmt;
 use crate::chunk::Chunk;
 use crate::env::Environment;
@@ -179,7 +237,7 @@ pub enum Value {
         variant_name: String,
         values: Vec<Value>,
     },
-    Task(Arc<Mutex<Option<std::thread::JoinHandle<Result<Value, RuntimeError>>>>>),
+    Task(Arc<Mutex<crate::value::TaskInner>>),
     Channel(Arc<crate::channel::Channel>),
     FfiLibrary(Arc<crate::ffi::DynamicLibrary>),
     FfiFunction(Arc<crate::ffi::DynamicFunction>),

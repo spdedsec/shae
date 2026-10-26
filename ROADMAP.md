@@ -274,3 +274,20 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
   - [x] mTLS mutual certificate authentication and synchronous ask verification.
   - [x] Untrusted rogue peer handshake rejection verification.
   - [x] 100% dual-engine test pass across both Bytecode VM and Tree-Walking AST Evaluator.
+
+---
+
+### **Chunk 22: First-Class `async` / `await` Coroutines (`std:async`)** *(Completed)*
+- [x] **First-Class Task Lifecycle & Idempotent Awaiting (`src/value.rs`, `TaskInner`)**
+  - [x] Thread-safe `TaskInner` container supporting repeated idempotent awaiting without "already awaited" panics.
+  - [x] First-class Task instance methods: `task.join()`, `task.wait()`, `task.is_done()`, `task.status()`, and `task.result()`.
+  - [x] State inspection transitions: `"pending"`, `"completed"`, and `"failed"`.
+- [x] **Standard Asynchronous Runtime Library (`std:async`)**
+  - [x] `async.spawn(fn, ...args)`: Spawns arbitrary callables or closures as background coroutine tasks.
+  - [x] `async.all(tasks)`: Concurrently aggregates multiple tasks and resolves to an array of results.
+  - [x] `async.race(tasks)`: Selects the earliest completing coroutine task.
+  - [x] `async.sleep(ms)`: Non-blocking coroutine sleep timer.
+  - [x] `async.timeout(ms, task)`: Deadline enforcement and timeout handling for async tasks.
+  - [x] Non-blocking completion predicates: `async.is_done(task)` and `async.status(task)`.
+- [x] **Dual-Engine Test Verification Suite (`tests/shae/async_coroutine_test.shae`, `tests/async_coroutine_test.rs`)**
+  - [x] 100% test pass on both Tree-Walking AST Evaluator and Bytecode Stack VM.

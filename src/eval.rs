@@ -27,7 +27,7 @@ fn to_f64_val(v: &Value) -> Option<f64> {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub struct RuntimeError {
     pub message: String,
     pub hint: Option<String>,
@@ -1247,22 +1247,9 @@ impl Evaluator {
             Expr::Await { expr, span } => {
                 let val = self.eval_expr(expr, env).map_err(|e| e.or_at(*span))?;
                 match val {
-                    Value::Task(handle_ref) => {
-                        let mut opt_handle = handle_ref.lock().unwrap();
-                        if let Some(handle) = opt_handle.take() {
-                            match handle.join() {
-                                Ok(res) => res.map_err(|e| e.or_at(*span)),
-                                Err(_) => {
-                                    Err(RuntimeError::new("Async task panicked".to_string())
-                                        .at(*span))
-                                }
-                            }
-                        } else {
-                            Err(
-                                RuntimeError::new("Task already awaited or joined".to_string())
-                                    .at(*span),
-                            )
-                        }
+                    Value::Task(task_ref) => {
+                        let mut guard = task_ref.lock().unwrap();
+                        guard.join().map_err(|e| e.or_at(*span))
                     }
                     other => Ok(other),
                 }
@@ -1497,7 +1484,19 @@ impl Evaluator {
                         }
                     }
                     Value::Task(t) => {
-                        if property == "join" || property == "wait" {
+                        if matches!(
+                            property.as_str(),
+                            "join"
+                                | "wait"
+                                | "is_done"
+                                | "is_finished"
+                                | "isDone"
+                                | "isFinished"
+                                | "is_ready"
+                                | "isReady"
+                                | "status"
+                                | "result"
+                        ) {
                             Ok(Some(Value::BoundMethod {
                                 object: Box::new(Value::Task(t.clone())),
                                 method: property.clone(),
@@ -1893,7 +1892,9 @@ impl Evaluator {
                             Err(e) => Err(e),
                         }
                     });
-                    return Ok(Value::Task(Arc::new(std::sync::Mutex::new(Some(handle)))));
+                    return Ok(Value::Task(Arc::new(std::sync::Mutex::new(
+                        crate::value::TaskInner::new(handle),
+                    ))));
                 }
                 let call_env = Arc::new(RwLock::new(Environment::new_with_parent(closure.clone())));
                 for (param_name, arg_val) in params.iter().zip(args) {
@@ -1940,7 +1941,9 @@ impl Evaluator {
                             }
                         }
                     });
-                    return Ok(Value::Task(Arc::new(std::sync::Mutex::new(Some(handle)))));
+                    return Ok(Value::Task(Arc::new(std::sync::Mutex::new(
+                        crate::value::TaskInner::new(handle),
+                    ))));
                 }
                 let mut vm = crate::vm::VM::new();
                 vm.current_file = self.current_file.clone();
@@ -1983,7 +1986,9 @@ impl Evaluator {
                             }
                         }
                     });
-                    return Ok(Value::Task(Arc::new(std::sync::Mutex::new(Some(handle)))));
+                    return Ok(Value::Task(Arc::new(std::sync::Mutex::new(
+                        crate::value::TaskInner::new(handle),
+                    ))));
                 }
                 let mut vm = crate::vm::VM::new();
                 vm.current_file = self.current_file.clone();
@@ -2811,13 +2816,36 @@ impl Evaluator {
                     }
                     (Value::Task(t), "join") | (Value::Task(t), "wait") => {
                         let mut guard = t.lock().unwrap();
-                        if let Some(handle) = guard.take() {
-                            match handle.join() {
-                                Ok(Ok(val)) => Ok(val),
-                                Ok(Err(e)) => Err(e),
-                                Err(_) => {
-                                    Err(RuntimeError::new("Spawned task panicked".into()).at(span))
-                                }
+                        guard.join().map_err(|e| e.or_at(span))
+                    }
+                    (
+                        Value::Task(t),
+                        "is_done" | "is_finished" | "isDone" | "isFinished" | "is_ready"
+                        | "isReady",
+                    ) => {
+                        let guard = t.lock().unwrap();
+                        Ok(Value::Bool(guard.is_finished()))
+                    }
+                    (Value::Task(t), "status") => {
+                        let guard = t.lock().unwrap();
+                        let s = if let Some(ref res) = guard.cached_result {
+                            match res {
+                                Ok(_) => "completed",
+                                Err(_) => "failed",
+                            }
+                        } else if guard.is_finished() {
+                            "completed"
+                        } else {
+                            "pending"
+                        };
+                        Ok(Value::String(s.to_string()))
+                    }
+                    (Value::Task(t), "result") => {
+                        let guard = t.lock().unwrap();
+                        if let Some(ref res) = guard.cached_result {
+                            match res {
+                                Ok(v) => Ok(v.clone()),
+                                Err(e) => Err(e.clone().or_at(span)),
                             }
                         } else {
                             Ok(Value::Null)
