@@ -1534,6 +1534,8 @@ impl VM {
                                     | "stop"
                                     | "is_alive"
                                     | "isAlive"
+                                    | "is_tls"
+                                    | "isTls"
                                     | "name"
                                     | "address"
                             ) {

@@ -1,14 +1,16 @@
 //! Distributed Actor Mesh (`src/actor_cluster.rs`)
 //!
-//! Provides TCP-based network clustering with cross-node actor discovery,
-//! message routing (asynchronous send and synchronous ask), request-response correlation,
-//! broadcast channels, and Erlang/OTP-style cluster node meshes.
+//! Provides TCP/TLS-based network clustering with cross-node actor discovery,
+//! mutual-TLS (mTLS) transport security, message routing (asynchronous send and synchronous ask),
+//! request-response correlation, broadcast channels, and Erlang/OTP-style cluster node meshes.
 
 use crate::actor::{ActorError, ActorRef, ActorRegistry};
 use crate::ast::Span;
 use crate::channel::Channel;
 use crate::eval::Evaluator;
 use crate::value::Value;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+use rustls::{ClientConfig, RootCertStore, ServerConfig, StreamOwned};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -47,7 +49,43 @@ pub fn read_frame<R: Read>(reader: &mut R) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// Wire protocol envelopes exchanged across cluster nodes over TCP.
+/// Adaptive wire frame reading for non-blocking worker loops.
+/// Polls for the first byte using a short timeout (e.g. 2ms), then switches to
+/// a standard 10s timeout to read the complete frame payload before restoring the short timeout.
+pub fn read_frame_adaptive(transport: &mut ClusterTransport) -> std::io::Result<Vec<u8>> {
+    let mut len_buf = [0u8; 4];
+    let mut first = [0u8; 1];
+    let n = transport.read(&mut first)?;
+    if n == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "Connection closed by peer",
+        ));
+    }
+    len_buf[0] = first[0];
+
+    // Data is incoming: switch temporarily to 10s timeout to complete frame read
+    let _ = transport.set_read_timeout(Some(Duration::from_secs(10)));
+    let res = (|| -> std::io::Result<Vec<u8>> {
+        transport.read_exact(&mut len_buf[1..4])?;
+        let len = u32::from_be_bytes(len_buf) as usize;
+        if len > 64 * 1024 * 1024 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Frame size exceeds 64MB limit",
+            ));
+        }
+        let mut buf = vec![0u8; len];
+        transport.read_exact(&mut buf)?;
+        Ok(buf)
+    })();
+
+    // Restore 2ms timeout
+    let _ = transport.set_read_timeout(Some(Duration::from_millis(2)));
+    res
+}
+
+/// Wire protocol envelopes exchanged across cluster nodes over TCP/TLS.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub enum ClusterWireMsg {
@@ -96,13 +134,245 @@ pub enum ClusterWireMsg {
     },
 }
 
+// ---------------------------------------------------------------------------
+// TLS & mTLS Transport Support
+// ---------------------------------------------------------------------------
+
+/// Loads certificates from an inline PEM string or a file path on disk.
+pub fn load_certs(input: &str) -> std::io::Result<Vec<CertificateDer<'static>>> {
+    let mut reader: Box<dyn std::io::BufRead> = if input.contains("-----BEGIN CERTIFICATE-----") {
+        Box::new(std::io::BufReader::new(input.as_bytes()))
+    } else {
+        Box::new(std::io::BufReader::new(std::fs::File::open(input)?))
+    };
+    rustls_pemfile::certs(&mut reader)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+}
+
+/// Loads a private key from an inline PEM string or a file path on disk.
+pub fn load_key(input: &str) -> std::io::Result<PrivateKeyDer<'static>> {
+    let mut reader: Box<dyn std::io::BufRead> = if input.contains("PRIVATE KEY-----") {
+        Box::new(std::io::BufReader::new(input.as_bytes()))
+    } else {
+        Box::new(std::io::BufReader::new(std::fs::File::open(input)?))
+    };
+    rustls_pemfile::private_key(&mut reader)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "No private key found"))
+}
+
+/// Custom certificate verifier allowing unverified/self-signed server certificates (when verify_peer is false).
+#[derive(Debug)]
+pub struct NoCertVerification(pub Arc<rustls::crypto::CryptoProvider>);
+
+impl rustls::client::danger::ServerCertVerifier for NoCertVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+/// TLS & Mutual-TLS configuration for encrypted cluster meshes.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClusterTlsConfig {
+    /// Node certificate in PEM format or path to file
+    pub cert: String,
+    /// Node private key in PEM format or path to file
+    pub key: String,
+    /// Optional CA certificate in PEM format or path to file for verifying peers / client mTLS
+    pub ca: Option<String>,
+    /// Whether to require and verify peer certificates (defaults to true if ca is provided)
+    pub verify_peer: Option<bool>,
+    /// Optional domain name (SNI) to use when connecting to a remote peer (defaults to host or "localhost")
+    pub server_name: Option<String>,
+}
+
+impl ClusterTlsConfig {
+    pub fn build_server_config(&self) -> Result<Arc<ServerConfig>, ActorError> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let certs = load_certs(&self.cert).map_err(|e| {
+            ActorError::EvaluationError(format!("Failed to load TLS server cert: {}", e))
+        })?;
+        let key = load_key(&self.key).map_err(|e| {
+            ActorError::EvaluationError(format!("Failed to load TLS server key: {}", e))
+        })?;
+
+        let should_verify_client =
+            self.verify_peer.unwrap_or(self.ca.is_some()) && self.ca.is_some();
+
+        let builder = if should_verify_client {
+            let ca_str = self.ca.as_ref().unwrap();
+            let ca_certs = load_certs(ca_str).map_err(|e| {
+                ActorError::EvaluationError(format!("Failed to load TLS CA cert: {}", e))
+            })?;
+            let mut root_store = RootCertStore::empty();
+            for c in ca_certs {
+                root_store.add(c).map_err(|e| {
+                    ActorError::EvaluationError(format!(
+                        "Failed to add CA cert to root store: {}",
+                        e
+                    ))
+                })?;
+            }
+            let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store))
+                .build()
+                .map_err(|e| {
+                    ActorError::EvaluationError(format!("Failed to build client verifier: {}", e))
+                })?;
+            ServerConfig::builder().with_client_cert_verifier(verifier)
+        } else {
+            ServerConfig::builder().with_no_client_auth()
+        };
+
+        let config = builder
+            .with_single_cert(certs, key)
+            .map_err(|e| ActorError::EvaluationError(format!("TLS server config error: {}", e)))?;
+
+        Ok(Arc::new(config))
+    }
+
+    pub fn build_client_config(&self) -> Result<Arc<ClientConfig>, ActorError> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let should_verify = self.verify_peer.unwrap_or(true);
+
+        let builder = if let Some(ref ca_str) = self.ca {
+            let ca_certs = load_certs(ca_str).map_err(|e| {
+                ActorError::EvaluationError(format!("Failed to load TLS CA cert: {}", e))
+            })?;
+            let mut root_store = RootCertStore::empty();
+            for c in ca_certs {
+                root_store.add(c).map_err(|e| {
+                    ActorError::EvaluationError(format!(
+                        "Failed to add CA cert to root store: {}",
+                        e
+                    ))
+                })?;
+            }
+            ClientConfig::builder().with_root_certificates(root_store)
+        } else if !should_verify {
+            let provider = Arc::new(rustls::crypto::ring::default_provider());
+            ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(NoCertVerification(provider)))
+        } else {
+            let root_store = RootCertStore::empty();
+            ClientConfig::builder().with_root_certificates(root_store)
+        };
+
+        let client_config = if !self.cert.is_empty() && !self.key.is_empty() {
+            let certs = load_certs(&self.cert).map_err(|e| {
+                ActorError::EvaluationError(format!("Failed to load TLS client cert: {}", e))
+            })?;
+            let key = load_key(&self.key).map_err(|e| {
+                ActorError::EvaluationError(format!("Failed to load TLS client key: {}", e))
+            })?;
+            builder.with_client_auth_cert(certs, key).map_err(|e| {
+                ActorError::EvaluationError(format!("TLS client auth config error: {}", e))
+            })?
+        } else {
+            builder.with_no_client_auth()
+        };
+
+        Ok(Arc::new(client_config))
+    }
+}
+
+/// Unified network transport abstraction for plain TCP and TLS-wrapped streams.
+pub enum ClusterTransport {
+    Plain(TcpStream),
+    TlsServer(StreamOwned<rustls::ServerConnection, TcpStream>),
+    TlsClient(StreamOwned<rustls::ClientConnection, TcpStream>),
+}
+
+impl Read for ClusterTransport {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Plain(s) => s.read(buf),
+            Self::TlsServer(s) => s.read(buf),
+            Self::TlsClient(s) => s.read(buf),
+        }
+    }
+}
+
+impl Write for ClusterTransport {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Plain(s) => s.write(buf),
+            Self::TlsServer(s) => s.write(buf),
+            Self::TlsClient(s) => s.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Plain(s) => s.flush(),
+            Self::TlsServer(s) => s.flush(),
+            Self::TlsClient(s) => s.flush(),
+        }
+    }
+}
+
+impl ClusterTransport {
+    pub fn close(&mut self) {
+        match self {
+            Self::Plain(s) => {
+                let _ = s.shutdown(Shutdown::Both);
+            }
+            Self::TlsServer(s) => {
+                let _ = s.sock.shutdown(Shutdown::Both);
+            }
+            Self::TlsClient(s) => {
+                let _ = s.sock.shutdown(Shutdown::Both);
+            }
+        }
+    }
+
+    pub fn set_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        match self {
+            Self::Plain(s) => s.set_read_timeout(timeout),
+            Self::TlsServer(s) => s.sock.set_read_timeout(timeout),
+            Self::TlsClient(s) => s.sock.set_read_timeout(timeout),
+        }
+    }
+}
+
 /// Active connection to an established remote cluster peer.
 pub struct PeerConnection {
     pub node_name: String,
     pub address: String,
-    pub writer: Arc<Mutex<TcpStream>>,
+    pub sender: std::sync::mpsc::Sender<Vec<u8>>,
     pub known_actors: Arc<RwLock<HashSet<String>>>,
     pub is_alive: Arc<AtomicBool>,
+    pub is_tls: bool,
 }
 
 impl PeerConnection {
@@ -113,20 +383,19 @@ impl PeerConnection {
         let serialized = serde_json::to_vec(msg).map_err(|e| {
             ActorError::EvaluationError(format!("Failed to serialize wire message: {}", e))
         })?;
-        let mut guard = self.writer.lock().map_err(|_| {
-            ActorError::EvaluationError("Peer connection write lock poisoned".into())
-        })?;
-        write_frame(&mut *guard, &serialized).map_err(|e| {
+        let len = serialized.len() as u32;
+        let mut frame = Vec::with_capacity(4 + serialized.len());
+        frame.extend_from_slice(&len.to_be_bytes());
+        frame.extend_from_slice(&serialized);
+
+        self.sender.send(frame).map_err(|_| {
             self.is_alive.store(false, Ordering::Relaxed);
-            ActorError::EvaluationError(format!("Failed to write frame to peer: {}", e))
+            ActorError::EvaluationError("Peer connection worker channel disconnected".into())
         })
     }
 
     pub fn close(&self) {
         self.is_alive.store(false, Ordering::Relaxed);
-        if let Ok(guard) = self.writer.lock() {
-            let _ = guard.shutdown(Shutdown::Both);
-        }
     }
 }
 
@@ -210,6 +479,9 @@ pub struct ClusterNode {
     pub bind_address: String,
     actual_address: RwLock<String>,
     pub cookie: Option<String>,
+    pub tls_config: Option<ClusterTlsConfig>,
+    server_tls_config: Option<Arc<ServerConfig>>,
+    client_tls_config: Option<Arc<ClientConfig>>,
     is_stopped: Arc<AtomicBool>,
     listener_thread: Mutex<Option<JoinHandle<()>>>,
     pub peers: Arc<RwLock<HashMap<String, Arc<PeerConnection>>>>,
@@ -219,11 +491,21 @@ pub struct ClusterNode {
 }
 
 impl ClusterNode {
-    /// Starts a new cluster node bound to the specified TCP address.
+    /// Starts a new cluster node bound to the specified TCP address without TLS.
     pub fn start(
         name: impl Into<String>,
         address: impl Into<String>,
         cookie: Option<String>,
+    ) -> Result<Arc<Self>, ActorError> {
+        Self::start_with_tls(name, address, cookie, None)
+    }
+
+    /// Starts a new cluster node with optional TLS / mTLS configuration.
+    pub fn start_with_tls(
+        name: impl Into<String>,
+        address: impl Into<String>,
+        cookie: Option<String>,
+        tls_config: Option<ClusterTlsConfig>,
     ) -> Result<Arc<Self>, ActorError> {
         let name_str = name.into();
         let addr_str = address.into();
@@ -242,11 +524,22 @@ impl ClusterNode {
             .map(|a| a.to_string())
             .unwrap_or_else(|_| addr_str.clone());
 
+        let (server_tls, client_tls) = if let Some(ref tls) = tls_config {
+            let s = tls.build_server_config()?;
+            let c = tls.build_client_config()?;
+            (Some(s), Some(c))
+        } else {
+            (None, None)
+        };
+
         let node = Arc::new(Self {
             name: name_str,
             bind_address: addr_str,
             actual_address: RwLock::new(bound_addr),
             cookie,
+            tls_config,
+            server_tls_config: server_tls,
+            client_tls_config: client_tls,
             is_stopped: Arc::new(AtomicBool::new(false)),
             listener_thread: Mutex::new(None),
             peers: Arc::new(RwLock::new(HashMap::new())),
@@ -288,6 +581,14 @@ impl ClusterNode {
         !self.is_stopped.load(Ordering::Relaxed)
     }
 
+    pub fn is_tls(&self) -> bool {
+        self.tls_config.is_some()
+    }
+
+    pub fn tls_config(&self) -> Option<&ClusterTlsConfig> {
+        self.tls_config.as_ref()
+    }
+
     pub fn is_peer_connected(&self, peer_name: &str) -> bool {
         let guard = self.peers.read().unwrap();
         guard
@@ -302,12 +603,47 @@ impl ClusterNode {
             return Err(ActorError::ActorStopped);
         }
 
-        let mut stream = TcpStream::connect(peer_addr).map_err(|e| {
+        let tcp_stream = TcpStream::connect(peer_addr).map_err(|e| {
             ActorError::EvaluationError(format!(
                 "Failed to connect to cluster peer at '{}': {}",
                 peer_addr, e
             ))
         })?;
+
+        let is_tls = self.client_tls_config.is_some();
+        let mut transport = if let Some(ref client_cfg) = self.client_tls_config {
+            let sni_name = self
+                .tls_config
+                .as_ref()
+                .and_then(|t| t.server_name.clone())
+                .unwrap_or_else(|| {
+                    peer_addr
+                        .split(':')
+                        .next()
+                        .unwrap_or("localhost")
+                        .to_string()
+                });
+
+            let server_name = ServerName::try_from(sni_name.clone()).map_err(|e| {
+                ActorError::EvaluationError(format!(
+                    "Invalid TLS SNI server name '{}': {}",
+                    sni_name, e
+                ))
+            })?;
+
+            let conn = rustls::ClientConnection::new(Arc::clone(client_cfg), server_name).map_err(
+                |e| {
+                    ActorError::EvaluationError(format!(
+                        "Failed to initialize TLS client connection: {}",
+                        e
+                    ))
+                },
+            )?;
+
+            ClusterTransport::TlsClient(StreamOwned::new(conn, tcp_stream))
+        } else {
+            ClusterTransport::Plain(tcp_stream)
+        };
 
         // 1. Send Handshake
         let local_registered = self.registered();
@@ -320,12 +656,12 @@ impl ClusterNode {
         let bytes = serde_json::to_vec(&handshake).map_err(|e| {
             ActorError::EvaluationError(format!("Handshake serialization failed: {}", e))
         })?;
-        write_frame(&mut stream, &bytes).map_err(|e| {
+        write_frame(&mut transport, &bytes).map_err(|e| {
             ActorError::EvaluationError(format!("Failed to write handshake frame: {}", e))
         })?;
 
         // 2. Await HandshakeAck or HandshakeReject
-        let reply_bytes = read_frame(&mut stream).map_err(|e| {
+        let reply_bytes = read_frame(&mut transport).map_err(|e| {
             ActorError::EvaluationError(format!(
                 "Failed to read handshake response from peer: {}",
                 e
@@ -354,16 +690,15 @@ impl ClusterNode {
             }
         };
 
-        let stream_read = stream.try_clone().map_err(|e| {
-            ActorError::EvaluationError(format!("Failed to clone TCP stream for reader: {}", e))
-        })?;
+        let (tx, rx) = std::sync::mpsc::channel();
 
         let peer = Arc::new(PeerConnection {
             node_name: peer_node.clone(),
             address: peer_addr.to_string(),
-            writer: Arc::new(Mutex::new(stream)),
+            sender: tx,
             known_actors: Arc::new(RwLock::new(peer_actors.into_iter().collect())),
             is_alive: Arc::new(AtomicBool::new(true)),
+            is_tls,
         });
 
         {
@@ -371,8 +706,8 @@ impl ClusterNode {
             peers.insert(peer_node.clone(), Arc::clone(&peer));
         }
 
-        // Spawn reader thread for peer
-        self.spawn_peer_reader(stream_read, Arc::clone(&peer));
+        // Spawn connection worker thread
+        self.spawn_connection_worker(transport, rx, Arc::clone(&peer));
 
         Ok(peer)
     }
@@ -459,6 +794,9 @@ impl ClusterNode {
             bind_address: self.bind_address.clone(),
             actual_address: RwLock::new(self.actual_address.read().unwrap().clone()),
             cookie: self.cookie.clone(),
+            tls_config: self.tls_config.clone(),
+            server_tls_config: self.server_tls_config.clone(),
+            client_tls_config: self.client_tls_config.clone(),
             is_stopped: Arc::clone(&self.is_stopped),
             listener_thread: Mutex::new(None),
             peers: Arc::clone(&self.peers),
@@ -716,21 +1054,36 @@ impl ClusterNode {
                 break;
             }
 
-            let mut stream = match stream_res {
+            let stream = match stream_res {
                 Ok(s) => s,
                 Err(_) => continue,
             };
 
             let node_self = Arc::clone(&self);
             thread::spawn(move || {
-                node_self.handle_incoming_connection(&mut stream);
+                node_self.handle_incoming_connection(stream);
             });
         }
     }
 
-    fn handle_incoming_connection(&self, stream: &mut TcpStream) {
+    fn handle_incoming_connection(&self, tcp_stream: TcpStream) {
+        if self.is_stopped.load(Ordering::Relaxed) {
+            return;
+        }
+
+        let is_tls = self.server_tls_config.is_some();
+        let mut transport = if let Some(ref server_cfg) = self.server_tls_config {
+            let conn = match rustls::ServerConnection::new(Arc::clone(server_cfg)) {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+            ClusterTransport::TlsServer(StreamOwned::new(conn, tcp_stream))
+        } else {
+            ClusterTransport::Plain(tcp_stream)
+        };
+
         // Read Handshake
-        let frame = match read_frame(stream) {
+        let frame = match read_frame(&mut transport) {
             Ok(f) => f,
             Err(_) => return,
         };
@@ -752,7 +1105,7 @@ impl ClusterNode {
                     reason: "Expected Handshake message".into(),
                 };
                 if let Ok(bytes) = serde_json::to_vec(&reject) {
-                    let _ = write_frame(stream, &bytes);
+                    let _ = write_frame(&mut transport, &bytes);
                 }
                 return;
             }
@@ -765,36 +1118,11 @@ impl ClusterNode {
                     reason: "Authentication cookie mismatch".into(),
                 };
                 if let Ok(bytes) = serde_json::to_vec(&reject) {
-                    let _ = write_frame(stream, &bytes);
+                    let _ = write_frame(&mut transport, &bytes);
                 }
                 return;
             }
         }
-
-        let stream_read = match stream.try_clone() {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-
-        let stream_write = match stream.try_clone() {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-
-        let peer = Arc::new(PeerConnection {
-            node_name: peer_node.clone(),
-            address: peer_addr,
-            writer: Arc::new(Mutex::new(stream_write)),
-            known_actors: Arc::new(RwLock::new(peer_actors.into_iter().collect())),
-            is_alive: Arc::new(AtomicBool::new(true)),
-        });
-
-        {
-            let mut peers = self.peers.write().unwrap();
-            peers.insert(peer_node, Arc::clone(&peer));
-        }
-
-        self.spawn_peer_reader(stream_read, Arc::clone(&peer));
 
         // Reply with HandshakeAck
         let ack = ClusterWireMsg::HandshakeAck {
@@ -806,164 +1134,230 @@ impl ClusterNode {
             Ok(b) => b,
             Err(_) => return,
         };
-        let _ = write_frame(stream, &ack_bytes);
+        if write_frame(&mut transport, &ack_bytes).is_err() {
+            return;
+        }
+
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let peer = Arc::new(PeerConnection {
+            node_name: peer_node.clone(),
+            address: peer_addr,
+            sender: tx,
+            known_actors: Arc::new(RwLock::new(peer_actors.into_iter().collect())),
+            is_alive: Arc::new(AtomicBool::new(true)),
+            is_tls,
+        });
+
+        {
+            let mut peers = self.peers.write().unwrap();
+            peers.insert(peer_node, Arc::clone(&peer));
+        }
+
+        self.spawn_connection_worker(transport, rx, Arc::clone(&peer));
     }
 
-    fn spawn_peer_reader(&self, mut reader_stream: TcpStream, peer: Arc<PeerConnection>) {
+    fn spawn_connection_worker(
+        &self,
+        mut transport: ClusterTransport,
+        rx: std::sync::mpsc::Receiver<Vec<u8>>,
+        peer: Arc<PeerConnection>,
+    ) {
         let node_self = Arc::new(self.clone_ref());
         let peer_clone = Arc::clone(&peer);
 
         thread::Builder::new()
-            .name(format!("peer-reader-{}", peer.node_name))
+            .name(format!("peer-worker-{}", peer.node_name))
             .spawn(move || {
+                let _ = transport.set_read_timeout(Some(Duration::from_millis(2)));
+
                 while !node_self.is_stopped.load(Ordering::Relaxed)
                     && peer_clone.is_alive.load(Ordering::Relaxed)
                 {
-                    let frame = match read_frame(&mut reader_stream) {
-                        Ok(f) => f,
-                        Err(_) => break, // Peer closed or connection broke
-                    };
-
-                    let msg: ClusterWireMsg = match serde_json::from_slice(&frame) {
-                        Ok(m) => m,
-                        Err(_) => continue,
-                    };
-
-                    match msg {
-                        ClusterWireMsg::Ping => {
-                            let pong = ClusterWireMsg::Pong;
-                            let _ = peer_clone.send_msg(&pong);
+                    // A. Send any queued outgoing frames
+                    let mut has_sent = false;
+                    while let Ok(frame) = rx.try_recv() {
+                        if transport.write_all(&frame).is_err() {
+                            peer_clone.is_alive.store(false, Ordering::Relaxed);
+                            break;
                         }
-                        ClusterWireMsg::Pong => {}
-                        ClusterWireMsg::Send {
-                            target, payload, ..
-                        } => {
-                            let value = Value::from_json(&payload);
-                            let local_opt = {
-                                let local = node_self.local_actors.read().unwrap();
-                                local.get(&target).cloned()
+                        has_sent = true;
+                    }
+                    if has_sent {
+                        if transport.flush().is_err() {
+                            peer_clone.is_alive.store(false, Ordering::Relaxed);
+                            break;
+                        }
+                    }
+                    if !peer_clone.is_alive.load(Ordering::Relaxed) {
+                        break;
+                    }
+
+                    // B. Read incoming frame
+                    match read_frame_adaptive(&mut transport) {
+                        Ok(frame) => {
+                            let msg: ClusterWireMsg = match serde_json::from_slice(&frame) {
+                                Ok(m) => m,
+                                Err(_) => continue,
                             };
-                            let actor_target =
-                                local_opt.or_else(|| ActorRegistry::whereis(&target));
-                            if let Some(act) = actor_target {
-                                let _ = act.send(value);
-                            }
+                            node_self.dispatch_incoming_wire_msg(msg, &peer_clone);
                         }
-                        ClusterWireMsg::Ask {
-                            request_id,
-                            target,
-                            payload,
-                            timeout_ms,
-                            ..
-                        } => {
-                            let value = Value::from_json(&payload);
-                            let local_opt = {
-                                let local = node_self.local_actors.read().unwrap();
-                                local.get(&target).cloned()
-                            };
-                            let actor_target =
-                                local_opt.or_else(|| ActorRegistry::whereis(&target));
-                            let peer_reply = Arc::clone(&peer_clone);
-
-                            thread::spawn(move || match actor_target {
-                                Some(act) => {
-                                    match act.ask(value, Some(Duration::from_millis(timeout_ms))) {
-                                        Ok(res) => {
-                                            let reply = ClusterWireMsg::Reply {
-                                                request_id,
-                                                status: "ok".into(),
-                                                payload: Some(res.to_json()),
-                                                error: None,
-                                            };
-                                            let _ = peer_reply.send_msg(&reply);
-                                        }
-                                        Err(e) => {
-                                            let reply = ClusterWireMsg::Reply {
-                                                request_id,
-                                                status: "err".into(),
-                                                payload: None,
-                                                error: Some(e.to_string()),
-                                            };
-                                            let _ = peer_reply.send_msg(&reply);
-                                        }
-                                    }
-                                }
-                                None => {
-                                    let reply = ClusterWireMsg::Reply {
-                                        request_id,
-                                        status: "err".into(),
-                                        payload: None,
-                                        error: Some(format!("Actor '{}' not found", target)),
-                                    };
-                                    let _ = peer_reply.send_msg(&reply);
-                                }
-                            });
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut =>
+                        {
+                            // Normal timeout when idle
                         }
-                        ClusterWireMsg::Reply {
-                            request_id,
-                            status,
-                            payload,
-                            error,
-                        } => {
-                            let chan_opt = {
-                                let mut pending = node_self.pending_requests.write().unwrap();
-                                pending.remove(&request_id)
-                            };
-
-                            if let Some(chan) = chan_opt {
-                                let span = Span::new(1, 1);
-                                if status == "ok" {
-                                    let content = payload
-                                        .map(|p| Value::from_json(&p))
-                                        .unwrap_or(Value::Null);
-                                    let envelope = Value::Array(Arc::new(RwLock::new(vec![
-                                        Value::String("ok".into()),
-                                        content,
-                                    ])));
-                                    let _ = chan.send(envelope, span);
-                                } else {
-                                    let err_msg = error.unwrap_or_else(|| "Unknown error".into());
-                                    let envelope = Value::Array(Arc::new(RwLock::new(vec![
-                                        Value::String("err".into()),
-                                        Value::String(err_msg),
-                                    ])));
-                                    let _ = chan.send(envelope, span);
-                                }
-                            }
+                        Err(_) => {
+                            // Connection closed or broken
+                            break;
                         }
-                        ClusterWireMsg::RegisterUpdate { action, actor } => {
-                            let mut known = peer_clone.known_actors.write().unwrap();
-                            if action == "register" {
-                                known.insert(actor);
-                            } else {
-                                known.remove(&actor);
-                            }
-                        }
-                        ClusterWireMsg::Broadcast { topic, payload, .. } => {
-                            let val = Value::from_json(&payload);
-                            node_self.deliver_local_broadcast(&topic, &val);
-                        }
-                        _ => {}
                     }
                 }
 
                 peer_clone.is_alive.store(false, Ordering::Relaxed);
+                transport.close();
                 let mut peers = node_self.peers.write().unwrap();
                 peers.remove(&peer_clone.node_name);
             })
             .unwrap();
     }
+
+    fn dispatch_incoming_wire_msg(&self, msg: ClusterWireMsg, peer: &Arc<PeerConnection>) {
+        match msg {
+            ClusterWireMsg::Ping => {
+                let pong = ClusterWireMsg::Pong;
+                let _ = peer.send_msg(&pong);
+            }
+            ClusterWireMsg::Pong => {}
+            ClusterWireMsg::Send {
+                target, payload, ..
+            } => {
+                let value = Value::from_json(&payload);
+                let local_opt = {
+                    let local = self.local_actors.read().unwrap();
+                    local.get(&target).cloned()
+                };
+                let actor_target = local_opt.or_else(|| ActorRegistry::whereis(&target));
+                if let Some(act) = actor_target {
+                    let _ = act.send(value);
+                }
+            }
+            ClusterWireMsg::Ask {
+                request_id,
+                target,
+                payload,
+                timeout_ms,
+                ..
+            } => {
+                let value = Value::from_json(&payload);
+                let local_opt = {
+                    let local = self.local_actors.read().unwrap();
+                    local.get(&target).cloned()
+                };
+                let actor_target = local_opt.or_else(|| ActorRegistry::whereis(&target));
+                let peer_reply = Arc::clone(peer);
+
+                thread::spawn(move || match actor_target {
+                    Some(act) => match act.ask(value, Some(Duration::from_millis(timeout_ms))) {
+                        Ok(res) => {
+                            let reply = ClusterWireMsg::Reply {
+                                request_id,
+                                status: "ok".into(),
+                                payload: Some(res.to_json()),
+                                error: None,
+                            };
+                            let _ = peer_reply.send_msg(&reply);
+                        }
+                        Err(e) => {
+                            let reply = ClusterWireMsg::Reply {
+                                request_id,
+                                status: "err".into(),
+                                payload: None,
+                                error: Some(e.to_string()),
+                            };
+                            let _ = peer_reply.send_msg(&reply);
+                        }
+                    },
+                    None => {
+                        let reply = ClusterWireMsg::Reply {
+                            request_id,
+                            status: "err".into(),
+                            payload: None,
+                            error: Some(format!("Actor '{}' not found", target)),
+                        };
+                        let _ = peer_reply.send_msg(&reply);
+                    }
+                });
+            }
+            ClusterWireMsg::Reply {
+                request_id,
+                status,
+                payload,
+                error,
+            } => {
+                let chan_opt = {
+                    let mut pending = self.pending_requests.write().unwrap();
+                    pending.remove(&request_id)
+                };
+
+                if let Some(chan) = chan_opt {
+                    let span = Span::new(1, 1);
+                    if status == "ok" {
+                        let content = payload.map(|p| Value::from_json(&p)).unwrap_or(Value::Null);
+                        let envelope = Value::Array(Arc::new(RwLock::new(vec![
+                            Value::String("ok".into()),
+                            content,
+                        ])));
+                        let _ = chan.send(envelope, span);
+                    } else {
+                        let err_msg = error.unwrap_or_else(|| "Unknown error".into());
+                        let envelope = Value::Array(Arc::new(RwLock::new(vec![
+                            Value::String("err".into()),
+                            Value::String(err_msg),
+                        ])));
+                        let _ = chan.send(envelope, span);
+                    }
+                }
+            }
+            ClusterWireMsg::RegisterUpdate { action, actor } => {
+                let mut known = peer.known_actors.write().unwrap();
+                if action == "register" {
+                    known.insert(actor);
+                } else {
+                    known.remove(&actor);
+                }
+            }
+            ClusterWireMsg::Broadcast { topic, payload, .. } => {
+                let val = Value::from_json(&payload);
+                self.deliver_local_broadcast(&topic, &val);
+            }
+            _ => {}
+        }
+    }
 }
 
 impl fmt::Debug for ClusterNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ClusterNode({}@{})", self.name, self.address())
+        write!(
+            f,
+            "ClusterNode({}@{} tls={})",
+            self.name,
+            self.address(),
+            self.is_tls()
+        )
     }
 }
 
 impl fmt::Display for ClusterNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "<cluster_node:{}@{}>", self.name, self.address())
+        write!(
+            f,
+            "<cluster_node:{}@{}{}>",
+            self.name,
+            self.address(),
+            if self.is_tls() { " (tls)" } else { "" }
+        )
     }
 }
 

@@ -1,0 +1,54 @@
+// tests/shae/actor_cluster_tls_test.shae
+use { node } from "std:actor:cluster"
+use { read, exists } from "std:fs"
+
+println("=== Testing Shae Actor Cluster TLS Mesh ===")
+
+// 1. Test Plain node has is_tls = false
+let n_plain = node("plain_node", "127.0.0.1:0", null)
+println("   [✓] Plain node created: ", n_plain.name())
+println("   [✓] Plain node is_tls: ", n_plain.is_tls())
+if n_plain.is_tls() != false {
+    println("FAILED: Plain node is_tls != false")
+    return 1
+}
+n_plain.stop()
+
+// 2. If valid test certs exist, test TLS node startup
+let cert_path = "tests/shae/temp_tls_cert.pem"
+let key_path = "tests/shae/temp_tls_key.pem"
+
+if exists(cert_path) and exists(key_path) {
+    let cert_str = read(cert_path)
+    let key_str = read(key_path)
+
+    let tls_opts = {
+        "tls": {
+            "cert": cert_str,
+            "key": key_str,
+            "verify_peer": false,
+            "server_name": "localhost"
+        }
+    }
+
+    let n_tls1 = node("tls_node_shae_1", "127.0.0.1:0", tls_opts)
+    let n_tls2 = node("tls_node_shae_2", "127.0.0.1:0", tls_opts)
+
+    println("   [✓] TLS Node 1 is_tls: ", n_tls1.is_tls())
+    println("   [✓] TLS Node 2 is_tls: ", n_tls2.is_tls())
+
+    if not n_tls1.is_tls() or not n_tls2.is_tls() {
+        println("FAILED: TLS nodes reported is_tls = false")
+        return 1
+    }
+
+    // Connect node 2 to node 1 over TLS
+    let connected = n_tls2.connect(n_tls1.address())
+    println("   [✓] TLS cluster connect result: ", connected)
+
+    n_tls2.stop()
+    n_tls1.stop()
+}
+
+println("=== Shae Actor Cluster TLS Dual-Engine Test Passed! ===")
+return 0

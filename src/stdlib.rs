@@ -3072,6 +3072,8 @@ pub fn build_cluster_module() -> Value {
         ("broadcast", cluster_broadcast),
         ("on_broadcast", cluster_on_broadcast),
         ("stop", cluster_stop),
+        ("is_tls", cluster_is_tls),
+        ("isTls", cluster_is_tls),
     ])
 }
 
@@ -3658,6 +3660,91 @@ fn actor_supervisor(
 // std:actor:cluster builtin functions
 // -------------------------------------------------------------
 
+fn parse_cluster_tls_from_val(
+    val: &Value,
+    span: Span,
+) -> Result<Option<crate::actor_cluster::ClusterTlsConfig>, RuntimeError> {
+    match val {
+        Value::Map(m) => {
+            let g = m.read().unwrap();
+            let cert = match g.get("cert").or_else(|| g.get("certificate")) {
+                Some(Value::String(s)) => s.clone(),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "Cluster TLS options require string 'cert' or 'certificate'".into(),
+                    )
+                    .at(span));
+                }
+            };
+            let key = match g.get("key").or_else(|| g.get("private_key")) {
+                Some(Value::String(s)) => s.clone(),
+                _ => {
+                    return Err(RuntimeError::new(
+                        "Cluster TLS options require string 'key' or 'private_key'".into(),
+                    )
+                    .at(span));
+                }
+            };
+            let ca = g
+                .get("ca")
+                .or_else(|| g.get("ca_cert"))
+                .and_then(|v| match v {
+                    Value::String(s) => Some(s.clone()),
+                    _ => None,
+                });
+            let verify_peer =
+                g.get("verify_peer")
+                    .or_else(|| g.get("verify"))
+                    .and_then(|v| match v {
+                        Value::Bool(b) => Some(*b),
+                        _ => None,
+                    });
+            let server_name = g
+                .get("server_name")
+                .or_else(|| g.get("sni"))
+                .and_then(|v| match v {
+                    Value::String(s) => Some(s.clone()),
+                    _ => None,
+                });
+            Ok(Some(crate::actor_cluster::ClusterTlsConfig {
+                cert,
+                key,
+                ca,
+                verify_peer,
+                server_name,
+            }))
+        }
+        Value::Null => Ok(None),
+        other => Err(RuntimeError::new(format!(
+            "Cluster TLS options must be a Map, got {}",
+            other.type_name()
+        ))
+        .at(span)),
+    }
+}
+
+fn cluster_is_tls(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        let global = crate::actor_cluster::get_global_cluster().ok_or_else(|| {
+            RuntimeError::new("No active cluster node found. Start a node first with cluster.node() or cluster.start()".into()).at(span)
+        })?;
+        Ok(Value::Bool(global.is_tls()))
+    } else {
+        match &args[0] {
+            Value::ClusterNode(node) => Ok(Value::Bool(node.is_tls())),
+            other => Err(RuntimeError::new(format!(
+                "cluster.is_tls() expects ClusterNode, got {}",
+                other.type_name()
+            ))
+            .at(span)),
+        }
+    }
+}
+
 fn cluster_node_init(
     _ev: &mut Evaluator,
     args: Vec<Value>,
@@ -3693,19 +3780,26 @@ fn cluster_node_init(
         }
     };
 
-    let cookie = if args.len() == 3 {
+    let (cookie, tls_config) = if args.len() == 3 {
         match &args[2] {
-            Value::String(s) => Some(s.clone()),
+            Value::String(s) => (Some(s.clone()), None),
             Value::Map(m) => {
                 let g = m.read().unwrap();
-                g.get("cookie")
+                let cookie = g
+                    .get("cookie")
                     .or_else(|| g.get("secret"))
                     .and_then(|v| match v {
                         Value::String(s) => Some(s.clone()),
                         _ => None,
-                    })
+                    });
+                let tls = if let Some(tls_val) = g.get("tls") {
+                    parse_cluster_tls_from_val(tls_val, span)?
+                } else {
+                    None
+                };
+                (cookie, tls)
             }
-            Value::Null => None,
+            Value::Null => (None, None),
             _ => {
                 return Err(RuntimeError::new(
                     "cluster.node() 3rd argument must be a string cookie or options map".into(),
@@ -3714,10 +3808,10 @@ fn cluster_node_init(
             }
         }
     } else {
-        None
+        (None, None)
     };
 
-    let node = crate::actor_cluster::ClusterNode::start(name, address, cookie)
+    let node = crate::actor_cluster::ClusterNode::start_with_tls(name, address, cookie, tls_config)
         .map_err(|e| e.to_runtime_error(span))?;
 
     if crate::actor_cluster::get_global_cluster().is_none() {

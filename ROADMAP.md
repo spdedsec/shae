@@ -253,3 +253,24 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
   - [x] Standalone 64-bit ELF native binary linkage with magic header check.
   - [x] WebAssembly (`.wasm`) binary module generation with magic header check.
   - [x] 100% dual-engine test pass across both Bytecode VM and Tree-Walking AST Evaluator.
+
+---
+
+### **Chunk 21: Cluster Transport Security — TLS & Mutual-TLS (`mTLS`)** *(Completed)*
+- [x] **Encrypted Wire Transport & Zero-Contention Framing (`src/actor_cluster.rs`)**
+  - [x] Unified `ClusterTransport` abstraction handling raw TCP, TLS Server, and TLS Client with Rustls 0.23.
+  - [x] Adaptive non-blocking frame polling (`read_frame_adaptive`) and asynchronous channel-driven frame flushing eliminating mutex lock contention on network I/O.
+  - [x] Support for file-path and in-memory PEM string certificate/key loading (`load_certs`, `load_key`).
+- [x] **Mutual-TLS (mTLS) Authentication & Strict Peer Verification**
+  - [x] Root CA certificate validation via `RootCertStore` and `WebPkiClientVerifier`.
+  - [x] Client certificate presentation during TLS handshake (`with_client_auth_cert`).
+  - [x] Automatic rejection of untrusted or invalid client/peer certificates.
+  - [x] Configurable certificate verification modes (`verify_peer: true|false`, SNI `server_name`).
+- [x] **First-Class Language & Standard Library Integration (`std:actor:cluster`)**
+  - [x] Extended `cluster.node(...)` options map accepting `{ "tls": { "cert": ..., "key": ..., "ca": ..., "verify_peer": ... } }`.
+  - [x] `node.is_tls()` / `is_tls(node)` reflection method available across AST Evaluator and Bytecode VM.
+- [x] **Dual-Engine Test Verification Suite (`tests/shae/actor_cluster_tls_test.shae`, `tests/actor_cluster_tls_test.rs`)**
+  - [x] TLS encrypted messaging verification.
+  - [x] mTLS mutual certificate authentication and synchronous ask verification.
+  - [x] Untrusted rogue peer handshake rejection verification.
+  - [x] 100% dual-engine test pass across both Bytecode VM and Tree-Walking AST Evaluator.

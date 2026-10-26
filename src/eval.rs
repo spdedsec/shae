@@ -1624,6 +1624,8 @@ impl Evaluator {
                                 | "stop"
                                 | "is_alive"
                                 | "isAlive"
+                                | "is_tls"
+                                | "isTls"
                                 | "name"
                                 | "address"
                         ) {
@@ -3847,6 +3849,13 @@ impl Evaluator {
                             Err(RuntimeError::new("address() expects 0 arguments".into()).at(span))
                         } else {
                             Ok(Value::String(node.address()))
+                        }
+                    }
+                    (Value::ClusterNode(node), "is_tls" | "isTls") => {
+                        if !args.is_empty() {
+                            Err(RuntimeError::new("is_tls() expects 0 arguments".into()).at(span))
+                        } else {
+                            Ok(Value::Bool(node.is_tls()))
                         }
                     }
 
