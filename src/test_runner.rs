@@ -13,6 +13,12 @@ use std::sync::{LazyLock, Mutex};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
+pub const COLOR_RESET: &str = "[0m";
+pub const COLOR_GREEN: &str = "[32m";
+pub const COLOR_RED: &str = "[1;31m";
+pub const COLOR_YELLOW: &str = "[33m";
+pub const COLOR_BOLD: &str = "[1m";
+
 #[derive(Debug, Clone)]
 pub struct TestOptions {
     pub target: Option<String>,
@@ -63,6 +69,7 @@ impl TestRunSummary {
 pub struct ActiveTestSession {
     pub filter: Option<String>,
     pub nocapture: bool,
+    pub is_running_test: bool,
     pub current_file: Option<String>,
     pub current_captured_stdout: String,
     pub cases: Vec<TestCase>,
@@ -71,20 +78,60 @@ pub struct ActiveTestSession {
 static SESSIONS: LazyLock<Mutex<HashMap<ThreadId, ActiveTestSession>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub fn is_capturing() -> bool {
+static WORKER_THREAD_MAP: LazyLock<Mutex<HashMap<ThreadId, ThreadId>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub fn register_worker_thread(parent: ThreadId) {
+    let mut map = WORKER_THREAD_MAP.lock().unwrap();
+    map.insert(std::thread::current().id(), parent);
+}
+
+pub fn unregister_worker_thread() {
+    let mut map = WORKER_THREAD_MAP.lock().unwrap();
+    map.remove(&std::thread::current().id());
+}
+
+fn get_effective_tid() -> (ThreadId, bool) {
     let tid = std::thread::current().id();
+    let map = WORKER_THREAD_MAP.lock().unwrap();
+    if let Some(&parent) = map.get(&tid) {
+        (parent, true)
+    } else {
+        (tid, false)
+    }
+}
+
+pub fn is_capturing() -> bool {
+    let (effective_tid, is_worker) = get_effective_tid();
     let lock = SESSIONS.lock().unwrap();
-    lock.get(&tid).map(|s| !s.nocapture).unwrap_or(false)
+    if let Some(session) = lock.get(&effective_tid) {
+        !session.nocapture && session.is_running_test
+    } else if is_worker || lock.len() == 1 {
+        if let Some(session) = lock.values().find(|s| s.is_running_test) {
+            !session.nocapture
+        } else {
+            false
+        }
+    } else {
+        false
+    }
 }
 
 pub fn capture_print(text: &str) {
-    let tid = std::thread::current().id();
+    let (effective_tid, is_worker) = get_effective_tid();
     let mut lock = SESSIONS.lock().unwrap();
-    if let Some(session) = lock.get_mut(&tid) {
+    if let Some(session) = lock.get_mut(&effective_tid) {
         if !session.current_captured_stdout.is_empty() {
             session.current_captured_stdout.push('\n');
         }
         session.current_captured_stdout.push_str(text);
+    } else if is_worker || lock.len() == 1 {
+        if let Some(session) = lock.values_mut().find(|s| s.is_running_test) {
+            if !session.current_captured_stdout.is_empty() {
+                session.current_captured_stdout.push('\n');
+            }
+            session.current_captured_stdout.push_str(text);
+        }
     }
 }
 
@@ -203,29 +250,40 @@ pub fn execute_test(
                         captured_output: None,
                     });
                 }
-                println!("test {} ... [33mignored[0m", desc);
+                println!("test {} ... {}ignored{}", desc, COLOR_YELLOW, COLOR_RESET);
                 return Ok(Value::Null);
             }
         }
 
-        // Clear captured output buffer for this test
-        if !nocapture {
+        // Clear captured output buffer and mark test actively running
+        {
             let mut lock = SESSIONS.lock().unwrap();
             if let Some(session) = lock.get_mut(&tid) {
                 session.current_captured_stdout.clear();
+                session.is_running_test = true;
             }
         }
 
         let start = Instant::now();
-        let call_res = ev.call_value(callable, vec![], span);
-        let result = match call_res {
-            Ok(Value::Task(task_arc)) => {
-                let mut task = task_arc.lock().unwrap();
-                task.join()
+        let catch_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let call_res = ev.call_value(callable, vec![], span);
+            match call_res {
+                Ok(Value::Task(task_arc)) => {
+                    let mut task = task_arc.lock().unwrap();
+                    task.join()
+                }
+                other => other,
             }
-            other => other,
-        };
+        }));
         let duration = start.elapsed();
+
+        // Mark test finished running
+        {
+            let mut lock = SESSIONS.lock().unwrap();
+            if let Some(session) = lock.get_mut(&tid) {
+                session.is_running_test = false;
+            }
+        }
 
         let captured = {
             let lock = SESSIONS.lock().unwrap();
@@ -236,8 +294,8 @@ pub fn execute_test(
 
         let mut lock = SESSIONS.lock().unwrap();
         if let Some(session) = lock.get_mut(&tid) {
-            match result {
-                Ok(_) => {
+            match catch_res {
+                Ok(Ok(_)) => {
                     session.cases.push(TestCase {
                         name: desc.to_string(),
                         file: session.current_file.clone().unwrap_or_default(),
@@ -250,12 +308,14 @@ pub fn execute_test(
                         },
                     });
                     println!(
-                        "test {} ... [32mok[0m ({:.2}ms)",
+                        "test {} ... {}ok{} ({:.2}ms)",
                         desc,
+                        COLOR_GREEN,
+                        COLOR_RESET,
                         duration.as_secs_f64() * 1000.0
                     );
                 }
-                Err(err) => {
+                Ok(Err(err)) => {
                     let err_msg = err.message.clone();
                     session.cases.push(TestCase {
                         name: desc.to_string(),
@@ -269,8 +329,45 @@ pub fn execute_test(
                         },
                     });
                     println!(
-                        "test {} ... [31mFAILED[0m ({:.2}ms)",
+                        "test {} ... {}FAILED{} ({:.2}ms)",
                         desc,
+                        COLOR_RED,
+                        COLOR_RESET,
+                        duration.as_secs_f64() * 1000.0
+                    );
+                    println!("    {}", err_msg);
+                    if !nocapture && !captured.is_empty() {
+                        println!("    ---- test stdout ----");
+                        for line in captured.lines() {
+                            println!("    {}", line);
+                        }
+                    }
+                }
+                Err(panic_err) => {
+                    let panic_msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = panic_err.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "Explicit thread panic".to_string()
+                    };
+                    let err_msg = format!("Panicked: {}", panic_msg);
+                    session.cases.push(TestCase {
+                        name: desc.to_string(),
+                        file: session.current_file.clone().unwrap_or_default(),
+                        status: TestStatus::Failed(err_msg.clone()),
+                        duration,
+                        captured_output: if captured.is_empty() {
+                            None
+                        } else {
+                            Some(captured.clone())
+                        },
+                    });
+                    println!(
+                        "test {} ... {}FAILED{} ({:.2}ms)",
+                        desc,
+                        COLOR_RED,
+                        COLOR_RESET,
                         duration.as_secs_f64() * 1000.0
                     );
                     println!("    {}", err_msg);
@@ -288,32 +385,57 @@ pub fn execute_test(
     } else {
         // Standalone run outside `shae test` CLI
         let start = Instant::now();
-        let call_res = ev.call_value(callable, vec![], span);
-        let result = match call_res {
-            Ok(Value::Task(task_arc)) => {
-                let mut task = task_arc.lock().unwrap();
-                task.join()
+        let catch_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let call_res = ev.call_value(callable, vec![], span);
+            match call_res {
+                Ok(Value::Task(task_arc)) => {
+                    let mut task = task_arc.lock().unwrap();
+                    task.join()
+                }
+                other => other,
             }
-            other => other,
-        };
+        }));
         let duration = start.elapsed();
-        match result {
-            Ok(val) => {
+        match catch_res {
+            Ok(Ok(val)) => {
                 println!(
-                    "test {} ... [32mok[0m ({:.2}ms)",
+                    "test {} ... {}ok{} ({:.2}ms)",
                     desc,
+                    COLOR_GREEN,
+                    COLOR_RESET,
                     duration.as_secs_f64() * 1000.0
                 );
                 Ok(val)
             }
-            Err(err) => {
+            Ok(Err(err)) => {
                 eprintln!(
-                    "test {} ... [31mFAILED[0m ({:.2}ms)",
+                    "test {} ... {}FAILED{} ({:.2}ms)",
                     desc,
+                    COLOR_RED,
+                    COLOR_RESET,
                     duration.as_secs_f64() * 1000.0
                 );
                 eprintln!("    {}", err.message);
                 Err(err)
+            }
+            Err(panic_err) => {
+                let panic_msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = panic_err.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "Explicit thread panic".to_string()
+                };
+                let err_msg = format!("Panicked: {}", panic_msg);
+                eprintln!(
+                    "test {} ... {}FAILED{} ({:.2}ms)",
+                    desc,
+                    COLOR_RED,
+                    COLOR_RESET,
+                    duration.as_secs_f64() * 1000.0
+                );
+                eprintln!("    {}", err_msg);
+                Err(RuntimeError::new(err_msg).at(span))
             }
         }
     }
@@ -345,6 +467,7 @@ pub fn run_test_suite(options: &TestOptions) -> TestRunSummary {
             ActiveTestSession {
                 filter: options.filter.clone(),
                 nocapture: options.nocapture,
+                is_running_test: false,
                 current_file: None,
                 current_captured_stdout: String::new(),
                 cases: Vec::new(),
@@ -370,10 +493,39 @@ running {} test file(s) across {}
     for file_path in &test_files {
         let file_str = file_path.to_string_lossy().to_string();
 
+        let file_content = std::fs::read_to_string(file_path).unwrap_or_default();
+        let has_test_blocks = file_content.contains("test(");
+
+        // Pre-execution filter check for script-style test files
+        if !has_test_blocks {
+            if let Some(ref pat) = options.filter {
+                let pat_lower = pat.to_lowercase();
+                if !file_str.to_lowercase().contains(&pat_lower) {
+                    let mut lock = SESSIONS.lock().unwrap();
+                    if let Some(session) = lock.get_mut(&tid) {
+                        session.cases.push(TestCase {
+                            name: file_str.clone(),
+                            file: file_str.clone(),
+                            status: TestStatus::Skipped,
+                            duration: Duration::ZERO,
+                            captured_output: None,
+                        });
+                    }
+                    println!(
+                        "test {} ... {}ignored{}",
+                        file_str, COLOR_YELLOW, COLOR_RESET
+                    );
+                    continue;
+                }
+            }
+        }
+
         {
             let mut lock = SESSIONS.lock().unwrap();
             if let Some(session) = lock.get_mut(&tid) {
                 session.current_file = Some(file_str.clone());
+                session.current_captured_stdout.clear();
+                session.is_running_test = !has_test_blocks;
             }
         }
 
@@ -390,6 +542,13 @@ running {} test file(s) across {}
         };
         let file_duration = file_start.elapsed();
 
+        {
+            let mut lock = SESSIONS.lock().unwrap();
+            if let Some(session) = lock.get_mut(&tid) {
+                session.is_running_test = false;
+            }
+        }
+
         let cases_after = {
             let lock = SESSIONS.lock().unwrap();
             lock.get(&tid).map(|s| s.cases.len()).unwrap_or(0)
@@ -399,24 +558,16 @@ running {} test file(s) across {}
 
         if cases_added == 0 {
             // Script-style test file (no `test(...)` calls)
-            // Filter check:
-            if let Some(ref pat) = options.filter {
-                let pat_lower = pat.to_lowercase();
-                if !file_str.to_lowercase().contains(&pat_lower) {
-                    let mut lock = SESSIONS.lock().unwrap();
-                    if let Some(session) = lock.get_mut(&tid) {
-                        session.cases.push(TestCase {
-                            name: file_str.clone(),
-                            file: file_str.clone(),
-                            status: TestStatus::Skipped,
-                            duration: Duration::ZERO,
-                            captured_output: None,
-                        });
-                    }
-                    println!("test {} ... [33mignored[0m", file_str);
-                    continue;
+            let captured = {
+                let mut lock = SESSIONS.lock().unwrap();
+                if let Some(session) = lock.get_mut(&tid) {
+                    let cap = session.current_captured_stdout.clone();
+                    session.current_captured_stdout.clear();
+                    cap
+                } else {
+                    String::new()
                 }
-            }
+            };
 
             let mut lock = SESSIONS.lock().unwrap();
             if let Some(session) = lock.get_mut(&tid) {
@@ -430,8 +581,10 @@ running {} test file(s) across {}
                             captured_output: None,
                         });
                         println!(
-                            "test {} ... [32mok[0m ({:.2}ms)",
+                            "test {} ... {}ok{} ({:.2}ms)",
                             file_str,
+                            COLOR_GREEN,
+                            COLOR_RESET,
                             file_duration.as_secs_f64() * 1000.0
                         );
                     }
@@ -442,14 +595,26 @@ running {} test file(s) across {}
                             file: file_str.clone(),
                             status: TestStatus::Failed(err_msg.clone()),
                             duration: file_duration,
-                            captured_output: None,
+                            captured_output: if captured.is_empty() {
+                                None
+                            } else {
+                                Some(captured.clone())
+                            },
                         });
                         println!(
-                            "test {} ... [31mFAILED[0m ({:.2}ms)",
+                            "test {} ... {}FAILED{} ({:.2}ms)",
                             file_str,
+                            COLOR_RED,
+                            COLOR_RESET,
                             file_duration.as_secs_f64() * 1000.0
                         );
                         println!("    {}", err_msg);
+                        if !options.nocapture && !captured.is_empty() {
+                            println!("    ---- test stdout ----");
+                            for line in captured.lines() {
+                                println!("    {}", line);
+                            }
+                        }
                     }
                 }
             }
@@ -468,7 +633,10 @@ running {} test file(s) across {}
                         captured_output: None,
                     });
                 }
-                println!("test {} [file error] ... [31mFAILED[0m", file_str);
+                println!(
+                    "test {} [file error] ... {}FAILED{}",
+                    file_str, COLOR_RED, COLOR_RESET
+                );
                 println!("    {}", err_msg);
             }
         }
@@ -502,11 +670,11 @@ running {} test file(s) across {}
     if !failures.is_empty() {
         println!(
             "
-failures:
-"
+{}failures:{}",
+            COLOR_RED, COLOR_RESET
         );
         for case in &failures {
-            println!("---- {} ----", case.name);
+            println!("---- {}{}{} ----", COLOR_BOLD, case.name, COLOR_RESET);
             if let TestStatus::Failed(ref msg) = case.status {
                 for line in msg.lines() {
                     println!("    {}", line);
@@ -528,8 +696,10 @@ failures:
     println!();
     if failed == 0 {
         println!(
-            "test result: [32mok[0m. {} passed; {} failed; {} skipped; finished in {:.2}ms
+            "test result: {}ok{}. {} passed; {} failed; {} skipped; finished in {:.2}ms
 ",
+            COLOR_GREEN,
+            COLOR_RESET,
             passed,
             failed,
             skipped,
@@ -537,8 +707,10 @@ failures:
         );
     } else {
         println!(
-            "test result: [31mFAILED[0m. {} passed; {} failed; {} skipped; finished in {:.2}ms
+            "test result: {}FAILED{}. {} passed; {} failed; {} skipped; finished in {:.2}ms
 ",
+            COLOR_RED,
+            COLOR_RESET,
             passed,
             failed,
             skipped,

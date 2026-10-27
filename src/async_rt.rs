@@ -62,5 +62,11 @@ pub fn spawn_task<F>(f: F) -> std::thread::JoinHandle<Result<Value, RuntimeError
 where
     F: FnOnce() -> Result<Value, RuntimeError> + Send + 'static,
 {
-    thread::spawn(f)
+    let parent = std::thread::current().id();
+    thread::spawn(move || {
+        crate::test_runner::register_worker_thread(parent);
+        let res = f();
+        crate::test_runner::unregister_worker_thread();
+        res
+    })
 }

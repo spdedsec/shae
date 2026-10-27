@@ -243,3 +243,146 @@ fn double(x) {
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_doc_server_path_traversal_protection() {
+    let temp_dir = std::env::temp_dir().join("shae_live_doc_traversal_test");
+    let out_dir = temp_dir.join("doc_out");
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&out_dir).unwrap();
+    fs::write(out_dir.join("index.html"), "<h1>Allowed Doc</h1>").unwrap();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let (addr, handle) =
+        shae::doc::start_doc_server(&out_dir, "127.0.0.1", 0, Some(shutdown.clone()))
+            .expect("Failed to start live doc server");
+
+    // Attempt path traversal
+    let bad_url = format!("http://{}:{}/../../../etc/passwd", addr.ip(), addr.port());
+    let resp = reqwest::blocking::get(&bad_url).expect("Failed to fetch bad URL");
+    assert!(
+        resp.status().as_u16() == 403 || resp.status().as_u16() == 404,
+        "Path traversal succeeded with status: {}",
+        resp.status()
+    );
+
+    // Stop server
+    shutdown.store(true, Ordering::Relaxed);
+    let _ = std::net::TcpStream::connect(addr);
+    let _ = handle.join();
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_async_task_stdout_capture_and_isolation() {
+    let temp_dir = std::env::temp_dir().join("shae_async_capture_test");
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let fail_file = temp_dir.join("async_fail_test.shae");
+    let script = r#"
+use { test, assert } from "std:test"
+
+test("async failure captures output", async fn() {
+    println("ASYNC_CAPTURED_DIAGNOSTIC");
+    assert(false, "deliberate async failure");
+});
+"#;
+    fs::write(&fail_file, script).unwrap();
+
+    let options = TestOptions {
+        target: Some(fail_file.to_string_lossy().to_string()),
+        filter: None,
+        use_vm: true,
+        nocapture: false,
+    };
+
+    let summary = run_test_suite(&options);
+    assert_eq!(summary.failed, 1);
+
+    let case = summary.cases.first().expect("Missing test case");
+    assert!(
+        case.captured_output.is_some(),
+        "Expected captured output in failing async test"
+    );
+    let out = case.captured_output.as_ref().unwrap();
+    assert!(
+        out.contains("ASYNC_CAPTURED_DIAGNOSTIC"),
+        "Expected ASYNC_CAPTURED_DIAGNOSTIC in captured stdout, got: {}",
+        out
+    );
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_script_style_test_runner_and_filter() {
+    let temp_dir = std::env::temp_dir().join("shae_script_style_test");
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let script_file = temp_dir.join("plain_script_test.shae");
+    let script = r#"
+println("SCRIPT_STDOUT_MESSAGE");
+assert_eq(1 + 2, 3);
+"#;
+    fs::write(&script_file, script).unwrap();
+
+    // 1. Should pass when filter matches
+    let options = TestOptions {
+        target: Some(script_file.to_string_lossy().to_string()),
+        filter: Some("plain_script".to_string()),
+        use_vm: true,
+        nocapture: false,
+    };
+    let summary = run_test_suite(&options);
+    assert_eq!(summary.passed, 1);
+    assert_eq!(summary.failed, 0);
+
+    // 2. Should skip when filter does not match
+    let non_matching_options = TestOptions {
+        target: Some(script_file.to_string_lossy().to_string()),
+        filter: Some("different_name".to_string()),
+        use_vm: true,
+        nocapture: false,
+    };
+    let non_matching_summary = run_test_suite(&non_matching_options);
+    assert_eq!(non_matching_summary.passed, 0);
+    assert_eq!(non_matching_summary.skipped, 1);
+    assert_eq!(non_matching_summary.failed, 0);
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_descriptive_assertion_errors_and_panic_export() {
+    // 1. assert(false) descriptive error
+    let res = shae::run_vm("assert(false)");
+    assert!(res.is_err());
+    let err = res.unwrap_err().to_string();
+    assert!(
+        err.contains("Assertion failed: expected truthy condition, got false"),
+        "Got unexpected error: {}",
+        err
+    );
+
+    // 2. assert(null) descriptive error
+    let res_null = shae::run_vm("assert(null)");
+    assert!(res_null.is_err());
+    let err_null = res_null.unwrap_err().to_string();
+    assert!(
+        err_null.contains("Assertion failed: expected truthy condition, got null"),
+        "Got unexpected error: {}",
+        err_null
+    );
+
+    // 3. std:test exports panic
+    let script_panic = r#"
+use { panic, assert_throws } from "std:test"
+assert_throws(fn() {
+    panic("custom panic payload");
+});
+"#;
+    assert!(shae::run_vm(script_panic).is_ok());
+}

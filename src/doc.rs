@@ -970,6 +970,18 @@ Content-Length: 0
         rel_path
     };
 
+    // Security check: reject explicit directory traversal sequences
+    if rel_path.contains("..") || rel_path.contains('\0') {
+        let body = "<!DOCTYPE html><html><head><title>403 Forbidden</title></head><body><h1>403 Forbidden</h1></body></html>";
+        let resp = format!(
+            "HTTP/1.1 403 Forbidden\nContent-Type: text/html; charset=utf-8\nContent-Length: {}\nConnection: close\n\n{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(resp.as_bytes());
+        return Ok(());
+    }
+
     let mut target = root.join(rel_path);
     if target.is_dir() {
         let idx = target.join("index.html");
@@ -978,18 +990,27 @@ Content-Length: 0
         }
     }
 
-    if !target.exists() || !target.starts_with(root) {
-        let body = format!(
-            "<!DOCTYPE html><html><head><title>404 Not Found</title></head><body><h1>404 Not Found</h1><p>Doc file not found: {}</p></body></html>",
-            path_part
-        );
-        let resp = format!(
-            "HTTP/1.1 404 Not Found
-Content-Type: text/html; charset=utf-8
-Content-Length: {}
-Connection: close
+    let canonical_target = match fs::canonicalize(&target) {
+        Ok(c) => c,
+        Err(_) => {
+            let body = format!(
+                "<!DOCTYPE html><html><head><title>404 Not Found</title></head><body><h1>404 Not Found</h1><p>Doc file not found: {}</p></body></html>",
+                path_part
+            );
+            let resp = format!(
+                "HTTP/1.1 404 Not Found\nContent-Type: text/html; charset=utf-8\nContent-Length: {}\nConnection: close\n\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(resp.as_bytes());
+            return Ok(());
+        }
+    };
 
-{}",
+    if !canonical_target.starts_with(root) {
+        let body = "<!DOCTYPE html><html><head><title>403 Forbidden</title></head><body><h1>403 Forbidden</h1></body></html>";
+        let resp = format!(
+            "HTTP/1.1 403 Forbidden\nContent-Type: text/html; charset=utf-8\nContent-Length: {}\nConnection: close\n\n{}",
             body.len(),
             body
         );
@@ -997,9 +1018,13 @@ Connection: close
         return Ok(());
     }
 
-    match fs::read(&target) {
+    match fs::read(&canonical_target) {
         Ok(content) => {
-            let mime = match target.extension().and_then(|e| e.to_str()).unwrap_or("") {
+            let mime = match canonical_target
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+            {
                 "html" => "text/html; charset=utf-8",
                 "js" => "application/javascript; charset=utf-8",
                 "css" => "text/css; charset=utf-8",

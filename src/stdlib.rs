@@ -4363,6 +4363,7 @@ pub fn build_test_module() -> Value {
         ("assert_eq", crate::builtins::builtin_assert_eq),
         ("assert_ne", crate::builtins::builtin_assert_ne),
         ("assert_throws", crate::builtins::builtin_assert_throws),
+        ("panic", crate::builtins::builtin_panic),
     ])
 }
 

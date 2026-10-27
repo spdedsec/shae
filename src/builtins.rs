@@ -1548,15 +1548,18 @@ pub fn builtin_assert(
     }
     let cond = &args[0];
     if !cond.is_truthy() {
-        let raw_msg = if args.len() == 2 {
-            args[1].to_display()
+        let msg = if args.len() == 2 {
+            let custom = args[1].to_display();
+            if custom.starts_with("Assertion failed") {
+                custom
+            } else {
+                format!("Assertion failed: {}", custom)
+            }
         } else {
-            "Assertion failed".to_string()
-        };
-        let msg = if raw_msg.starts_with("Assertion failed") {
-            raw_msg
-        } else {
-            format!("Assertion failed: {}", raw_msg)
+            format!(
+                "Assertion failed: expected truthy condition, got {}",
+                cond.to_repr()
+            )
         };
         return Err(RuntimeError::new(msg).at(span));
     }
