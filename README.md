@@ -11,10 +11,10 @@
 ```
 
 **A modern, strict, and ergonomic systems scripting language with Cranelift JIT compilation.**  
-*Zero ceremony, native machine code JIT, embedded SQLite, RFC 4180 CSV, built-in TLS servers, channels, package manager, and standalone binary bundler.*
+*Zero ceremony, native machine code JIT, embedded SQLite, RFC 4180 CSV, coroutines, TLS/mTLS cluster mesh, pure-Shae test runner, live doc server, package registry, and standalone binary bundler.*
 
 [![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](Cargo.toml)
-[![Tests](https://img.shields.io/badge/tests-255%2B%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-280%2B%20passing-brightgreen.svg)]()
 [![Rust](https://img.shields.io/badge/built%20with-Rust%202024-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![VS Code](https://img.shields.io/badge/VS%20Code-v0.4.0-purple.svg)](editors/vscode)
@@ -29,6 +29,11 @@ Shae is designed to hit the sweet spot between safety, ergonomics, raw utility, 
 
 - 🚫 **Zero Ceremony & No Semicolons**: Clean, expressive syntax without unnecessary punctuation or parentheses around conditions.
 - ⚡ **Cranelift JIT SSA Backend**: Native machine code generation (x86_64, aarch64) for hot mathematical loops, recursive functions, `f64` float SSA math, and direct fast-path array indexing with safe deoptimization bailouts.
+- ⏳ **First-Class Coroutines (`async` / `await` & `std:async`)**: Cooperative asynchronous routines, non-blocking evaluation, and concurrent combinators (`async:all`, `async:race`, `async:sleep`).
+- 🔐 **Cluster Transport Security: TLS & Mutual-TLS (`std:actor:cluster`)**: Production-grade encrypted distributed actor mesh with x509 certificate validation, mutual authentication, and cryptographic actor messaging.
+- 🧪 **Pure-Shae Test Runner (`shae test` & `std:test`)**: Zero-boilerplate unit and integration testing engine with rich assertions (`assert_eq`, `assert_throws`), pattern filtering (`-f`), output capture, and dual-engine execution.
+- 📚 **Standard Documentation & Live Server (`shae doc --serve`)**: Automated doc parser (`///`, `//!`) exporting static HTML, Markdown, and JSON models, with embedded instant-reloading HTTP preview server.
+- 📦 **Native Package Registry & Publishing (`shae pkg`)**: Manifest-driven dependencies (`shae.toml`), deterministic lockfiles (`shae.lock`), `.shaepkg` archive packaging, SHA-256 verification, and registry publishing.
 - 🔒 **Industrial Hash-DoS Hardening**: Cryptographic SipHash-2-4 keyed hashing with randomized per-process seeds to neutralize algorithmic complexity attacks on maps and first-class sets.
 - 🔤 **UAX #29 Unicode & Rune Safety (`std:unicode`)**: True unicode extended grapheme clustering (`.graphemes()`, `.grapheme_len()`, `.slice_graphemes()`, `.runes()`, `.codepoints()`), eliminating multi-byte slice truncation panics on complex emojis and combining characters.
 - 🚦 **Cross-Platform OS Signal Handling (`std:sys`)**: Trap OS interrupts (`SIGINT`, `SIGTERM`), register callbacks, and cleanly drain server pools and active connections.
@@ -43,11 +48,12 @@ Shae is designed to hit the sweet spot between safety, ergonomics, raw utility, 
 - 🛡️ **Predictable Primitives**: Distinct integers (`i64`) and floats (`f64`), radix literals (`0x`, `0b`, `0o`), and full bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`).
 - 🧩 **Pattern Matching & Destructuring**: Match arm guards, range patterns (`1..=10`), and array/struct destructuring with rest patterns.
 - 🔌 **Dynamic C FFI (`std:ffi`)**: Bind and invoke native shared libraries (`.so`, `.dylib`, `.dll`) with typed signatures directly from Shae code.
-- 📦 **Native Package Manager (`shae pkg`)**: Manifest-driven dependencies (`shae.toml`), deterministic lockfiles (`shae.lock`), and Git dependency resolution.
 - 🚀 **Single-Binary App Bundler (`shae bundle`)**: Package your entire Shae codebase and all its dependencies into a self-extracting, standalone executable.
 - 🛠️ **First-Class Developer Tooling**:
   - `shae fmt`: Automated AST code formatting.
   - `shae check`: Static analysis and linter.
+  - `shae test`: Built-in pure-Shae test runner with discovery and colored reports.
+  - `shae doc`: Documentation generator and live development server.
   - `shae lsp`: Full Language Server Protocol daemon with live diagnostics, autocomplete, and hover documentation.
   - **VS Code Extension**: Official syntax highlighting and LSP integration.
 
@@ -182,7 +188,29 @@ while msg != null {
 }
 ```
 
-### 6. Actor Concurrency & Fault-Tolerant Supervision (`std:actor`)
+### 6. First-Class Coroutines (`async` / `await` & `std:async`)
+Shae provides native cooperative coroutines and concurrency combinators:
+```shae
+let async = use "std:async"
+
+async fn fetch_task(id, delay_ms) {
+    async:sleep(delay_ms)
+    return "Task #" + str(id) + " finished"
+}
+
+async fn run_pipeline() {
+    let t1 = fetch_task(1, 30)
+    let t2 = fetch_task(2, 50)
+    
+    // Concurrent execution combinator
+    let results = await async:all([t1, t2])
+    println("Batch complete:", results)
+}
+
+await run_pipeline()
+```
+
+### 7. Actor Concurrency & Fault-Tolerant Supervision (`std:actor`)
 Shae provides Erlang/OTP-inspired isolated actors with zero shared mutable state, deep-cloned message envelopes, unbounded FIFO mailboxes, request-response synchronization, and hierarchical supervision trees:
 
 ```shae
@@ -252,7 +280,89 @@ sup.stop()
 | `sup.start_child(spec)` / `sup.stop_child(id)` | `fn(spec)` / `fn(id)` | Dynamically starts or stops supervised children |
 | `sup.restart_child(id)` / `sup.stop()` | `fn(id)` / `fn()` | Restarts specific child or stops supervisor tree |
 
-### 7. Expanded Standard Library
+### 8. Distributed Actor Mesh with TLS/mTLS (`std:actor:cluster`)
+Securely network multiple nodes into an encrypted actor cluster with mutual TLS verification:
+```shae
+let cluster = use "std:actor:cluster"
+
+// Spin up a cluster node with TLS / Mutual TLS encryption
+let node = cluster.ClusterNode("node-alpha", "127.0.0.1", 9001, "cluster-auth-cookie")
+node.set_mtls("certs/ca.crt", "certs/node.crt", "certs/node.key")
+node.start()
+
+// Connect to peer and invoke remote actor transparently
+node.connect_peer("127.0.0.1", 9002)
+let remote_worker = node.resolve_remote("worker", "node-beta")
+let response = remote_worker.ask("compute_workload")
+println("Cluster response:", response)
+```
+
+### 9. Built-in Pure-Shae Test Runner (`std:test` & `shae test`)
+Write zero-boilerplate tests directly in Shae using the native assertion framework:
+```shae
+use { test, assert, assert_eq, assert_ne, assert_throws } from "std:test"
+
+test("basic arithmetic operations", fn() {
+    assert_eq(2 + 2, 4, "math must be deterministic")
+    assert_ne(10, 20)
+    assert(5 > 0, "5 is positive")
+})
+
+test("exception assertions", fn() {
+    assert_throws(fn() {
+        let x = 1 / 0
+    }, "division by zero must throw")
+})
+```
+Execute your test suites with rich ANSI terminal reporting:
+```bash
+# Run all tests in tests/shae/ or workspace
+shae test
+
+# Filter tests by pattern and display stdout live
+shae test tests/shae/ --filter arithmetic --nocapture
+
+# Run against AST evaluator
+shae test --ast
+```
+
+### 10. Live Documentation Engine (`shae doc --serve`)
+Shae extracts triple-slash (`///`) item doc comments and module comments (`//!`), compiling them into interactive searchable sites:
+```shae
+//! String transformation and sanitization utilities.
+
+/// Truncates string to length with trailing ellipsis.
+fn truncate(text, max_len) {
+    if text.len() <= max_len { return text }
+    return text.slice(0, max_len) + "..."
+}
+```
+Generate and preview documentation locally:
+```bash
+# Export static HTML documentation site into doc/
+shae doc
+
+# Launch embedded live HTTP documentation server with instant preview
+shae doc --serve --port 8080 --open
+```
+
+### 11. Package Registry & Publishing (`shae pkg`)
+Package and publish libraries with SHA-256 cryptographic integrity:
+```bash
+# Initialize a new package manifest (shae.toml)
+shae pkg init my_library
+
+# Bundle project into a compressed .shaepkg archive
+shae pkg pack -o dist/my_library-0.1.0.shaepkg
+
+# Cryptographically verify archive checksum
+shae pkg verify dist/my_library-0.1.0.shaepkg <sha256>
+
+# Publish to package registry (supports local filesystem or remote API)
+shae pkg publish --registry https://pkg.shae-lang.org/api/v1 --token $SHAE_REGISTRY_TOKEN
+```
+
+### 12. Expanded Standard Library
 ```shae
 // Cryptography
 use { sha256, hmac_sha256, uuid_v4, random_bytes } from "std:crypto"
@@ -304,6 +414,7 @@ Explore ready-to-run examples in the [`examples/`](examples) directory:
 
 - 🎭 [**Actor Concurrency & Supervision Demo**](examples/actor_demo.shae): Stateful actors, request-reply `ask`, named registry, and `OneForOne` supervisor crash recovery.
 - 🌐 [**Distributed Actor Mesh Demo**](examples/actor_cluster_demo.shae): TCP clustering, cross-node discovery, remote actor `ask`, distributed worker pools, and bully leader election.
+- 🧪 [**Pure-Shae Test Runner Suite**](tests/shae/sample_suite_test.shae): Pure-Shae unit and integration tests using `std:test` assertion primitives.
 - 🚀 [**Production Microservice Showcase**](examples/realworld_service/): Complete real-world HTTP microservice integrating SQLite telemetry persistence and CSV bulk import/export.
 - 🔤 [**Unicode & Grapheme Demo**](examples/unicode_demo.shae): Extended grapheme clusters, emoji sequences, and rune slicing.
 - 🚦 [**OS Signals Demo**](examples/signals_demo.shae): Cross-platform interrupt handling and graceful server teardown.
@@ -329,14 +440,18 @@ Shae ships with an all-in-one developer toolchain:
 | `shae fmt <file.shae>` | Format source files canonically (4-space indentation) |
 | `shae fmt --check <file>` | Verify formatting without modifying files |
 | `shae check <file.shae>` | Static linter checking for unused variables, dead code, and shadowing |
+| `shae test [path] [-f <pat>] [--ast] [--nocapture]` | Built-in Pure-Shae test runner with discovery, filtering, and sub-ms timing |
+| `shae doc [path] [-o <dir>] [--format <fmt>] [--serve] [--port <p>] [--open]` | Generate HTML/Markdown/JSON API documentation with optional live HTTP server |
 | `shae pkg init [name]` | Initialize a new package with `shae.toml` manifest |
 | `shae pkg add <dep>` | Add a dependency (path or Git repository) |
 | `shae pkg install` | Resolve and install dependencies into `.shae/packages` |
+| `shae pkg pack [dir] [-o <file>]` | Package project into a compressed `.shaepkg` archive with SHA-256 integrity verification |
+| `shae pkg publish [dir] [--registry <url>] [--token <tok>] [--dry-run]` | Publish package archive to local filesystem or remote package registry |
+| `shae pkg verify <pkg> <sha256>` | Cryptographically verify `.shaepkg` archive integrity checksum |
 | `shae bundle <file> [-o <bin>] [--strip] [--no-bytecode]` | Bundle app and its dependencies into a standalone binary with embedded precompiled bytecode |
 | `shae link <file.shae> [-o <bin>]` | Link script into a standalone 64-bit ELF or PE native executable |
 | `shae wasm <file.shae> [-o <out.wasm>] [--run]` | Compile script into WebAssembly binary bytecode (.wasm) and optionally execute via built-in runner |
 | `shae lsp` | Run the Language Server Protocol daemon for editor integration |
-| `shae test [path]` | Run Shae tests (`*_test.shae`) (defaults to Bytecode VM; use `--engine=ast` for AST) |
 | `shae repl` | Start interactive REPL (defaults to Bytecode VM; use `--engine=ast` for AST) |
 
 ---
@@ -366,7 +481,7 @@ The output executable embeds all imported dependencies and executes directly wit
 
 ## 🔮 Upcoming Features & Horizon Roadmap
 
-Shae is advancing toward an enterprise-scale systems ecosystem. Upcoming major phases:
+Shae is advancing toward an enterprise-scale systems ecosystem. Recent milestones and future horizon phases:
 
 1. **Phase 4: Actor-Based Concurrency & Distributed Mailboxes** *(Completed in v0.3.1)*:
    - Lightweight isolated actors with unbounded mailboxes and message passing (`std:actor`).
@@ -394,15 +509,25 @@ Shae is advancing toward an enterprise-scale systems ecosystem. Upcoming major p
    - First-class coroutines (`async` / `await`) and asynchronous concurrency combinators (`std:async`).
    - Standard automated documentation engine (`shae doc`) with static HTML, Markdown, and JSON export.
    - Package registry and publishing pipeline (`shae pkg pack` / `publish`) with `.shaepkg` archives.
+6. **Phase 9: Built-In Pure-Shae Test Runner & Live Documentation Server** *(Completed in v0.4.0)*:
+   - Pure-Shae test runner CLI `shae test` with test discovery, `-f`/`--filter` matching, and sub-ms timing.
+   - Standard test assertion library `std:test` (`test`, `assert`, `assert_eq`, `assert_ne`, `assert_throws`).
+   - Dual-engine VM and AST test execution parity.
+   - Embedded live HTTP documentation server `shae doc --serve` with instant local browsing.
+7. **Phase 10: Horizon & Future Systems Roadmap**:
+   - Direct LLVM SSA code generation target for native freestanding binary compilation.
+   - Zero-copy typed memory buffers and typed struct layouts.
+   - Hot-code reloading for distributed cluster nodes and long-running daemons.
 
 ---
 
 ## 🧪 Running Tests
 
-Shae contains 255+ comprehensive integration and multi-platform test suites:
+Shae contains 280+ comprehensive integration and multi-platform test suites:
 ```bash
 cargo test
 cargo check --tests
+shae test
 ```
 
 ---
@@ -410,4 +535,3 @@ cargo check --tests
 ## 📄 License
 
 Distributed under the [MIT License](LICENSE). Copyright (c) 2026 Satya Prakash (spdedsec).
-
