@@ -178,7 +178,18 @@ impl Evaluator {
                     } else if candidate.with_extension("shae").exists() {
                         candidate.with_extension("shae")
                     } else {
-                        candidate
+                        let rel_trimmed = path_str.strip_prefix("./").unwrap_or(path_str);
+                        let lib_compiler =
+                            std::path::PathBuf::from("lib/compiler").join(rel_trimmed);
+                        if lib_compiler.exists() {
+                            lib_compiler
+                        } else if lib_compiler.with_extension("shaec").exists() {
+                            lib_compiler.with_extension("shaec")
+                        } else if lib_compiler.with_extension("shae").exists() {
+                            lib_compiler.with_extension("shae")
+                        } else {
+                            candidate
+                        }
                     }
                 } else {
                     PathBuf::from(path_str)

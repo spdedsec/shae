@@ -39,6 +39,11 @@ impl Chunk {
     }
 
     pub fn add_constant(&mut self, value: Value) -> usize {
+        for (i, c) in self.constants.iter().enumerate() {
+            if c == &value {
+                return i;
+            }
+        }
         self.constants.push(value);
         self.constants.len() - 1
     }
@@ -49,6 +54,12 @@ impl Chunk {
             out.push_str("Constants:\n");
             for (i, c) in self.constants.iter().enumerate() {
                 out.push_str(&format!("  [{:04}] {}\n", i, c.to_display()));
+                if let Value::CompiledFunction(f) = c {
+                    out.push_str(
+                        &f.chunk
+                            .disassemble(&format!("fn {}", f.name.as_deref().unwrap_or("anon"))),
+                    );
+                }
             }
         }
         out.push_str("Disassembly:\n");

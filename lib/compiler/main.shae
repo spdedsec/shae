@@ -25,7 +25,7 @@ use {
     EXPORT_FUNC
 } from "./wasm.shae"
 use { read, write_bytes, exists } from "std:fs"
-use { platform } from "std:sys"
+use { platform, args } from "std:sys"
 
 fn compile_to_bytecode(input_path, output_path) {
     let out_file = output_path
@@ -99,3 +99,93 @@ fn driver_dispatch(action, input_path, output_path, format) {
         return "Unknown compiler action: " + action
     }
 }
+
+
+fn run_cli_driver() {
+    let argv = args()
+    if argv.len == 0 {
+        return null
+    }
+
+    let prog = argv[0]
+    let is_shaec = prog.contains("shaec") or prog.ends_with("shaec") or prog.ends_with("shaec.exe")
+    let is_stage2_or_bytecode = (argv.len > 1 and (argv[1].ends_with(".shaec") or argv[1].contains("shaec_stage2")))
+    let is_direct_compiler_script = (argv.len > 1 and (argv[1].ends_with("lib/compiler/main.shae") or argv[1] == "lib/compiler/main.shae" or argv[1] == "./lib/compiler/main.shae"))
+
+    if not is_shaec and not is_stage2_or_bytecode and not is_direct_compiler_script {
+        return null
+    }
+
+    let start_idx = 1
+    if is_direct_compiler_script or is_stage2_or_bytecode {
+        start_idx = 2
+    }
+
+    if argv.len <= start_idx {
+        println("Shae Compiler Driver (shaec)")
+        println("Usage: shaec [compile|disasm|link|wasm] <input.shae> [-o <output>]")
+        return 0
+    }
+
+    let first_arg = argv[start_idx]
+    let action = "compile"
+    let input_path = null
+    let output_path = null
+    let format = "elf"
+
+    let i = start_idx
+    if first_arg == "compile" or first_arg == "disasm" or first_arg == "link" or first_arg == "wasm" {
+        action = first_arg
+        i = i + 1
+    }
+
+    while i < argv.len {
+        let arg = argv[i]
+        if (arg == "-o" or arg == "--output") and i + 1 < argv.len {
+            output_path = argv[i + 1]
+            i = i + 2
+        } else if (arg == "-f" or arg == "--format") and i + 1 < argv.len {
+            format = argv[i + 1]
+            i = i + 2
+        } else if input_path == null {
+            input_path = arg
+            i = i + 1
+        } else if output_path == null {
+            output_path = arg
+            i = i + 1
+        } else {
+            i = i + 1
+        }
+    }
+
+    if input_path == null {
+        println("Error: No input file specified")
+        return 1
+    }
+
+    let res = driver_dispatch(action, input_path, output_path, format)
+    if action == "compile" {
+        let out_target = output_path
+        if out_target == null {
+            out_target = input_path + "c"
+        }
+        println("✨ Compiled '", input_path, "' -> '", out_target, "' (", res, " bytes)")
+    } else if action == "disasm" {
+        println(res)
+    } else if action == "link" {
+        let out_target = output_path
+        if out_target == null {
+            out_target = input_path + ".bin"
+        }
+        println("⚡ Successfully linked standalone binary: ", out_target, " (", res, " bytes)")
+    } else if action == "wasm" {
+        let out_target = output_path
+        if out_target == null {
+            out_target = input_path + ".wasm"
+        }
+        println("✨ Compiled WebAssembly binary: ", out_target, " (", res, " bytes)")
+    }
+    return 0
+}
+
+run_cli_driver()

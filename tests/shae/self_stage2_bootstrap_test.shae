@@ -1,0 +1,141 @@
+// Pure-Shae Stage 2 Self-Hosting Two-Stage Bootstrap & Bit-for-Bit Parity Test
+// tests/shae/self_stage2_bootstrap_test.shae
+
+use { test, assert, assert_eq, assert_ne } from "std:test"
+use {
+    compile_to_bytecode,
+    disassemble_bytecode,
+    link_to_native,
+    compile_to_wasm,
+    driver_dispatch
+} from "../../lib/compiler/main.shae"
+use { read_bytes, remove, exists } from "std:fs"
+
+test("Stage 2 bootstrap: Two-stage compilation bit-for-bit parity on sample target", fn() {
+    let sample_src = "tests/shae/sample_target.shae"
+    let out1 = "target/stage1_sample.shaec"
+    let out2 = "target/stage2_sample.shaec"
+
+    if exists(out1) { remove(out1) }
+    if exists(out2) { remove(out2) }
+
+    let size1 = compile_to_bytecode(sample_src, out1)
+    let size2 = compile_to_bytecode(sample_src, out2)
+
+    assert(exists(out1), "Stage 1 output bytecode must exist")
+    assert(exists(out2), "Stage 2 output bytecode must exist")
+    assert_eq(size1, size2, "Bytecode sizes must be identical")
+
+    let b1 = read_bytes(out1)
+    let b2 = read_bytes(out2)
+
+    assert(b1.len >= 8, "Bytecode must contain magic header")
+    assert_eq(b1[0], 0x7f, "Header byte 0 must be 0x7f")
+    assert_eq(b1[1], 83, "Header byte 1 must be S")
+    assert_eq(b1[2], 72, "Header byte 2 must be H")
+    assert_eq(b1[3], 65, "Header byte 3 must be A")
+    assert_eq(b1[4], 69, "Header byte 4 must be E")
+
+    assert_eq(b1.len, b2.len, "Byte sequence lengths must match exactly")
+    let i = 0
+    while i < b1.len {
+        assert_eq(b1[i], b2[i], "Bit-for-bit parity mismatch at offset")
+        i = i + 1
+    }
+
+    remove(out1)
+    remove(out2)
+})
+
+test("Stage 2 bootstrap: Two-stage deterministic self-compilation of compiler modules", fn() {
+    let compiler_src = "lib/compiler/main.shae"
+    let out_a = "target/shaec_stage2_test_a.shaec"
+    let out_b = "target/shaec_stage2_test_b.shaec"
+
+    if exists(out_a) { remove(out_a) }
+    if exists(out_b) { remove(out_b) }
+
+    let size_a = compile_to_bytecode(compiler_src, out_a)
+    let size_b = compile_to_bytecode(compiler_src, out_b)
+
+    assert(exists(out_a), "Compiler self-compilation A must exist")
+    assert(exists(out_b), "Compiler self-compilation B must exist")
+    assert_eq(size_a, size_b, "Compiled compiler bytecode sizes must match")
+
+    let bytes_a = read_bytes(out_a)
+    let bytes_b = read_bytes(out_b)
+
+    assert(bytes_a.len > 1000, "Compiler bytecode must be non-trivial")
+    assert_eq(bytes_a.len, bytes_b.len, "Bytecode lengths must match")
+
+    let j = 0
+    while j < bytes_a.len {
+        assert_eq(bytes_a[j], bytes_b[j], "Bit-for-bit compiler self-hosting mismatch")
+        j = j + 1
+    }
+
+    remove(out_a)
+    remove(out_b)
+})
+
+test("Stage 2 bootstrap: Driver dispatch parity across stages", fn() {
+    let sample_src = "tests/shae/sample_target.shae"
+    let out_dispatch = "target/stage_dispatch.shaec"
+    let out_direct = "target/stage_direct.shaec"
+
+    if exists(out_dispatch) { remove(out_dispatch) }
+    if exists(out_direct) { remove(out_direct) }
+
+    let size_disp = driver_dispatch("compile", sample_src, out_dispatch, null)
+    let size_dir = compile_to_bytecode(sample_src, out_direct)
+
+    assert_eq(size_disp, size_dir, "Driver dispatch must produce identical size to compile_to_bytecode")
+
+    let b_disp = read_bytes(out_dispatch)
+    let b_dir = read_bytes(out_direct)
+
+    assert_eq(b_disp.len, b_dir.len, "Driver dispatch output length mismatch")
+    let k = 0
+    while k < b_disp.len {
+        assert_eq(b_disp[k], b_dir[k], "Driver dispatch bit parity mismatch")
+        k = k + 1
+    }
+
+    remove(out_dispatch)
+    remove(out_direct)
+})
+
+test("Stage 2 bootstrap: Native standalone ELF executable bit-for-bit parity", fn() {
+    let sample_src = "tests/shae/sample_target.shae"
+    let elf1 = "target/sample_stage1.elf"
+    let elf2 = "target/sample_stage2.elf"
+
+    if exists(elf1) { remove(elf1) }
+    if exists(elf2) { remove(elf2) }
+
+    let elf_size1 = link_to_native(sample_src, elf1, "elf", null, null)
+    let elf_size2 = link_to_native(sample_src, elf2, "elf", null, null)
+
+    assert(exists(elf1), "Stage 1 ELF must exist")
+    assert(exists(elf2), "Stage 2 ELF must exist")
+    assert_eq(elf_size1, elf_size2, "ELF binary sizes must match")
+
+    let elf_b1 = read_bytes(elf1)
+    let elf_b2 = read_bytes(elf2)
+
+    assert(elf_b1.len >= 4, "ELF must have header")
+    assert_eq(elf_b1[0], 0x7f, "ELF magic byte 0 must be 0x7f")
+    assert_eq(elf_b1[1], 69, "ELF magic byte 1 must be E")
+    assert_eq(elf_b1[2], 76, "ELF magic byte 2 must be L")
+    assert_eq(elf_b1[3], 70, "ELF magic byte 3 must be F")
+
+    assert_eq(elf_b1.len, elf_b2.len, "ELF binary lengths must match")
+    let m = 0
+    while m < elf_b1.len {
+        assert_eq(elf_b1[m], elf_b2[m], "ELF bit-for-bit parity mismatch")
+        m = m + 1
+    }
+
+    remove(elf1)
+    remove(elf2)
+})

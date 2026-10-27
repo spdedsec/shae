@@ -1,0 +1,160 @@
+// Pure-Shae Authenticated Cryptography & KDF Suite Test
+// tests/shae/crypto_suite_test.shae
+// Validates std:crypto AEAD, PBKDF2, HKDF, and constant-time equality.
+
+use { test, assert, assert_eq, assert_ne, assert_throws } from "std:test"
+use {
+    encrypt_aes_gcm,
+    decrypt_aes_gcm,
+    encrypt_chacha20,
+    decrypt_chacha20,
+    pbkdf2_sha256,
+    pbkdf2_sha512,
+    hkdf_sha256,
+    hkdf_sha512,
+    timing_safe_equal
+} from "std:crypto"
+
+test("AES-256-GCM encryption, decryption, and combined payload roundtrip", fn() {
+    let key = "12345678901234567890123456789012"
+    let nonce = "123456789012"
+    let plaintext = [83, 104, 97, 101, 32, 67, 114, 121, 112, 116, 111] // 'Shae Crypto'
+    let aad = "shae-authenticated-data-1"
+
+    let enc = encrypt_aes_gcm(key, nonce, plaintext, aad)
+    assert_eq(enc.nonce.len, 12, "AES-GCM nonce must be 12 bytes")
+    assert_eq(enc.tag.len, 16, "AES-GCM auth tag must be 16 bytes")
+    assert_eq(enc.combined.len, enc.ciphertext.len + enc.tag.len)
+
+    // Decrypt using separated ciphertext and tag
+    let dec = decrypt_aes_gcm(key, nonce, enc.ciphertext, enc.tag, aad)
+    assert_eq(dec, plaintext, "Decrypted plaintext must match original")
+
+    // Decrypt using combined payload
+    let dec_comb = decrypt_aes_gcm(key, nonce, enc.combined, null, aad)
+    assert_eq(dec_comb, plaintext, "Combined decryption must match original")
+});
+
+test("AES-256-GCM secure random nonce auto-generation", fn() {
+    let key = "abcdefghijklmnopqrstuvwxyz012345"
+    let message = "Self-hosted cryptographic security"
+
+    let enc1 = encrypt_aes_gcm(key, null, message)
+    let enc2 = encrypt_aes_gcm(key, null, message)
+
+    assert_eq(enc1.nonce.len, 12)
+    assert_eq(enc2.nonce.len, 12)
+    assert_ne(enc1.nonce, enc2.nonce, "Auto-generated nonces must be unique")
+    assert_ne(enc1.ciphertext, enc2.ciphertext, "Ciphertexts must differ across distinct nonces")
+
+    let dec1 = decrypt_aes_gcm(key, enc1.nonce, enc1.ciphertext, enc1.tag)
+    let dec2 = decrypt_aes_gcm(key, enc2.nonce, enc2.ciphertext, enc2.tag)
+    assert_eq(dec1, dec2)
+});
+
+test("AES-256-GCM authentication integrity validation and rejection", fn() {
+    let key = "12345678901234567890123456789012"
+    let nonce = "123456789012"
+    let enc = encrypt_aes_gcm(key, nonce, "Integrity-Verified", "valid-aad")
+
+    // Tampered ciphertext rejection
+    let tampered = []
+    let i = 0
+    while i < enc.ciphertext.len {
+        tampered.push(enc.ciphertext[i])
+        i = i + 1
+    }
+    tampered[0] = (tampered[0] + 7) % 256
+
+    assert_throws(fn() {
+        decrypt_aes_gcm(key, nonce, tampered, enc.tag, "valid-aad")
+    }, "Decryption must throw on tampered ciphertext")
+
+    // Mismatched AAD rejection
+    assert_throws(fn() {
+        decrypt_aes_gcm(key, nonce, enc.ciphertext, enc.tag, "tampered-aad")
+    }, "Decryption must throw on mismatched AAD")
+
+    // Key size validation (must be 32 bytes)
+    assert_throws(fn() {
+        encrypt_aes_gcm("short-key", nonce, "hello")
+    }, "Short key must be rejected")
+
+    // Nonce size validation (must be 12 bytes)
+    assert_throws(fn() {
+        encrypt_aes_gcm(key, "bad-nonce", "hello")
+    }, "Invalid nonce size must be rejected")
+});
+
+test("ChaCha20-Poly1305 encryption, decryption, and authentication", fn() {
+    let key = [
+        10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160,
+        170, 180, 190, 200, 210, 220, 230, 240, 250, 1, 2, 3, 4, 5, 6, 7
+    ]
+    let nonce = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    let msg = [99, 104, 97, 99, 104, 97]
+    let aad = "chacha-auth-meta"
+
+    let enc = encrypt_chacha20(key, nonce, msg, aad)
+    assert_eq(enc.nonce.len, 12)
+    assert_eq(enc.tag.len, 16)
+
+    let dec = decrypt_chacha20(key, nonce, enc.ciphertext, enc.tag, aad)
+    assert_eq(dec, msg, "ChaCha20 plaintext must match")
+
+    // Nonce auto-generation
+    let auto_enc = encrypt_chacha20(key, null, msg)
+    assert_eq(auto_enc.nonce.len, 12)
+    let auto_dec = decrypt_chacha20(key, auto_enc.nonce, auto_enc.ciphertext, auto_enc.tag)
+    assert_eq(auto_dec, msg)
+
+    // Tampered rejection
+    assert_throws(fn() {
+        decrypt_chacha20(key, nonce, enc.ciphertext, enc.tag, "wrong-aad")
+    }, "ChaCha20 decryption must reject invalid AAD")
+});
+
+test("PBKDF2-SHA256 and PBKDF2-SHA512 key derivation", fn() {
+    let pass = "quantum-resistant-passphrase"
+    let salt = "random-salt-1234"
+    let iters = 2000
+    let out_len = 32
+
+    let k_sha256 = pbkdf2_sha256(pass, salt, iters, out_len)
+    let k_sha512 = pbkdf2_sha512(pass, salt, iters, out_len)
+
+    assert_eq(k_sha256.len, 32)
+    assert_eq(k_sha512.len, 32)
+    assert_ne(k_sha256, k_sha512, "SHA256 and SHA512 PBKDF2 outputs must differ")
+
+    // Deterministic reproducibility
+    let k_sha256_repeat = pbkdf2_sha256(pass, salt, iters, out_len)
+    assert_eq(k_sha256, k_sha256_repeat)
+});
+
+test("HKDF-SHA256 and HKDF-SHA512 key derivation", fn() {
+    let secret = "master-key-seed-material"
+    let salt = "hkdf-salt-entropy"
+    let info = "protocol-v1-encryption-key"
+    let out_len = 48
+
+    let okm256 = hkdf_sha256(secret, salt, info, out_len)
+    let okm512 = hkdf_sha512(secret, salt, info, out_len)
+
+    assert_eq(okm256.len, 48)
+    assert_eq(okm512.len, 48)
+    assert_ne(okm256, okm512)
+
+    let okm256_repeat = hkdf_sha256(secret, salt, info, out_len)
+    assert_eq(okm256, okm256_repeat)
+});
+
+test("Constant-time verification with timing_safe_equal", fn() {
+    assert(timing_safe_equal("hello world", "hello world"))
+    assert(not timing_safe_equal("hello world", "hello worlX"))
+    assert(not timing_safe_equal("short", "longer text"))
+
+    assert(timing_safe_equal([10, 20, 30], [10, 20, 30]))
+    assert(not timing_safe_equal([10, 20, 30], [10, 20, 31]))
+    assert(not timing_safe_equal([10, 20], [10, 20, 30]))
+});

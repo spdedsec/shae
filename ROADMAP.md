@@ -353,3 +353,40 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 - [x] **Dual-Engine Integration Tests & Pure-Shae Suite**
   - [x] Pure-Shae sample test suite `tests/shae/sample_suite_test.shae` exercising the full `std:test` API.
   - [x] Comprehensive Rust integration test suite `tests/shae_test_runner_test.rs` validating test discovery, dual-engine runs, filtering, failure diffs, and live doc server.
+
+---
+
+### **Chunk 26: Authenticated Symmetric Cryptography & Key Derivation (`std:crypto`)** *(Completed)*
+- [x] **Authenticated Encryption with Associated Data (AEAD)**
+  - [x] AES-256-GCM (`encrypt_aes_gcm`, `decrypt_aes_gcm`): 128-bit authentication tags, optional AAD, flexible string/[u8] inputs, auto-generated cryptographically secure 12-byte random nonce, and structured map outputs (`ciphertext`, `nonce`, `tag`, `combined`).
+  - [x] ChaCha20-Poly1305 (`encrypt_chacha20`, `decrypt_chacha20`): 256-bit stream cipher with Poly1305 authenticator, flexible input types, auto-generated nonces, and structured map outputs.
+  - [x] Authentication tag verification and rejection of tampered ciphertext, tags, or mismatched AAD.
+- [x] **Key Derivation Functions (KDF)**
+  - [x] PBKDF2 (`pbkdf2_sha256`, `pbkdf2_sha512`): Password-based key derivation with configurable salt, iteration counts, and output length.
+  - [x] HKDF (`hkdf_sha256`, `hkdf_sha512`): HMAC-based Extract-and-Expand Key Derivation with optional salt, input key material (IKM), optional context info, and configurable output length.
+- [x] **Constant-Time Verification**
+  - [x] Constant-time equality checking (`timing_safe_equal`): Leak-free verification against timing-channel attacks.
+- [x] **Dual-Engine & Integration Test Verification**
+  - [x] Pure-Shae test suite `tests/shae/crypto_suite_test.shae` exercising full crypto suite across VM and AST Evaluator.
+  - [x] Rust integration test suite `tests/crypto_advanced_test.rs` validating 8 comprehensive test vectors across both engines.
+
+---
+
+### **Chunk 27: Stage 2 Self-Hosting Two-Stage Bootstrap & Bit-for-Bit Parity** *(Completed)*
+- [x] **Self-Hosting Compiler Fixes & Parity Hardening**
+  - [x] Added missing `<` (`TOKEN_LT`) and `>` (`TOKEN_GT`) lexical token generation to `lib/compiler/lexer.shae`.
+  - [x] Fixed expression-statement assignment parser precedence conflict in `lib/compiler/parser.shae` allowing assignments (`=`, `+=`, `-=`) to properly emit `AssignStmt`.
+  - [x] Added statement-level `OP_POP` cleanup for `VariableExpr` assignments in `lib/compiler/codegen.shae` ensuring stack consistency.
+  - [x] Hardened chunk constant pool deduplication (`add_constant`) to prevent constant pool overflow.
+  - [x] Added robust path resolution fallback for compiler submodules when running standalone `.shaec` bytecode files.
+  - [x] Implemented CLI driver entrypoint `run_cli_driver()` in `lib/compiler/main.shae` for standalone compilation, disassembly, and linking.
+- [x] **Two-Stage Bootstrap Pipeline (`Stage 0 -> Stage 1 -> Stage 2`)**
+  - [x] Stage 0 compiler links self-hosting compiler binary: `shae link lib/compiler/main.shae -o target/shaec`.
+  - [x] Stage 0 compiler compiles `lib/compiler/main.shae` to produce Stage 1 bytecode (`target/shaec_stage2.shaec`).
+  - [x] Stage 1 compiler executes via Shae VM to compile `lib/compiler/main.shae` to produce Stage 2 bytecode (`target/shaec_stage3.shaec`).
+  - [x] Fixed-point convergence: Byte-for-byte identical verification between Stage 1 and Stage 2 bytecode (`cmp target/shaec_stage2.shaec target/shaec_stage3.shaec`).
+- [x] **Bit-for-Bit User Target Parity**
+  - [x] Verified compiling user programs with Stage 0 and Stage 1 produces identical byte sequences.
+- [x] **Dual-Engine & Integration Test Verification**
+  - [x] Pure-Shae test suite `tests/shae/self_stage2_bootstrap_test.shae` exercising two-stage compilation, deterministic self-compilation, driver dispatch, and ELF linking.
+  - [x] Rust integration test suite `tests/stage2_bootstrap_test.rs` proving two-stage bootstrap pipeline, bit-for-bit parity, and dual-engine VM/AST parity.

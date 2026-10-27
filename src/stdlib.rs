@@ -773,6 +773,28 @@ fn build_crypto_module() -> Value {
         ("siphash64", crypto_siphash),
         ("siphash_hex", crypto_siphash_hex),
         ("siphashHex", crypto_siphash_hex),
+        ("encrypt_aes_gcm", crypto_encrypt_aes_gcm),
+        ("encryptAesGcm", crypto_encrypt_aes_gcm),
+        ("decrypt_aes_gcm", crypto_decrypt_aes_gcm),
+        ("decryptAesGcm", crypto_decrypt_aes_gcm),
+        ("encrypt_chacha20", crypto_encrypt_chacha20),
+        ("encryptChacha20", crypto_encrypt_chacha20),
+        ("encrypt_chacha20_poly1305", crypto_encrypt_chacha20),
+        ("encryptChacha20Poly1305", crypto_encrypt_chacha20),
+        ("decrypt_chacha20", crypto_decrypt_chacha20),
+        ("decryptChacha20", crypto_decrypt_chacha20),
+        ("decrypt_chacha20_poly1305", crypto_decrypt_chacha20),
+        ("decryptChacha20Poly1305", crypto_decrypt_chacha20),
+        ("pbkdf2_sha256", crypto_pbkdf2_sha256),
+        ("pbkdf2Sha256", crypto_pbkdf2_sha256),
+        ("pbkdf2_sha512", crypto_pbkdf2_sha512),
+        ("pbkdf2Sha512", crypto_pbkdf2_sha512),
+        ("hkdf_sha256", crypto_hkdf_sha256),
+        ("hkdfSha256", crypto_hkdf_sha256),
+        ("hkdf_sha512", crypto_hkdf_sha512),
+        ("hkdfSha512", crypto_hkdf_sha512),
+        ("timing_safe_equal", crypto_timing_safe_equal),
+        ("timingSafeEqual", crypto_timing_safe_equal),
     ])
 }
 
@@ -1042,6 +1064,446 @@ fn crypto_siphash_hex(
         }
     };
     Ok(Value::String(format!("{:016x}", h)))
+}
+
+fn crypto_value_to_bytes(v: &Value, name: &str, span: Span) -> Result<Vec<u8>, RuntimeError> {
+    match v {
+        Value::String(s) => Ok(s.as_bytes().to_vec()),
+        Value::Array(arr) => {
+            let guard = arr.read().unwrap();
+            let mut out = Vec::with_capacity(guard.len());
+            for (idx, item) in guard.iter().enumerate() {
+                let byte_val = match item {
+                    Value::Int(n) => *n,
+                    Value::Float(f) => *f as i64,
+                    Value::Number(n) => *n as i64,
+                    _ => {
+                        return Err(RuntimeError::new(format!(
+                            "{}: expected integer byte in array at index {}, got {}",
+                            name,
+                            idx,
+                            item.type_name()
+                        ))
+                        .at(span));
+                    }
+                };
+                if !(0..=255).contains(&byte_val) {
+                    return Err(RuntimeError::new(format!(
+                        "{}: byte at index {} out of range [0, 255]: {}",
+                        name, idx, byte_val
+                    ))
+                    .at(span));
+                }
+                out.push(byte_val as u8);
+            }
+            Ok(out)
+        }
+        _ => Err(RuntimeError::new(format!(
+            "{} expects string or byte array, got {}",
+            name,
+            v.type_name()
+        ))
+        .at(span)),
+    }
+}
+
+fn crypto_bytes_to_value(bytes: &[u8]) -> Value {
+    let list: Vec<Value> = bytes.iter().map(|&b| Value::Int(b as i64)).collect();
+    Value::Array(Arc::new(RwLock::new(list)))
+}
+
+fn crypto_make_encryption_result(ciphertext: &[u8], nonce: &[u8], tag: &[u8]) -> Value {
+    let mut combined = Vec::with_capacity(ciphertext.len() + tag.len());
+    combined.extend_from_slice(ciphertext);
+    combined.extend_from_slice(tag);
+
+    let mut map = IndexMap::new();
+    map.insert("ciphertext".to_string(), crypto_bytes_to_value(ciphertext));
+    map.insert("nonce".to_string(), crypto_bytes_to_value(nonce));
+    map.insert("tag".to_string(), crypto_bytes_to_value(tag));
+    map.insert("combined".to_string(), crypto_bytes_to_value(&combined));
+    Value::Map(Arc::new(RwLock::new(map)))
+}
+
+fn aead_encrypt(
+    alg: &'static ring::aead::Algorithm,
+    func_name: &str,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.len() < 3 || args.len() > 4 {
+        return Err(RuntimeError::new(format!(
+            "{} expects 3 or 4 arguments: (key, nonce, plaintext, [aad])",
+            func_name
+        ))
+        .at(span));
+    }
+
+    let key_bytes = crypto_value_to_bytes(&args[0], &format!("{} key", func_name), span)?;
+    if key_bytes.len() != 32 {
+        return Err(RuntimeError::new(format!(
+            "{}: key must be exactly 32 bytes (256-bit), got {} bytes",
+            func_name,
+            key_bytes.len()
+        ))
+        .at(span));
+    }
+
+    let nonce_bytes = match &args[1] {
+        Value::Null => {
+            let rng = ring::rand::SystemRandom::new();
+            let mut buf = [0u8; 12];
+            rng.fill(&mut buf).map_err(|e| {
+                RuntimeError::new(format!(
+                    "{}: random nonce generation error: {}",
+                    func_name, e
+                ))
+                .at(span)
+            })?;
+            buf.to_vec()
+        }
+        v => {
+            let bytes = crypto_value_to_bytes(v, &format!("{} nonce", func_name), span)?;
+            if bytes.len() != 12 {
+                return Err(RuntimeError::new(format!(
+                    "{}: nonce must be exactly 12 bytes (96-bit), got {} bytes",
+                    func_name,
+                    bytes.len()
+                ))
+                .at(span));
+            }
+            bytes
+        }
+    };
+
+    let plaintext_bytes =
+        crypto_value_to_bytes(&args[2], &format!("{} plaintext", func_name), span)?;
+
+    let aad_bytes = if args.len() >= 4 && !matches!(args[3], Value::Null) {
+        crypto_value_to_bytes(&args[3], &format!("{} aad", func_name), span)?
+    } else {
+        Vec::new()
+    };
+
+    let unbound_key = ring::aead::UnboundKey::new(alg, &key_bytes).map_err(|e| {
+        RuntimeError::new(format!("{}: key initialization failed: {}", func_name, e)).at(span)
+    })?;
+    let less_safe_key = ring::aead::LessSafeKey::new(unbound_key);
+    let nonce = ring::aead::Nonce::try_assume_unique_for_key(&nonce_bytes).map_err(|e| {
+        RuntimeError::new(format!("{}: nonce initialization failed: {}", func_name, e)).at(span)
+    })?;
+
+    let mut in_out = plaintext_bytes;
+    let tag = less_safe_key
+        .seal_in_place_separate_tag(nonce, ring::aead::Aad::from(&aad_bytes), &mut in_out)
+        .map_err(|e| {
+            RuntimeError::new(format!("{}: encryption failed: {}", func_name, e)).at(span)
+        })?;
+
+    Ok(crypto_make_encryption_result(
+        &in_out,
+        &nonce_bytes,
+        tag.as_ref(),
+    ))
+}
+
+fn aead_decrypt(
+    alg: &'static ring::aead::Algorithm,
+    func_name: &str,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.len() < 3 || args.len() > 5 {
+        return Err(RuntimeError::new(format!(
+            "{} expects 3 to 5 arguments: (key, nonce, ciphertext, [tag], [aad])",
+            func_name
+        ))
+        .at(span));
+    }
+
+    let key_bytes = crypto_value_to_bytes(&args[0], &format!("{} key", func_name), span)?;
+    if key_bytes.len() != 32 {
+        return Err(RuntimeError::new(format!(
+            "{}: key must be exactly 32 bytes (256-bit), got {} bytes",
+            func_name,
+            key_bytes.len()
+        ))
+        .at(span));
+    }
+
+    let nonce_bytes = crypto_value_to_bytes(&args[1], &format!("{} nonce", func_name), span)?;
+    if nonce_bytes.len() != 12 {
+        return Err(RuntimeError::new(format!(
+            "{}: nonce must be exactly 12 bytes (96-bit), got {} bytes",
+            func_name,
+            nonce_bytes.len()
+        ))
+        .at(span));
+    }
+
+    let ciphertext_bytes =
+        crypto_value_to_bytes(&args[2], &format!("{} ciphertext", func_name), span)?;
+
+    let maybe_tag = if args.len() >= 4 && !matches!(args[3], Value::Null) {
+        Some(crypto_value_to_bytes(
+            &args[3],
+            &format!("{} tag", func_name),
+            span,
+        )?)
+    } else {
+        None
+    };
+
+    let aad_bytes = if args.len() >= 5 && !matches!(args[4], Value::Null) {
+        crypto_value_to_bytes(&args[4], &format!("{} aad", func_name), span)?
+    } else {
+        Vec::new()
+    };
+
+    let mut in_out = ciphertext_bytes;
+    if let Some(tag_bytes) = maybe_tag {
+        if tag_bytes.len() != 16 {
+            return Err(RuntimeError::new(format!(
+                "{}: authentication tag must be exactly 16 bytes, got {} bytes",
+                func_name,
+                tag_bytes.len()
+            ))
+            .at(span));
+        }
+        in_out.extend_from_slice(&tag_bytes);
+    } else if in_out.len() < 16 {
+        return Err(RuntimeError::new(format!(
+            "{}: combined ciphertext too short (must be at least 16 bytes to contain tag)",
+            func_name
+        ))
+        .at(span));
+    }
+
+    let unbound_key = ring::aead::UnboundKey::new(alg, &key_bytes).map_err(|e| {
+        RuntimeError::new(format!("{}: key initialization failed: {}", func_name, e)).at(span)
+    })?;
+    let less_safe_key = ring::aead::LessSafeKey::new(unbound_key);
+    let nonce = ring::aead::Nonce::try_assume_unique_for_key(&nonce_bytes).map_err(|e| {
+        RuntimeError::new(format!("{}: nonce initialization failed: {}", func_name, e)).at(span)
+    })?;
+
+    let plaintext = less_safe_key
+        .open_in_place(nonce, ring::aead::Aad::from(&aad_bytes), &mut in_out)
+        .map_err(|_| {
+            RuntimeError::new(format!(
+                "{}: authentication failed (tampered ciphertext, invalid tag, or mismatched key/nonce/aad)",
+                func_name
+            ))
+            .at(span)
+        })?;
+
+    Ok(crypto_bytes_to_value(plaintext))
+}
+
+fn crypto_encrypt_aes_gcm(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    aead_encrypt(
+        &ring::aead::AES_256_GCM,
+        "crypto.encrypt_aes_gcm",
+        args,
+        span,
+    )
+}
+
+fn crypto_decrypt_aes_gcm(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    aead_decrypt(
+        &ring::aead::AES_256_GCM,
+        "crypto.decrypt_aes_gcm",
+        args,
+        span,
+    )
+}
+
+fn crypto_encrypt_chacha20(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    aead_encrypt(
+        &ring::aead::CHACHA20_POLY1305,
+        "crypto.encrypt_chacha20",
+        args,
+        span,
+    )
+}
+
+fn crypto_decrypt_chacha20(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    aead_decrypt(
+        &ring::aead::CHACHA20_POLY1305,
+        "crypto.decrypt_chacha20",
+        args,
+        span,
+    )
+}
+
+fn pbkdf2_derive(
+    alg: ring::pbkdf2::Algorithm,
+    func_name: &str,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args(func_name, 4, &args, span)?;
+    let password = crypto_value_to_bytes(&args[0], &format!("{} password", func_name), span)?;
+    let salt = crypto_value_to_bytes(&args[1], &format!("{} salt", func_name), span)?;
+    let iters = match &args[2] {
+        Value::Int(n) if *n > 0 => *n as u32,
+        Value::Float(f) if *f > 0.0 => *f as u32,
+        Value::Number(n) if *n > 0.0 => *n as u32,
+        _ => {
+            return Err(RuntimeError::new(format!(
+                "{}: iterations must be a positive integer",
+                func_name
+            ))
+            .at(span));
+        }
+    };
+    let non_zero_iters = std::num::NonZeroU32::new(iters).ok_or_else(|| {
+        RuntimeError::new(format!("{}: iterations must be non-zero", func_name)).at(span)
+    })?;
+
+    let out_len = match &args[3] {
+        Value::Int(n) if *n > 0 => *n as usize,
+        Value::Float(f) if *f > 0.0 => *f as usize,
+        Value::Number(n) if *n > 0.0 => *n as usize,
+        _ => {
+            return Err(RuntimeError::new(format!(
+                "{}: output_len must be a positive integer",
+                func_name
+            ))
+            .at(span));
+        }
+    };
+
+    let mut out = vec![0u8; out_len];
+    ring::pbkdf2::derive(alg, non_zero_iters, &salt, &password, &mut out);
+    Ok(crypto_bytes_to_value(&out))
+}
+
+fn crypto_pbkdf2_sha256(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    pbkdf2_derive(
+        ring::pbkdf2::PBKDF2_HMAC_SHA256,
+        "crypto.pbkdf2_sha256",
+        args,
+        span,
+    )
+}
+
+fn crypto_pbkdf2_sha512(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    pbkdf2_derive(
+        ring::pbkdf2::PBKDF2_HMAC_SHA512,
+        "crypto.pbkdf2_sha512",
+        args,
+        span,
+    )
+}
+
+struct CryptoHkdfLen(usize);
+impl ring::hkdf::KeyType for CryptoHkdfLen {
+    fn len(&self) -> usize {
+        self.0
+    }
+}
+
+fn hkdf_derive(
+    alg: ring::hkdf::Algorithm,
+    func_name: &str,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args(func_name, 4, &args, span)?;
+    let secret = crypto_value_to_bytes(&args[0], &format!("{} secret", func_name), span)?;
+    let salt = if matches!(args[1], Value::Null) {
+        Vec::new()
+    } else {
+        crypto_value_to_bytes(&args[1], &format!("{} salt", func_name), span)?
+    };
+    let info = if matches!(args[2], Value::Null) {
+        Vec::new()
+    } else {
+        crypto_value_to_bytes(&args[2], &format!("{} info", func_name), span)?
+    };
+
+    let out_len = match &args[3] {
+        Value::Int(n) if *n > 0 => *n as usize,
+        Value::Float(f) if *f > 0.0 => *f as usize,
+        Value::Number(n) if *n > 0.0 => *n as usize,
+        _ => {
+            return Err(RuntimeError::new(format!(
+                "{}: output_len must be a positive integer",
+                func_name
+            ))
+            .at(span));
+        }
+    };
+
+    let salt_handler = ring::hkdf::Salt::new(alg, &salt);
+    let prk = salt_handler.extract(&secret);
+    let info_slices = [&info[..]];
+    let okm = prk
+        .expand(&info_slices, CryptoHkdfLen(out_len))
+        .map_err(|e| {
+            RuntimeError::new(format!("{}: HKDF expand failed: {}", func_name, e)).at(span)
+        })?;
+
+    let mut out = vec![0u8; out_len];
+    okm.fill(&mut out).map_err(|e| {
+        RuntimeError::new(format!("{}: HKDF fill failed: {}", func_name, e)).at(span)
+    })?;
+
+    Ok(crypto_bytes_to_value(&out))
+}
+
+fn crypto_hkdf_sha256(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    hkdf_derive(ring::hkdf::HKDF_SHA256, "crypto.hkdf_sha256", args, span)
+}
+
+fn crypto_hkdf_sha512(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    hkdf_derive(ring::hkdf::HKDF_SHA512, "crypto.hkdf_sha512", args, span)
+}
+
+fn crypto_timing_safe_equal(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("crypto.timing_safe_equal", 2, &args, span)?;
+    let a = crypto_value_to_bytes(&args[0], "crypto.timing_safe_equal a", span)?;
+    let b = crypto_value_to_bytes(&args[1], "crypto.timing_safe_equal b", span)?;
+    #[allow(deprecated)]
+    let is_equal = ring::constant_time::verify_slices_are_equal(&a, &b).is_ok();
+    Ok(Value::Bool(is_equal))
 }
 
 // -------------------------------------------------------------

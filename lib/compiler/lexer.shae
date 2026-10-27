@@ -452,6 +452,8 @@ fn tokenize(source) {
         if c == "^" { tokens.push(make_token(TOKEN_CARET, "^", start_line, start_col)); continue }
         if c == "~" { tokens.push(make_token(TOKEN_TILDE, "~", start_line, start_col)); continue }
         if c == "!" { tokens.push(make_token(TOKEN_NOT, "!", start_line, start_col)); continue }
+        if c == "<" { tokens.push(make_token(TOKEN_LT, "<", start_line, start_col)); continue }
+        if c == ">" { tokens.push(make_token(TOKEN_GT, ">", start_line, start_col)); continue }
     }
 
     tokens.push(make_token(TOKEN_EOF, "", line, col))

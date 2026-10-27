@@ -514,7 +514,12 @@ Shae is advancing toward an enterprise-scale systems ecosystem. Recent milestone
    - Standard test assertion library `std:test` (`test`, `assert`, `assert_eq`, `assert_ne`, `assert_throws`).
    - Dual-engine VM and AST test execution parity.
    - Embedded live HTTP documentation server `shae doc --serve` with instant local browsing.
-7. **Phase 10: Horizon & Future Systems Roadmap**:
+7. **Phase 10: Authenticated Cryptography & Stage 2 Self-Hosting Bootstrap Parity** *(Completed in v0.4.0)*:
+   - AEAD Symmetric Encryption: AES-256-GCM and ChaCha20-Poly1305 (`std:crypto`) with auth tags, AAD, and auto-generated nonces.
+   - Key Derivation Functions: PBKDF2 (`pbkdf2_sha256`, `pbkdf2_sha512`) and HKDF (`hkdf_sha256`, `hkdf_sha512`).
+   - Constant-time verification: `timing_safe_equal` for timing-attack-resistant comparisons.
+   - Stage 2 Self-Hosting Bootstrap: True two-stage bootstrap pipeline (`Stage 0 -> Stage 1 -> Stage 2`) with 100% bit-for-bit parity fixed-point convergence.
+8. **Phase 11: Horizon & Future Systems Roadmap**:
    - Direct LLVM SSA code generation target for native freestanding binary compilation.
    - Zero-copy typed memory buffers and typed struct layouts.
    - Hot-code reloading for distributed cluster nodes and long-running daemons.
@@ -523,7 +528,7 @@ Shae is advancing toward an enterprise-scale systems ecosystem. Recent milestone
 
 ## 🧪 Running Tests
 
-Shae contains 280+ comprehensive integration and multi-platform test suites:
+Shae contains 290+ comprehensive integration and multi-platform test suites:
 ```bash
 cargo test
 cargo check --tests

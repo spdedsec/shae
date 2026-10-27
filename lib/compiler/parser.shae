@@ -48,9 +48,6 @@ let PREC_UNARY = 15      // ! not - ~
 let PREC_CALL = 16       // () [] . ?.
 
 fn get_precedence(kind) {
-    if kind == TOKEN_EQUALS or kind == TOKEN_PLUS_EQUALS or kind == TOKEN_MINUS_EQUALS {
-        return PREC_ASSIGN
-    }
     if kind == TOKEN_DOUBLE_QUESTION { return PREC_COALESCE }
     if kind == TOKEN_PIPE { return PREC_PIPE }
     if kind == TOKEN_OR { return PREC_OR }
@@ -550,6 +547,20 @@ fn parse_statement(p) {
         let val = parse_expression(p, PREC_LOWEST)
         match_kind(p, TOKEN_SEMICOLON)
         return make_assign_stmt(expr, val, tok.line, tok.col)
+    }
+    if check_kind(p, TOKEN_PLUS_EQUALS) {
+        advance_token(p)
+        let val = parse_expression(p, PREC_LOWEST)
+        let add_val = make_binary_expr(expr, "+", val, tok.line, tok.col)
+        match_kind(p, TOKEN_SEMICOLON)
+        return make_assign_stmt(expr, add_val, tok.line, tok.col)
+    }
+    if check_kind(p, TOKEN_MINUS_EQUALS) {
+        advance_token(p)
+        let val = parse_expression(p, PREC_LOWEST)
+        let sub_val = make_binary_expr(expr, "-", val, tok.line, tok.col)
+        match_kind(p, TOKEN_SEMICOLON)
+        return make_assign_stmt(expr, sub_val, tok.line, tok.col)
     }
 
     match_kind(p, TOKEN_SEMICOLON)
