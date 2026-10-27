@@ -25,7 +25,7 @@ use {
     EXPORT_FUNC
 } from "./wasm.shae"
 use { read, write_bytes, exists } from "std:fs"
-use { platform, args } from "std:sys"
+use { platform, args, exit } from "std:sys"
 
 fn compile_to_bytecode(input_path, output_path) {
     let out_file = output_path
@@ -160,6 +160,7 @@ fn run_cli_driver() {
 
     if input_path == null {
         println("Error: No input file specified")
+        exit(1)
         return 1
     }
 

@@ -50,6 +50,12 @@ test("AES-256-GCM secure random nonce auto-generation", fn() {
     let dec1 = decrypt_aes_gcm(key, enc1.nonce, enc1.ciphertext, enc1.tag)
     let dec2 = decrypt_aes_gcm(key, enc2.nonce, enc2.ciphertext, enc2.tag)
     assert_eq(dec1, dec2)
+
+    // Omitted nonce form (2 arguments)
+    let enc3 = encrypt_aes_gcm(key, message)
+    assert_eq(enc3.nonce.len, 12)
+    let dec3 = decrypt_aes_gcm(key, enc3.nonce, enc3.ciphertext, enc3.tag)
+    assert_eq(dec3, dec1)
 });
 
 test("AES-256-GCM authentication integrity validation and rejection", fn() {
@@ -102,11 +108,17 @@ test("ChaCha20-Poly1305 encryption, decryption, and authentication", fn() {
     let dec = decrypt_chacha20(key, nonce, enc.ciphertext, enc.tag, aad)
     assert_eq(dec, msg, "ChaCha20 plaintext must match")
 
-    // Nonce auto-generation
+    // Nonce auto-generation (explicit null)
     let auto_enc = encrypt_chacha20(key, null, msg)
     assert_eq(auto_enc.nonce.len, 12)
     let auto_dec = decrypt_chacha20(key, auto_enc.nonce, auto_enc.ciphertext, auto_enc.tag)
     assert_eq(auto_dec, msg)
+
+    // Nonce auto-generation (omitted nonce, 2 arguments)
+    let auto_omitted = encrypt_chacha20(key, msg)
+    assert_eq(auto_omitted.nonce.len, 12)
+    let auto_omitted_dec = decrypt_chacha20(key, auto_omitted.nonce, auto_omitted.ciphertext, auto_omitted.tag)
+    assert_eq(auto_omitted_dec, msg)
 
     // Tampered rejection
     assert_throws(fn() {

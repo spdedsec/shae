@@ -57,16 +57,40 @@ fn test_aes_256_gcm_auto_nonce_generation() {
         let key = "12345678901234567890123456789012"
         let plaintext = "Same plaintext, different nonce"
 
+        // Explicit null nonce
         let enc1 = crypto.encrypt_aes_gcm(key, null, plaintext)
         let enc2 = crypto.encrypt_aes_gcm(key, null, plaintext)
+
+        // Fully omitted nonce (2 arguments)
+        let enc3 = crypto.encrypt_aes_gcm(key, plaintext)
+
+        // ChaCha20 fully omitted nonce (2 arguments)
+        let enc_chacha_omitted = crypto.encrypt_chacha20(key, plaintext)
 
         let nonces_differ = enc1.nonce != enc2.nonce
         let ciphertexts_differ = enc1.ciphertext != enc2.ciphertext
 
         let dec1 = crypto.decrypt_aes_gcm(key, enc1.nonce, enc1.ciphertext, enc1.tag)
         let dec2 = crypto.decrypt_aes_gcm(key, enc2.nonce, enc2.ciphertext, enc2.tag)
+        let dec3 = crypto.decrypt_aes_gcm(key, enc3.nonce, enc3.ciphertext, enc3.tag)
+        let dec_chacha = crypto.decrypt_chacha20(key, enc_chacha_omitted.nonce, enc_chacha_omitted.ciphertext, enc_chacha_omitted.tag)
 
-        [enc1.nonce.len, enc2.nonce.len, nonces_differ, ciphertexts_differ, dec1 == dec2]
+        // Empty plaintext roundtrip
+        let enc_empty = crypto.encrypt_aes_gcm(key, "")
+        let dec_empty = crypto.decrypt_aes_gcm(key, enc_empty.nonce, enc_empty.ciphertext, enc_empty.tag)
+
+        [
+            enc1.nonce.len,
+            enc2.nonce.len,
+            enc3.nonce.len,
+            enc_chacha_omitted.nonce.len,
+            nonces_differ,
+            ciphertexts_differ,
+            dec1 == dec2,
+            dec2 == dec3,
+            dec_chacha == dec1,
+            dec_empty.len == 0
+        ]
     "#;
 
     let res = run_vm(script).expect("Auto nonce generation on VM should succeed");
@@ -75,9 +99,14 @@ fn test_aes_256_gcm_auto_nonce_generation() {
             let guard = arr.read().unwrap();
             assert_eq!(guard[0], Value::Int(12));
             assert_eq!(guard[1], Value::Int(12));
-            assert_eq!(guard[2], Value::Bool(true));
-            assert_eq!(guard[3], Value::Bool(true));
+            assert_eq!(guard[2], Value::Int(12));
+            assert_eq!(guard[3], Value::Int(12));
             assert_eq!(guard[4], Value::Bool(true));
+            assert_eq!(guard[5], Value::Bool(true));
+            assert_eq!(guard[6], Value::Bool(true));
+            assert_eq!(guard[7], Value::Bool(true));
+            assert_eq!(guard[8], Value::Bool(true));
+            assert_eq!(guard[9], Value::Bool(true));
         }
         other => panic!("Expected array result, got {:?}", other),
     }
@@ -125,7 +154,15 @@ fn test_aes_and_chacha_validation_errors() {
             err4 = true
         }
 
-        [err1, err2, err3, err4]
+        let err5 = false
+        try {
+            // Non-finite float rejection in byte arrays
+            crypto.encrypt_aes_gcm("12345678901234567890123456789012", null, [1.0 / 0.0])
+        } catch (e) {
+            err5 = true
+        }
+
+        [err1, err2, err3, err4, err5]
     "#;
 
     let res = run_vm(script).expect("Validation errors test should succeed");
@@ -136,6 +173,7 @@ fn test_aes_and_chacha_validation_errors() {
             assert_eq!(guard[1], Value::Bool(true));
             assert_eq!(guard[2], Value::Bool(true));
             assert_eq!(guard[3], Value::Bool(true));
+            assert_eq!(guard[4], Value::Bool(true));
         }
         other => panic!("Expected array result, got {:?}", other),
     }

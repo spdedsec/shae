@@ -1075,8 +1075,8 @@ fn crypto_value_to_bytes(v: &Value, name: &str, span: Span) -> Result<Vec<u8>, R
             for (idx, item) in guard.iter().enumerate() {
                 let byte_val = match item {
                     Value::Int(n) => *n,
-                    Value::Float(f) => *f as i64,
-                    Value::Number(n) => *n as i64,
+                    Value::Float(f) if f.is_finite() => *f as i64,
+                    Value::Number(n) if n.is_finite() => *n as i64,
                     _ => {
                         return Err(RuntimeError::new(format!(
                             "{}: expected integer byte in array at index {}, got {}",
@@ -1131,9 +1131,9 @@ fn aead_encrypt(
     args: Vec<Value>,
     span: Span,
 ) -> Result<Value, RuntimeError> {
-    if args.len() < 3 || args.len() > 4 {
+    if args.len() < 2 || args.len() > 4 {
         return Err(RuntimeError::new(format!(
-            "{} expects 3 or 4 arguments: (key, nonce, plaintext, [aad])",
+            "{} expects 2 to 4 arguments: (key, [nonce], plaintext, [aad])",
             func_name
         ))
         .at(span));
@@ -1149,40 +1149,55 @@ fn aead_encrypt(
         .at(span));
     }
 
-    let nonce_bytes = match &args[1] {
-        Value::Null => {
-            let rng = ring::rand::SystemRandom::new();
-            let mut buf = [0u8; 12];
-            rng.fill(&mut buf).map_err(|e| {
-                RuntimeError::new(format!(
-                    "{}: random nonce generation error: {}",
-                    func_name, e
-                ))
-                .at(span)
-            })?;
-            buf.to_vec()
-        }
-        v => {
-            let bytes = crypto_value_to_bytes(v, &format!("{} nonce", func_name), span)?;
-            if bytes.len() != 12 {
-                return Err(RuntimeError::new(format!(
-                    "{}: nonce must be exactly 12 bytes (96-bit), got {} bytes",
-                    func_name,
-                    bytes.len()
-                ))
-                .at(span));
-            }
-            bytes
-        }
-    };
-
-    let plaintext_bytes =
-        crypto_value_to_bytes(&args[2], &format!("{} plaintext", func_name), span)?;
-
-    let aad_bytes = if args.len() >= 4 && !matches!(args[3], Value::Null) {
-        crypto_value_to_bytes(&args[3], &format!("{} aad", func_name), span)?
+    let (nonce_bytes, plaintext_bytes, aad_bytes) = if args.len() == 2 {
+        let rng = ring::rand::SystemRandom::new();
+        let mut buf = [0u8; 12];
+        rng.fill(&mut buf).map_err(|e| {
+            RuntimeError::new(format!(
+                "{}: random nonce generation error: {}",
+                func_name, e
+            ))
+            .at(span)
+        })?;
+        let pt = crypto_value_to_bytes(&args[1], &format!("{} plaintext", func_name), span)?;
+        (buf.to_vec(), pt, Vec::new())
     } else {
-        Vec::new()
+        let nonce_b = match &args[1] {
+            Value::Null => {
+                let rng = ring::rand::SystemRandom::new();
+                let mut buf = [0u8; 12];
+                rng.fill(&mut buf).map_err(|e| {
+                    RuntimeError::new(format!(
+                        "{}: random nonce generation error: {}",
+                        func_name, e
+                    ))
+                    .at(span)
+                })?;
+                buf.to_vec()
+            }
+            v => {
+                let bytes = crypto_value_to_bytes(v, &format!("{} nonce", func_name), span)?;
+                if bytes.len() != 12 {
+                    return Err(RuntimeError::new(format!(
+                        "{}: nonce must be exactly 12 bytes (96-bit), got {} bytes",
+                        func_name,
+                        bytes.len()
+                    ))
+                    .at(span));
+                }
+                bytes
+            }
+        };
+
+        let pt = crypto_value_to_bytes(&args[2], &format!("{} plaintext", func_name), span)?;
+
+        let aad = if args.len() >= 4 && !matches!(args[3], Value::Null) {
+            crypto_value_to_bytes(&args[3], &format!("{} aad", func_name), span)?
+        } else {
+            Vec::new()
+        };
+
+        (nonce_b, pt, aad)
     };
 
     let unbound_key = ring::aead::UnboundKey::new(alg, &key_bytes).map_err(|e| {
