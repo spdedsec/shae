@@ -390,3 +390,26 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 - [x] **Dual-Engine & Integration Test Verification**
   - [x] Pure-Shae test suite `tests/shae/self_stage2_bootstrap_test.shae` exercising two-stage compilation, deterministic self-compilation, driver dispatch, and ELF linking.
   - [x] Rust integration test suite `tests/stage2_bootstrap_test.rs` proving two-stage bootstrap pipeline, bit-for-bit parity, and dual-engine VM/AST parity.
+
+---
+
+### **Chunk 28: Direct LLVM SSA Code Generation & Native Compilation (`shae llvm`)** *(Completed)*
+- [x] **Direct LLVM 18 SSA IR Generator (`src/llvm.rs`)**
+  - [x] Standard `alloca`/`load`/`store` SSA lowering pattern in `entry:` block (promoted to hardware registers via LLVM `mem2reg`).
+  - [x] Complete arithmetic, bitwise, comparison, logical, and floating-point SSA instruction emission (`add`, `sub`, `mul`, `sdiv`, `srem`, `and`, `or`, `xor`, `shl`, `ashr`, `fadd`, `fsub`, `fmul`, `fdiv`, `icmp`, `fcmp`, `select`).
+  - [x] Structured control flow lowering: `while` loops, `if`/`else` branches, merge blocks, phi-free alloca state storage, and unconditional branches.
+  - [x] Function declarations, recursive definitions, multi-parameter calling conventions, and `@__shae_user_main` wrapping.
+  - [x] Global variables emission with typed storage (`@var = internal global i64 0, align 8`).
+  - [x] String pool constants deduplication with proper hex escape sequences (`\0A`, `\00`, etc.).
+  - [x] External C standard library declarations (`printf`, `puts`, `malloc`, `free`, `exit`, `strlen`, `strcpy`, `strcat`, `strcmp`) and variadic printf lowering for `print`/`println`.
+  - [x] Native compilation helper `LlvmCompiler::compile_and_link` targeting `x86_64-pc-linux-gnu` with Clang `-O2`.
+- [x] **CLI Subcommand Integration (`src/main.rs`)**
+  - [x] `shae llvm <file.shae>`: Direct LLVM IR generator with `-o <out.ll>` emission.
+  - [x] `-c` / `--compile`: Full native compilation to standalone executable via system `clang -O2`.
+  - [x] `-r` / `--run`: Compile and immediately execute the native binary with argument and exit code propagation.
+- [x] **Self-Hosting Compiler Suite LLVM Backend (`lib/compiler/llvm.shae`, `lib/compiler/main.shae`)**
+  - [x] Pure-Shae LLVM SSA code generator emitting valid LLVM 18 IR with module headers, format strings, string pooling, functions, and `@main` wrapper.
+  - [x] Driver dispatch support in `lib/compiler/main.shae` for `"llvm"` action.
+- [x] **Dual-Engine & Integration Test Verification**
+  - [x] Pure-Shae test suite `tests/shae/self_llvm_test.shae` exercising pure-Shae LLVM IR emission, sample target compilation, and driver dispatch across VM and AST Evaluator.
+  - [x] Rust integration test suite `tests/llvm_codegen_test.rs` validating arithmetic SSA IR, control flow, native Clang compilation and execution, float/string printing, and CLI subcommand flags.

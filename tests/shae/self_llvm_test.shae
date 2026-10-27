@@ -1,0 +1,116 @@
+// Shae Self-Hosting Compiler Suite: LLVM SSA IR Generator Test
+// tests/shae/self_llvm_test.shae
+//
+// Verifies pure-Shae direct LLVM 18 IR generation and driver dispatch.
+
+use {
+    generate_llvm_ir, compile_source_to_llvm, compile_to_llvm
+} from "../../lib/compiler/llvm.shae"
+use {
+    driver_dispatch
+} from "../../lib/compiler/main.shae"
+use {
+    read, exists, remove
+} from "std:fs"
+
+print("=== Shae Chunk 28: Self-Hosting LLVM SSA Codegen Test ===")
+
+// [1] Testing pure-Shae LLVM IR emission for arithmetic & functions
+print("\n[1] Testing direct pure-Shae LLVM IR generator...")
+let source = r"fn add(a, b) {
+    return a + b
+}
+
+let x = add(20, 22)
+return x
+"
+let ir = compile_source_to_llvm(source)
+
+if not ir.contains("source_filename = \"shae_module\"") {
+    print("FAILED: Module header missing!")
+    exit(1)
+}
+
+if not ir.contains("target triple = \"x86_64-pc-linux-gnu\"") {
+    print("FAILED: Target triple missing or incorrect!")
+    exit(1)
+}
+
+if not ir.contains("@.fmt_int_nl = private unnamed_addr constant [5 x i8]") {
+    print("FAILED: Format strings missing!")
+    exit(1)
+}
+
+if not ir.contains("@x = internal global i64 0, align 8") {
+    print("FAILED: Global variable @x declaration missing!")
+    exit(1)
+}
+
+if not ir.contains("define i64 @add(i64 %p0, i64 %p1)") {
+    print("FAILED: Function @add definition missing!")
+    exit(1)
+}
+
+if not ir.contains("add i64") {
+    print("FAILED: add i64 instruction missing!")
+    exit(1)
+}
+
+if not ir.contains("define i32 @main(") {
+    print("FAILED: Main entrypoint missing!")
+    exit(1)
+}
+
+if not ir.contains("call i64 @add(i64 20, i64 22)") {
+    print("FAILED: Call to @add missing!")
+    exit(1)
+}
+
+if not ir.contains("trunc i64") {
+    print("FAILED: Return trunc to i32 missing!")
+    exit(1)
+}
+
+print("  ✓ LLVM SSA IR structure and instructions validated")
+
+// [2] Testing pure-Shae file compilation via compile_to_llvm
+print("\n[2] Testing compile_to_llvm on sample target...")
+let sample_path = "tests/shae/sample_target.shae"
+let out_ll = "/tmp/test_self_llvm_sample.ll"
+
+if exists(out_ll) {
+    remove(out_ll)
+}
+
+let bytes_written = compile_to_llvm(sample_path, out_ll)
+if bytes_written <= 0 or not exists(out_ll) {
+    print("FAILED: compile_to_llvm failed to write output file!")
+    exit(1)
+}
+
+let emitted_ll = read(out_ll)
+if not emitted_ll.contains("@compute") or not emitted_ll.contains("mul i64") {
+    print("FAILED: Emitted LLVM IR content mismatch!")
+    exit(1)
+}
+
+remove(out_ll)
+print("  ✓ compile_to_llvm pipeline verified (" + str(bytes_written) + " bytes)")
+
+// [3] Testing driver dispatch in main compiler
+print("\n[3] Testing driver dispatch for 'llvm' target...")
+let dispatch_out = "/tmp/test_self_llvm_dispatch.ll"
+if exists(dispatch_out) {
+    remove(dispatch_out)
+}
+
+let disp_res = driver_dispatch("llvm", sample_path, dispatch_out, null)
+if not exists(dispatch_out) {
+    print("FAILED: driver_dispatch('llvm', ...) failed to emit file!")
+    exit(1)
+}
+
+remove(dispatch_out)
+print("  ✓ driver_dispatch('llvm') verified")
+
+print("\n=== All Self-Hosting LLVM SSA Codegen Tests Passed! ===")

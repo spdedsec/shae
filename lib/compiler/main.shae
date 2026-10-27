@@ -7,6 +7,7 @@
 // - Disassembler (disasm.shae)
 // - Native Object Linker for ELF and PE/COFF (elf.shae, pe.shae, linker.shae)
 // - WebAssembly Binary Emitter (wasm.shae)
+// - Direct LLVM SSA IR Generator (llvm.shae)
 
 use { tokenize } from "./lexer.shae"
 use { parse } from "./parser.shae"
@@ -24,6 +25,7 @@ use {
     TYPE_I32,
     EXPORT_FUNC
 } from "./wasm.shae"
+use { compile_to_llvm } from "./llvm.shae"
 use { read, write_bytes, exists } from "std:fs"
 use { platform, args, exit } from "std:sys"
 
@@ -95,6 +97,8 @@ fn driver_dispatch(action, input_path, output_path, format) {
         return link_to_native(input_path, output_path, format, null, null)
     } else if action == "wasm" {
         return compile_to_wasm(input_path, output_path)
+    } else if action == "llvm" {
+        return compile_to_llvm(input_path, output_path)
     } else {
         return "Unknown compiler action: " + action
     }
@@ -123,7 +127,7 @@ fn run_cli_driver() {
 
     if argv.len <= start_idx {
         println("Shae Compiler Driver (shaec)")
-        println("Usage: shaec [compile|disasm|link|wasm] <input.shae> [-o <output>]")
+        println("Usage: shaec [compile|disasm|link|wasm|llvm] <input.shae> [-o <output>]")
         return 0
     }
 
@@ -134,7 +138,7 @@ fn run_cli_driver() {
     let format = "elf"
 
     let i = start_idx
-    if first_arg == "compile" or first_arg == "disasm" or first_arg == "link" or first_arg == "wasm" {
+    if first_arg == "compile" or first_arg == "disasm" or first_arg == "link" or first_arg == "wasm" or first_arg == "llvm" {
         action = first_arg
         i = i + 1
     }
@@ -185,6 +189,12 @@ fn run_cli_driver() {
             out_target = input_path + ".wasm"
         }
         println("✨ Compiled WebAssembly binary: ", out_target, " (", res, " bytes)")
+    } else if action == "llvm" {
+        let out_target = output_path
+        if out_target == null {
+            out_target = input_path + ".ll"
+        }
+        println("⚡ Generated LLVM IR: ", out_target, " (", res, " bytes)")
     }
     return 0
 }

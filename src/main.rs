@@ -57,6 +57,9 @@ fn show_help() {
     println!(
         "  shae wasm <entry.shae>     Compile Shae to WebAssembly binary (.wasm) for web & wasi (-o, --run)"
     );
+    println!(
+        "  shae llvm <file.shae>      Direct LLVM SSA code generation & native compilation (-o, -c, -r)"
+    );
     println!("  shae lsp                   Start Language Server Protocol (LSP) server");
     println!("  shae dap                   Start Debug Adapter Protocol (DAP) server");
     println!("  shae debug <file.shae>     Start interactive step debugger");
@@ -1221,6 +1224,123 @@ fn main() {
                 Err(e) => {
                     eprintln!("WASM compilation error: {}", e);
                     process::exit(1);
+                }
+            }
+        }
+        "llvm" => {
+            if args.len() < 3 {
+                eprintln!(
+                    "Usage: shae llvm <file.shae> [-o <out.ll>] [--compile [-o <bin>]] [--run]"
+                );
+                process::exit(1);
+            }
+            let entry = Path::new(&args[2]);
+            let mut output = None;
+            let mut should_compile = false;
+            let mut should_run = false;
+            let mut i = 3;
+            while i < args.len() {
+                if (args[i] == "-o" || args[i] == "--output") && i + 1 < args.len() {
+                    output = Some(args[i + 1].clone());
+                    i += 2;
+                } else if args[i] == "-c" || args[i] == "--compile" {
+                    should_compile = true;
+                    i += 1;
+                } else if args[i] == "-r" || args[i] == "--run" {
+                    should_run = true;
+                    should_compile = true;
+                    i += 1;
+                } else {
+                    i += 1;
+                }
+            }
+
+            let src = match fs::read_to_string(entry) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Failed to read file '{}': {}", entry.display(), e);
+                    process::exit(1);
+                }
+            };
+
+            let mut compiler = shae::llvm::LlvmCompiler::new();
+            let ir_code = match compiler.compile_source(&src) {
+                Ok(ir) => ir,
+                Err(e) => {
+                    eprintln!("LLVM IR code generation error: {}", e);
+                    process::exit(1);
+                }
+            };
+
+            let stem = entry
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("module");
+
+            if !should_compile && !should_run {
+                if output.as_deref() == Some("-") {
+                    print!("{}", ir_code);
+                } else {
+                    let out_ll = output.unwrap_or_else(|| format!("{}.ll", stem));
+                    if let Err(e) = fs::write(&out_ll, &ir_code) {
+                        eprintln!("Failed to write LLVM IR file '{}': {}", out_ll, e);
+                        process::exit(1);
+                    }
+                    println!("⚡ Generated LLVM IR: {} ({} bytes)", out_ll, ir_code.len());
+                }
+            } else {
+                let (out_ll, bin_path) = match output {
+                    Some(out) if out.ends_with(".ll") => (out, format!("{}.bin", stem)),
+                    Some(out) => (format!("{}.ll", stem), out),
+                    None => (format!("{}.ll", stem), stem.to_string()),
+                };
+
+                if let Err(e) = fs::write(&out_ll, &ir_code) {
+                    eprintln!("Failed to write LLVM IR file '{}': {}", out_ll, e);
+                    process::exit(1);
+                }
+
+                let clang_bin = if Path::new("/usr/bin/clang").exists() {
+                    "/usr/bin/clang"
+                } else {
+                    "clang"
+                };
+
+                let compile_status = process::Command::new(clang_bin)
+                    .args(["-O2", &out_ll, "-o", &bin_path])
+                    .status();
+
+                match compile_status {
+                    Ok(status) if status.success() => {
+                        println!("⚡ Successfully compiled native binary: {}", bin_path);
+                    }
+                    Ok(status) => {
+                        eprintln!(
+                            "Clang compilation exited with error code: {:?}",
+                            status.code()
+                        );
+                        process::exit(status.code().unwrap_or(1));
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to execute clang ({}): {}", clang_bin, e);
+                        process::exit(1);
+                    }
+                }
+
+                if should_run {
+                    let exec_cmd = if bin_path.contains('/') {
+                        bin_path.clone()
+                    } else {
+                        format!("./{}", bin_path)
+                    };
+                    let run_status =
+                        process::Command::new(&exec_cmd)
+                            .status()
+                            .unwrap_or_else(|e| {
+                                eprintln!("Failed to execute native binary '{}': {}", exec_cmd, e);
+                                process::exit(1);
+                            });
+                    process::exit(run_status.code().unwrap_or(0));
                 }
             }
         }

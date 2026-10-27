@@ -1,0 +1,698 @@
+// Shae Self-Hosting Compiler Suite: LLVM SSA IR Generator
+// lib/compiler/llvm.shae
+//
+// Direct LLVM IR generator emitting compliant LLVM 18 IR
+// target triple = "x86_64-pc-linux-gnu"
+
+use { tokenize } from "./lexer.shae"
+use { parse } from "./parser.shae"
+use { read, write } from "std:fs"
+
+fn escape_llvm_string(s) {
+    let out = ""
+    let i = 0
+    while i < s.len {
+        let ch = s[i]
+        if ch == "\n" {
+            out = out + r"\0A"
+        } else if ch == "\t" {
+            out = out + r"\09"
+        } else if ch == "\r" {
+            out = out + r"\0D"
+        } else if ch == "\"" {
+            out = out + r"\22"
+        } else if ch == "\\" {
+            out = out + r"\5C"
+        } else {
+            out = out + ch
+        }
+        i = i + 1
+    }
+    out = out + r"\00"
+    return out
+}
+
+fn make_fn_ctx(fn_name, ret_ty, globals, string_pool, string_map) {
+    return {
+        name: fn_name,
+        ret_ty: ret_ty,
+        globals: globals,
+        allocas: [],
+        blocks: [{ label: "entry", instrs: [], terminated: false }],
+        cur_block: 0,
+        locals: [{}],
+        loop_stack: [],
+        reg_id: 1,
+        lbl_id: 1,
+        string_pool: string_pool,
+        string_map: string_map
+    }
+}
+
+fn fn_next_reg(ctx) {
+    let r = "%t." + str(ctx.reg_id)
+    ctx.reg_id = ctx.reg_id + 1
+    return r
+}
+
+fn fn_next_id(ctx) {
+    let id = ctx.lbl_id
+    ctx.lbl_id = ctx.lbl_id + 1
+    return id
+}
+
+fn fn_emit(ctx, instr) {
+    let cur = ctx.blocks[ctx.cur_block]
+    if not cur.terminated {
+        cur.instrs.push(instr)
+    }
+}
+
+fn fn_add_string(ctx, s) {
+    if ctx.string_map.has(s) {
+        return ctx.string_map[s]
+    }
+    let lbl = ".str." + str(ctx.string_pool.len)
+    let esc = escape_llvm_string(s)
+    let item = { label: lbl, escaped: esc, len: s.len + 1 }
+    ctx.string_pool.push(item)
+    let repr = "@" + lbl
+    ctx.string_map[s] = repr
+    return repr
+}
+
+fn compile_expr(ctx, expr) {
+    if expr == null {
+        return { ty: "i64", repr: "0" }
+    }
+
+    if expr.type == "LiteralExpr" {
+        if expr.kind == "int" {
+            return { ty: "i64", repr: str(expr.value) }
+        } else if expr.kind == "float" {
+            let s = str(expr.value)
+            if not s.contains(".") {
+                s = s + ".0"
+            }
+            return { ty: "double", repr: s }
+        } else if expr.kind == "bool" {
+            let b = "false"
+            if expr.value {
+                b = "true"
+            }
+            return { ty: "i1", repr: b }
+        } else if expr.kind == "string" {
+            let s_ptr = fn_add_string(ctx, expr.value)
+            return { ty: "i8*", repr: s_ptr }
+        } else {
+            return { ty: "i64", repr: "0" }
+        }
+    }
+
+    if expr.type == "VariableExpr" {
+        let name = expr.name
+        // Search locals from innermost scope outward
+        let l_idx = ctx.locals.len - 1
+        while l_idx >= 0 {
+            let scope = ctx.locals[l_idx]
+            if scope.has(name) {
+                let slot = scope[name].slot
+                let reg = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + reg + " = load i64, i64* " + slot + ", align 8")
+                return { ty: "i64", repr: reg }
+            }
+            l_idx = l_idx - 1
+        }
+        // Search globals
+        if ctx.globals.has(name) {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = load i64, i64* @" + name + ", align 8")
+            return { ty: "i64", repr: reg }
+        }
+        return { ty: "i64", repr: "0" }
+    }
+
+    if expr.type == "UnaryExpr" {
+        let val = compile_expr(ctx, expr.expr)
+        if expr.op == "-" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = sub i64 0, " + val.repr)
+            return { ty: "i64", repr: reg }
+        } else if expr.op == "not" or expr.op == "!" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = xor i1 " + val.repr + ", true")
+            return { ty: "i1", repr: reg }
+        }
+        return val
+    }
+
+    if expr.type == "BinaryExpr" {
+        let l_val = compile_expr(ctx, expr.left)
+        let r_val = compile_expr(ctx, expr.right)
+        let op = expr.op
+
+        if op == "+" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = add i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i64", repr: reg }
+        } else if op == "-" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = sub i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i64", repr: reg }
+        } else if op == "*" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = mul i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i64", repr: reg }
+        } else if op == "/" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = sdiv i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i64", repr: reg }
+        } else if op == "%" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = srem i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i64", repr: reg }
+        } else if op == "&" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = and i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i64", repr: reg }
+        } else if op == "|" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = or i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i64", repr: reg }
+        } else if op == "^" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = xor i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i64", repr: reg }
+        } else if op == "<<" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = shl i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i64", repr: reg }
+        } else if op == ">>" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = ashr i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i64", repr: reg }
+        } else if op == "==" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = icmp eq i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i1", repr: reg }
+        } else if op == "!=" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = icmp ne i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i1", repr: reg }
+        } else if op == "<" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = icmp slt i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i1", repr: reg }
+        } else if op == "<=" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = icmp sle i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i1", repr: reg }
+        } else if op == ">" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = icmp sgt i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i1", repr: reg }
+        } else if op == ">=" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = icmp sge i64 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i1", repr: reg }
+        } else if op == "and" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = and i1 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i1", repr: reg }
+        } else if op == "or" {
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = or i1 " + l_val.repr + ", " + r_val.repr)
+            return { ty: "i1", repr: reg }
+        }
+        return l_val
+    }
+
+    if expr.type == "CallExpr" {
+        let callee_name = expr.callee.name
+        if callee_name == "println" or callee_name == "print" {
+            let is_nl = (callee_name == "println")
+            if expr.args.len == 0 {
+                if is_nl {
+                    let r = fn_next_reg(ctx)
+                    fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_nl)")
+                }
+                return { ty: "i64", repr: "0" }
+            }
+
+            if is_nl and expr.args.len == 1 {
+                let v = compile_expr(ctx, expr.args[0])
+                let r = fn_next_reg(ctx)
+                if v.ty == "i8*" {
+                    fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_str_nl, i8* " + v.repr + ")")
+                } else if v.ty == "double" {
+                    fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_flt_nl, double " + v.repr + ")")
+                } else {
+                    fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_int_nl, i64 " + v.repr + ")")
+                }
+                return { ty: "i64", repr: "0" }
+            }
+
+            let a = 0
+            while a < expr.args.len {
+                let v = compile_expr(ctx, expr.args[a])
+                let r = fn_next_reg(ctx)
+                if v.ty == "i8*" {
+                    fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_str, i8* " + v.repr + ")")
+                } else if v.ty == "double" {
+                    fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_flt, double " + v.repr + ")")
+                } else {
+                    fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_int, i64 " + v.repr + ")")
+                }
+                a = a + 1
+            }
+            if is_nl {
+                let r = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_nl)")
+            }
+            return { ty: "i64", repr: "0" }
+        }
+
+        // User function call
+        let arg_strs = []
+        let a = 0
+        while a < expr.args.len {
+            let v = compile_expr(ctx, expr.args[a])
+            arg_strs.push(v.ty + " " + v.repr)
+            a = a + 1
+        }
+        let r = fn_next_reg(ctx)
+        let fn_target = callee_name
+        if fn_target == "main" {
+            fn_target = "__shae_user_main"
+        }
+        fn_emit(ctx, "  " + r + " = call i64 @" + fn_target + "(" + arg_strs.join(", ") + ")")
+        return { ty: "i64", repr: r }
+    }
+
+    return { ty: "i64", repr: "0" }
+}
+
+fn compile_stmt(ctx, stmt) {
+    if ctx.blocks[ctx.cur_block].terminated {
+        return null
+    }
+
+    if stmt.type == "LetStmt" {
+        let name = stmt.pattern
+        let val = compile_expr(ctx, stmt.init)
+
+        if ctx.name == "main" and ctx.globals.has(name) {
+            fn_emit(ctx, "  store i64 " + val.repr + ", i64* @" + name + ", align 8")
+        } else {
+            let id = fn_next_id(ctx)
+            let slot = "%" + name + ".addr." + str(id)
+            ctx.allocas.push("  " + slot + " = alloca i64, align 8")
+            fn_emit(ctx, "  store i64 " + val.repr + ", i64* " + slot + ", align 8")
+            ctx.locals[ctx.locals.len - 1][name] = { slot: slot, ty: "i64" }
+        }
+        return null
+    }
+
+    if stmt.type == "AssignStmt" {
+        let name = stmt.target.name
+        let val = compile_expr(ctx, stmt.value)
+
+        // Find in locals
+        let found_slot = null
+        let l_idx = ctx.locals.len - 1
+        while l_idx >= 0 {
+            let scope = ctx.locals[l_idx]
+            if scope.has(name) {
+                found_slot = scope[name].slot
+                break
+            }
+            l_idx = l_idx - 1
+        }
+
+        if found_slot != null {
+            fn_emit(ctx, "  store i64 " + val.repr + ", i64* " + found_slot + ", align 8")
+        } else if ctx.globals.has(name) {
+            fn_emit(ctx, "  store i64 " + val.repr + ", i64* @" + name + ", align 8")
+        }
+        return null
+    }
+
+    if stmt.type == "IfStmt" {
+        let cond_val = compile_expr(ctx, stmt.condition)
+        if cond_val.ty != "i1" {
+            let cmp_r = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + cmp_r + " = icmp ne i64 " + cond_val.repr + ", 0")
+            cond_val = { ty: "i1", repr: cmp_r }
+        }
+
+        let id = fn_next_id(ctx)
+        let then_lbl = "then." + str(id)
+        let else_lbl = "else." + str(id)
+        let merge_lbl = "merge." + str(id)
+
+        if stmt.else_branch != null {
+            fn_emit(ctx, "  br i1 " + cond_val.repr + ", label %" + then_lbl + ", label %" + else_lbl)
+            ctx.blocks[ctx.cur_block].terminated = true
+
+            // Then branch
+            ctx.blocks.push({ label: then_lbl, instrs: [], terminated: false })
+            ctx.cur_block = ctx.blocks.len - 1
+            ctx.locals.push({})
+            let t = 0
+            while t < stmt.then_branch.len {
+                compile_stmt(ctx, stmt.then_branch[t])
+                t = t + 1
+            }
+            ctx.locals.pop()
+            let branches_to_merge = 0
+            if not ctx.blocks[ctx.cur_block].terminated {
+                fn_emit(ctx, "  br label %" + merge_lbl)
+                ctx.blocks[ctx.cur_block].terminated = true
+                branches_to_merge = branches_to_merge + 1
+            }
+
+            // Else branch
+            ctx.blocks.push({ label: else_lbl, instrs: [], terminated: false })
+            ctx.cur_block = ctx.blocks.len - 1
+            ctx.locals.push({})
+            let e = 0
+            while e < stmt.else_branch.len {
+                compile_stmt(ctx, stmt.else_branch[e])
+                e = e + 1
+            }
+            ctx.locals.pop()
+            if not ctx.blocks[ctx.cur_block].terminated {
+                fn_emit(ctx, "  br label %" + merge_lbl)
+                ctx.blocks[ctx.cur_block].terminated = true
+                branches_to_merge = branches_to_merge + 1
+            }
+
+            if branches_to_merge > 0 {
+                ctx.blocks.push({ label: merge_lbl, instrs: [], terminated: false })
+                ctx.cur_block = ctx.blocks.len - 1
+            }
+        } else {
+            fn_emit(ctx, "  br i1 " + cond_val.repr + ", label %" + then_lbl + ", label %" + merge_lbl)
+            ctx.blocks[ctx.cur_block].terminated = true
+
+            // Then branch
+            ctx.blocks.push({ label: then_lbl, instrs: [], terminated: false })
+            ctx.cur_block = ctx.blocks.len - 1
+            ctx.locals.push({})
+            let t = 0
+            while t < stmt.then_branch.len {
+                compile_stmt(ctx, stmt.then_branch[t])
+                t = t + 1
+            }
+            ctx.locals.pop()
+            if not ctx.blocks[ctx.cur_block].terminated {
+                fn_emit(ctx, "  br label %" + merge_lbl)
+                ctx.blocks[ctx.cur_block].terminated = true
+            }
+
+            // Merge branch
+            ctx.blocks.push({ label: merge_lbl, instrs: [], terminated: false })
+            ctx.cur_block = ctx.blocks.len - 1
+        }
+        return null
+    }
+
+    if stmt.type == "WhileStmt" {
+        let id = fn_next_id(ctx)
+        let cond_lbl = "loop.cond." + str(id)
+        let body_lbl = "loop.body." + str(id)
+        let exit_lbl = "loop.exit." + str(id)
+
+        fn_emit(ctx, "  br label %" + cond_lbl)
+        ctx.blocks[ctx.cur_block].terminated = true
+
+        // Condition block
+        ctx.blocks.push({ label: cond_lbl, instrs: [], terminated: false })
+        ctx.cur_block = ctx.blocks.len - 1
+        let cond_val = compile_expr(ctx, stmt.condition)
+        if cond_val.ty != "i1" {
+            let cmp_r = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + cmp_r + " = icmp ne i64 " + cond_val.repr + ", 0")
+            cond_val = { ty: "i1", repr: cmp_r }
+        }
+        fn_emit(ctx, "  br i1 " + cond_val.repr + ", label %" + body_lbl + ", label %" + exit_lbl)
+        ctx.blocks[ctx.cur_block].terminated = true
+
+        // Body block
+        ctx.blocks.push({ label: body_lbl, instrs: [], terminated: false })
+        ctx.cur_block = ctx.blocks.len - 1
+        ctx.loop_stack.push({ cond: cond_lbl, exit: exit_lbl })
+        ctx.locals.push({})
+        let b = 0
+        while b < stmt.body.len {
+            compile_stmt(ctx, stmt.body[b])
+            b = b + 1
+        }
+        ctx.locals.pop()
+        ctx.loop_stack.pop()
+        if not ctx.blocks[ctx.cur_block].terminated {
+            fn_emit(ctx, "  br label %" + cond_lbl)
+            ctx.blocks[ctx.cur_block].terminated = true
+        }
+
+        // Exit block
+        ctx.blocks.push({ label: exit_lbl, instrs: [], terminated: false })
+        ctx.cur_block = ctx.blocks.len - 1
+        return null
+    }
+
+    if stmt.type == "ReturnStmt" {
+        if stmt.value != null {
+            let val = compile_expr(ctx, stmt.value)
+            if ctx.ret_ty == "i32" {
+                let r = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + r + " = trunc i64 " + val.repr + " to i32")
+                fn_emit(ctx, "  ret i32 " + r)
+            } else {
+                fn_emit(ctx, "  ret " + ctx.ret_ty + " " + val.repr)
+            }
+        } else {
+            if ctx.ret_ty == "i32" {
+                fn_emit(ctx, "  ret i32 0")
+            } else {
+                fn_emit(ctx, "  ret " + ctx.ret_ty + " 0")
+            }
+        }
+        ctx.blocks[ctx.cur_block].terminated = true
+        return null
+    }
+
+    if stmt.type == "ExprStmt" {
+        compile_expr(ctx, stmt.expr)
+        return null
+    }
+
+    return null
+}
+
+fn render_function(ctx, params) {
+    let param_parts = []
+    let p = 0
+    while p < params.len {
+        param_parts.push("i64 %p" + str(p))
+        p = p + 1
+    }
+
+    let out = "define " + ctx.ret_ty + " @" + ctx.name + "(" + param_parts.join(", ") + ") " + r"{" + "\n"
+    let b = 0
+    while b < ctx.blocks.len {
+        let blk = ctx.blocks[b]
+        if b > 0 {
+            out = out + "\n" + blk.label + ":\n"
+        } else {
+            out = out + "entry:\n"
+            let a = 0
+            while a < ctx.allocas.len {
+                out = out + ctx.allocas[a] + "\n"
+                a = a + 1
+            }
+        }
+        let i = 0
+        while i < blk.instrs.len {
+            out = out + blk.instrs[i] + "\n"
+            i = i + 1
+        }
+        b = b + 1
+    }
+
+    let last_blk = ctx.blocks[ctx.blocks.len - 1]
+    if not last_blk.terminated {
+        if ctx.ret_ty == "i32" {
+            out = out + "  ret i32 0\n"
+        } else {
+            out = out + "  ret i64 0\n"
+        }
+    }
+    out = out + r"}" + "\n"
+    return out
+}
+
+fn generate_llvm_ir(ast) {
+    let string_pool = []
+    let string_map = {}
+    let globals = {}
+    let global_names = []
+    let functions = {}
+    let has_user_main = false
+
+    // 1. First pass: record globals and function signatures
+    let s = 0
+    while s < ast.statements.len {
+        let stmt = ast.statements[s]
+        if stmt.type == "FnStmt" {
+            functions[stmt.name] = stmt
+            if stmt.name == "main" {
+                has_user_main = true
+            }
+        } else if stmt.type == "LetStmt" {
+            globals[stmt.pattern] = "i64"
+            global_names.push(stmt.pattern)
+        }
+        s = s + 1
+    }
+
+    // 2. Compile user functions
+    let compiled_fns = []
+    s = 0
+    while s < ast.statements.len {
+        let stmt = ast.statements[s]
+        if stmt.type == "FnStmt" {
+            let fn_name = stmt.name
+            if fn_name == "main" {
+                fn_name = "__shae_user_main"
+            }
+            let ctx = make_fn_ctx(fn_name, "i64", globals, string_pool, string_map)
+
+            // Parameter allocas
+            let p = 0
+            while p < stmt.params.len {
+                let p_item = stmt.params[p]
+                let p_name = p_item
+                if p_item.name != null {
+                    p_name = p_item.name
+                }
+                let slot = "%" + p_name + ".addr"
+                ctx.allocas.push("  " + slot + " = alloca i64, align 8")
+                fn_emit(ctx, "  store i64 %p" + str(p) + ", i64* " + slot + ", align 8")
+                ctx.locals[0][p_name] = { slot: slot, ty: "i64" }
+                p = p + 1
+            }
+
+            let b = 0
+            while b < stmt.body.len {
+                compile_stmt(ctx, stmt.body[b])
+                b = b + 1
+            }
+
+            compiled_fns.push(render_function(ctx, stmt.params))
+        }
+        s = s + 1
+    }
+
+    // 3. Compile top-level statements into @main
+    let main_ctx = make_fn_ctx("main", "i32", globals, string_pool, string_map)
+    let has_top_stmts = false
+    s = 0
+    while s < ast.statements.len {
+        let stmt = ast.statements[s]
+        if stmt.type != "FnStmt" {
+            has_top_stmts = true
+            compile_stmt(main_ctx, stmt)
+        }
+        s = s + 1
+    }
+
+    if not has_top_stmts and has_user_main {
+        let r = fn_next_reg(main_ctx)
+        fn_emit(main_ctx, "  " + r + " = call i64 @__shae_user_main()")
+    }
+
+    let main_code = render_function(main_ctx, [])
+
+    // 4. Assemble final LLVM IR text
+    let out = "; ModuleID = 'shae_module'\n"
+    out = out + "source_filename = \"shae_module\"\n"
+    out = out + "target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128\"\n"
+    out = out + "target triple = \"x86_64-pc-linux-gnu\"\n\n"
+
+    // Format strings
+    out = out + "; --- Standard Format Strings ---\n"
+    out = out + "@.fmt_int_nl = private unnamed_addr constant [5 x i8] c\"" + r"%ld\0A\00" + "\", align 1\n"
+    out = out + "@.fmt_int = private unnamed_addr constant [4 x i8] c\"" + r"%ld\00" + "\", align 1\n"
+    out = out + "@.fmt_flt_nl = private unnamed_addr constant [4 x i8] c\"" + r"%f\0A\00" + "\", align 1\n"
+    out = out + "@.fmt_flt = private unnamed_addr constant [3 x i8] c\"" + r"%f\00" + "\", align 1\n"
+    out = out + "@.fmt_str_nl = private unnamed_addr constant [4 x i8] c\"" + r"%s\0A\00" + "\", align 1\n"
+    out = out + "@.fmt_str = private unnamed_addr constant [3 x i8] c\"" + r"%s\00" + "\", align 1\n"
+    out = out + "@.fmt_nl = private unnamed_addr constant [2 x i8] c\"" + r"\0A\00" + "\", align 1\n\n"
+
+    // Global variables
+    if global_names.len > 0 {
+        out = out + "; --- Global Variables ---\n"
+        let gn = 0
+        while gn < global_names.len {
+            let gname = global_names[gn]
+            out = out + "@" + gname + " = internal global i64 0, align 8\n"
+            gn = gn + 1
+        }
+        out = out + "\n"
+    }
+
+    // String pool constants
+    if string_pool.len > 0 {
+        out = out + "; --- String Constants ---\n"
+        let sp = 0
+        while sp < string_pool.len {
+            let item = string_pool[sp]
+            out = out + "@" + item.label + " = private unnamed_addr constant [" + str(item.len) + " x i8] c\"" + item.escaped + "\", align 1\n"
+            sp = sp + 1
+        }
+        out = out + "\n"
+    }
+
+    // External declarations
+    out = out + "; --- External Declarations ---\n"
+    out = out + "declare i32 @printf(i8*, ...)\n"
+    out = out + "declare i32 @puts(i8*)\n"
+    out = out + "declare i8* @malloc(i64)\n"
+    out = out + "declare void @free(i8*)\n"
+    out = out + "declare void @exit(i32)\n\n"
+
+    // User functions
+    if compiled_fns.len > 0 {
+        out = out + "; --- User Functions ---\n"
+        let cf = 0
+        while cf < compiled_fns.len {
+            out = out + compiled_fns[cf] + "\n"
+            cf = cf + 1
+        }
+    }
+
+    // Main entrypoint
+    out = out + "; --- Main Entrypoint ---\n"
+    out = out + main_code
+
+    return out
+}
+
+fn compile_source_to_llvm(src) {
+    let tokens = tokenize(src)
+    let ast = parse(tokens)
+    return generate_llvm_ir(ast)
+}
+
+fn compile_to_llvm(input_path, output_path) {
+    let out_file = output_path
+    if out_file == null {
+        out_file = input_path + ".ll"
+    }
+
+    let src = read(input_path)
+    let ir_code = compile_source_to_llvm(src)
+    write(out_file, ir_code)
+    return ir_code.len
+}

@@ -20,6 +20,7 @@ pub mod jit;
 pub mod lexer;
 pub mod linker;
 pub mod linter;
+pub mod llvm;
 pub mod lsp;
 pub mod opcode;
 pub mod parser;
