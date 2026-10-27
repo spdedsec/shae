@@ -1228,20 +1228,44 @@ fn main() {
             }
         }
         "llvm" => {
-            if args.len() < 3 {
-                eprintln!(
+            if args.len() < 3 || args[2] == "--help" || args[2] == "-h" {
+                println!("Shae LLVM SSA Code Generation & Native Compilation");
+                println!(
                     "Usage: shae llvm <file.shae> [-o <out.ll>] [--compile [-o <bin>]] [--run]"
                 );
-                process::exit(1);
+                println!();
+                println!("Options:");
+                println!(
+                    "  -o, --output <PATH>  Output path for generated LLVM IR or native binary (use '-' for stdout)"
+                );
+                println!(
+                    "  -c, --compile        Compile LLVM IR to standalone native binary with clang -O2"
+                );
+                println!(
+                    "  -r, --run            Compile and immediately execute the native binary"
+                );
+                println!("  -h, --help           Show this help message");
+                if args.len() < 3 {
+                    process::exit(1);
+                }
+                return;
             }
             let entry = Path::new(&args[2]);
-            let mut output = None;
+            let mut ll_output = None;
+            let mut bin_output = None;
             let mut should_compile = false;
             let mut should_run = false;
             let mut i = 3;
             while i < args.len() {
                 if (args[i] == "-o" || args[i] == "--output") && i + 1 < args.len() {
-                    output = Some(args[i + 1].clone());
+                    let opt_val = args[i + 1].clone();
+                    if should_compile {
+                        bin_output = Some(opt_val);
+                    } else if opt_val.ends_with(".ll") || opt_val == "-" {
+                        ll_output = Some(opt_val);
+                    } else {
+                        ll_output = Some(opt_val);
+                    }
                     i += 2;
                 } else if args[i] == "-c" || args[i] == "--compile" {
                     should_compile = true;
@@ -1250,6 +1274,12 @@ fn main() {
                     should_run = true;
                     should_compile = true;
                     i += 1;
+                } else if args[i] == "-h" || args[i] == "--help" {
+                    println!("Shae LLVM SSA Code Generation & Native Compilation");
+                    println!(
+                        "Usage: shae llvm <file.shae> [-o <out.ll>] [--compile [-o <bin>]] [--run]"
+                    );
+                    return;
                 } else {
                     i += 1;
                 }
@@ -1272,27 +1302,31 @@ fn main() {
                 }
             };
 
-            let stem = entry
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("module");
+            let default_ll = entry.with_extension("ll");
+            let default_ll_str = default_ll.to_str().unwrap_or("module.ll");
+            let default_bin = entry.with_extension("");
+            let default_bin_str = default_bin.to_str().unwrap_or("module");
 
             if !should_compile && !should_run {
-                if output.as_deref() == Some("-") {
+                if ll_output.as_deref() == Some("-") {
                     print!("{}", ir_code);
                 } else {
-                    let out_ll = output.unwrap_or_else(|| format!("{}.ll", stem));
-                    if let Err(e) = fs::write(&out_ll, &ir_code) {
+                    let out_ll = ll_output.as_deref().unwrap_or(default_ll_str);
+                    if let Err(e) = fs::write(out_ll, &ir_code) {
                         eprintln!("Failed to write LLVM IR file '{}': {}", out_ll, e);
                         process::exit(1);
                     }
                     println!("⚡ Generated LLVM IR: {} ({} bytes)", out_ll, ir_code.len());
                 }
             } else {
-                let (out_ll, bin_path) = match output {
-                    Some(out) if out.ends_with(".ll") => (out, format!("{}.bin", stem)),
-                    Some(out) => (format!("{}.ll", stem), out),
-                    None => (format!("{}.ll", stem), stem.to_string()),
+                let (out_ll, bin_path) = match (&ll_output, &bin_output) {
+                    (Some(ll), Some(bin)) => (ll.clone(), bin.clone()),
+                    (Some(out), None) if out.ends_with(".ll") => {
+                        (out.clone(), default_bin_str.to_string())
+                    }
+                    (Some(out), None) => (default_ll_str.to_string(), out.clone()),
+                    (None, Some(bin)) => (default_ll_str.to_string(), bin.clone()),
+                    (None, None) => (default_ll_str.to_string(), default_bin_str.to_string()),
                 };
 
                 if let Err(e) = fs::write(&out_ll, &ir_code) {

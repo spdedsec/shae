@@ -23,23 +23,23 @@ fn has_clang() -> bool {
 #[test]
 fn test_pure_shae_self_llvm_dual_engine() {
     run_with_large_stack(|| {
-        let path = "tests/shae/self_llvm_test.shae";
+        for path in &[
+            "tests/shae/self_llvm_test.shae",
+            "tests/shae/llvm_codegen_test.shae",
+        ] {
+            // Bytecode VM
+            let vm_res = run_file_vm(path);
+            assert!(vm_res.is_ok(), "{} failed on VM: {:?}", path, vm_res.err());
 
-        // Bytecode VM
-        let vm_res = run_file_vm(path);
-        assert!(
-            vm_res.is_ok(),
-            "self_llvm_test failed on VM: {:?}",
-            vm_res.err()
-        );
-
-        // AST Evaluator
-        let ast_res = run_file(path);
-        assert!(
-            ast_res.is_ok(),
-            "self_llvm_test failed on AST: {:?}",
-            ast_res.err()
-        );
+            // AST Evaluator
+            let ast_res = run_file(path);
+            assert!(
+                ast_res.is_ok(),
+                "{} failed on AST: {:?}",
+                path,
+                ast_res.err()
+            );
+        }
     });
 }
 
@@ -217,6 +217,82 @@ println("Area: ", area)
 }
 
 #[test]
+fn test_llvm_native_exit_code_and_user_main() {
+    if !has_clang() {
+        eprintln!("clang not available, skipping native exit code test");
+        return;
+    }
+
+    // Test exit(42)
+    let src_exit = "exit(42)";
+    let temp_ll1 = "/tmp/test_llvm_exit.ll";
+    let temp_bin1 = "/tmp/test_llvm_exit_bin";
+    let mut compiler = LlvmCompiler::new();
+    compiler
+        .compile_and_link(src_exit, temp_ll1, temp_bin1, 2)
+        .expect("Compilation with clang failed");
+    let out1 = Command::new(temp_bin1)
+        .output()
+        .expect("Failed to execute native binary");
+    assert_eq!(out1.status.code(), Some(42));
+    let _ = fs::remove_file(temp_ll1);
+    let _ = fs::remove_file(temp_bin1);
+
+    // Test fn main() { return 77 }
+    let src_main = "fn main() { return 77 }";
+    let temp_ll2 = "/tmp/test_llvm_user_main.ll";
+    let temp_bin2 = "/tmp/test_llvm_user_main_bin";
+    compiler
+        .compile_and_link(src_main, temp_ll2, temp_bin2, 2)
+        .expect("Compilation with clang failed");
+    let out2 = Command::new(temp_bin2)
+        .output()
+        .expect("Failed to execute native binary");
+    assert_eq!(out2.status.code(), Some(77));
+    let _ = fs::remove_file(temp_ll2);
+    let _ = fs::remove_file(temp_bin2);
+}
+
+#[test]
+fn test_llvm_string_operations() {
+    if !has_clang() {
+        eprintln!("clang not available, skipping string operations test");
+        return;
+    }
+
+    let source = r#"
+let s1 = "hello "
+let s2 = "world!"
+let combined = s1 + s2
+println(combined)
+let eq1 = (s1 == "hello ")
+let eq2 = (s1 == s2)
+println(eq1)
+println(eq2)
+"#;
+
+    let temp_ll = "/tmp/test_llvm_str_ops.ll";
+    let temp_bin = "/tmp/test_llvm_str_ops_bin";
+
+    let mut compiler = LlvmCompiler::new();
+    compiler
+        .compile_and_link(source, temp_ll, temp_bin, 2)
+        .expect("Compilation with clang failed");
+
+    let output = Command::new(temp_bin)
+        .output()
+        .expect("Failed to execute native binary");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("hello world!"));
+    assert!(stdout.contains("true"));
+    assert!(stdout.contains("false"));
+
+    let _ = fs::remove_file(temp_ll);
+    let _ = fs::remove_file(temp_bin);
+}
+
+#[test]
 fn test_llvm_cli_subcommand() {
     if !has_clang() {
         eprintln!("clang not available, skipping CLI test");
@@ -226,6 +302,15 @@ fn test_llvm_cli_subcommand() {
     let sample_shae = "tests/shae/sample_target.shae";
     let out_ll = "/tmp/test_cli_sample.ll";
     let out_bin = "/tmp/test_cli_sample_bin";
+
+    // 0. Test --help
+    let status_help = Command::new(env!("CARGO_BIN_EXE_shae"))
+        .args(["llvm", "--help"])
+        .output()
+        .expect("Failed to execute shae llvm --help");
+    assert!(status_help.status.success());
+    let help_txt = String::from_utf8_lossy(&status_help.stdout);
+    assert!(help_txt.contains("Usage: shae llvm"));
 
     // 1. Generate LLVM IR
     let status_ir = Command::new(env!("CARGO_BIN_EXE_shae"))

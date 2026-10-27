@@ -32,6 +32,28 @@ fn escape_llvm_string(s) {
     return out
 }
 
+fn type_align(ty) {
+    if ty == "i1" {
+        return 1
+    } else if ty == "i32" {
+        return 4
+    } else {
+        return 8
+    }
+}
+
+fn type_default(ty) {
+    if ty == "double" {
+        return "0.0"
+    } else if ty == "i1" {
+        return "false"
+    } else if ty == "i8*" {
+        return "null"
+    } else {
+        return "0"
+    }
+}
+
 fn make_fn_ctx(fn_name, ret_ty, globals, string_pool, string_map) {
     return {
         name: fn_name,
@@ -81,6 +103,52 @@ fn fn_add_string(ctx, s) {
     return repr
 }
 
+fn cast_to(ctx, val, target_ty) {
+    if val.ty == target_ty {
+        return val
+    }
+
+    if val.ty == "i1" and target_ty == "i64" {
+        let r = fn_next_reg(ctx)
+        fn_emit(ctx, "  " + r + " = zext i1 " + val.repr + " to i64")
+        return { ty: "i64", repr: r }
+    } else if val.ty == "i64" and target_ty == "i1" {
+        let r = fn_next_reg(ctx)
+        fn_emit(ctx, "  " + r + " = icmp ne i64 " + val.repr + ", 0")
+        return { ty: "i1", repr: r }
+    } else if val.ty == "i64" and target_ty == "double" {
+        let r = fn_next_reg(ctx)
+        fn_emit(ctx, "  " + r + " = sitofp i64 " + val.repr + " to double")
+        return { ty: "double", repr: r }
+    } else if val.ty == "double" and target_ty == "i64" {
+        let r = fn_next_reg(ctx)
+        fn_emit(ctx, "  " + r + " = fptosi double " + val.repr + " to i64")
+        return { ty: "i64", repr: r }
+    } else if val.ty == "double" and target_ty == "i1" {
+        let r = fn_next_reg(ctx)
+        fn_emit(ctx, "  " + r + " = fcmp one double " + val.repr + ", 0.0")
+        return { ty: "i1", repr: r }
+    } else if val.ty == "i8*" and target_ty == "i1" {
+        let r = fn_next_reg(ctx)
+        fn_emit(ctx, "  " + r + " = icmp ne i8* " + val.repr + ", null")
+        return { ty: "i1", repr: r }
+    } else if val.ty == "i64" and target_ty == "i32" {
+        let r = fn_next_reg(ctx)
+        fn_emit(ctx, "  " + r + " = trunc i64 " + val.repr + " to i32")
+        return { ty: "i32", repr: r }
+    } else if val.ty == "double" and target_ty == "i32" {
+        let r = fn_next_reg(ctx)
+        fn_emit(ctx, "  " + r + " = fptosi double " + val.repr + " to i32")
+        return { ty: "i32", repr: r }
+    } else if val.ty == "i32" and target_ty == "i64" {
+        let r = fn_next_reg(ctx)
+        fn_emit(ctx, "  " + r + " = sext i32 " + val.repr + " to i64")
+        return { ty: "i64", repr: r }
+    }
+
+    return val
+}
+
 fn compile_expr(ctx, expr) {
     if expr == null {
         return { ty: "i64", repr: "0" }
@@ -117,17 +185,21 @@ fn compile_expr(ctx, expr) {
             let scope = ctx.locals[l_idx]
             if scope.has(name) {
                 let slot = scope[name].slot
+                let v_ty = scope[name].ty
                 let reg = fn_next_reg(ctx)
-                fn_emit(ctx, "  " + reg + " = load i64, i64* " + slot + ", align 8")
-                return { ty: "i64", repr: reg }
+                let align_val = type_align(v_ty)
+                fn_emit(ctx, "  " + reg + " = load " + v_ty + ", " + v_ty + "* " + slot + ", align " + str(align_val))
+                return { ty: v_ty, repr: reg }
             }
             l_idx = l_idx - 1
         }
         // Search globals
         if ctx.globals.has(name) {
+            let g_ty = ctx.globals[name]
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = load i64, i64* @" + name + ", align 8")
-            return { ty: "i64", repr: reg }
+            let align_val = type_align(g_ty)
+            fn_emit(ctx, "  " + reg + " = load " + g_ty + ", " + g_ty + "* @" + name + ", align " + str(align_val))
+            return { ty: g_ty, repr: reg }
         }
         return { ty: "i64", repr: "0" }
     }
@@ -135,93 +207,246 @@ fn compile_expr(ctx, expr) {
     if expr.type == "UnaryExpr" {
         let val = compile_expr(ctx, expr.expr)
         if expr.op == "-" {
-            let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = sub i64 0, " + val.repr)
-            return { ty: "i64", repr: reg }
+            if val.ty == "double" {
+                let reg = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + reg + " = fneg double " + val.repr)
+                return { ty: "double", repr: reg }
+            } else {
+                let v = cast_to(ctx, val, "i64")
+                let reg = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + reg + " = sub i64 0, " + v.repr)
+                return { ty: "i64", repr: reg }
+            }
         } else if expr.op == "not" or expr.op == "!" {
+            let v = cast_to(ctx, val, "i1")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = xor i1 " + val.repr + ", true")
+            fn_emit(ctx, "  " + reg + " = xor i1 " + v.repr + ", true")
             return { ty: "i1", repr: reg }
+        } else if expr.op == "~" {
+            let v = cast_to(ctx, val, "i64")
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = xor i64 " + v.repr + ", -1")
+            return { ty: "i64", repr: reg }
         }
         return val
     }
 
     if expr.type == "BinaryExpr" {
+        let op = expr.op
+        if op == "|>" {
+            let call_expr = {
+                type: "CallExpr",
+                callee: expr.right,
+                args: [expr.left]
+            }
+            return compile_expr(ctx, call_expr)
+        }
+
         let l_val = compile_expr(ctx, expr.left)
         let r_val = compile_expr(ctx, expr.right)
-        let op = expr.op
 
-        if op == "+" {
+        // String concatenation
+        if op == "+" and (l_val.ty == "i8*" or r_val.ty == "i8*") {
+            let ls = cast_to(ctx, l_val, "i8*")
+            let rs = cast_to(ctx, r_val, "i8*")
+            let l1 = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + l1 + " = call i64 @strlen(i8* " + ls.repr + ")")
+            let l2 = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + l2 + " = call i64 @strlen(i8* " + rs.repr + ")")
+            let tot = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + tot + " = add i64 " + l1 + ", " + l2)
+            let tot1 = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + tot1 + " = add i64 " + tot + ", 1")
+            let mem = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + mem + " = call i8* @malloc(i64 " + tot1 + ")")
+            let d1 = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + d1 + " = call i8* @strcpy(i8* " + mem + ", i8* " + ls.repr + ")")
+            let d2 = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + d2 + " = call i8* @strcat(i8* " + mem + ", i8* " + rs.repr + ")")
+            return { ty: "i8*", repr: mem }
+        }
+
+        // String comparison
+        if (op == "==" or op == "!=") and (l_val.ty == "i8*" and r_val.ty == "i8*") {
+            let cmp_r = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + cmp_r + " = call i32 @strcmp(i8* " + l_val.repr + ", i8* " + r_val.repr + ")")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = add i64 " + l_val.repr + ", " + r_val.repr)
+            if op == "==" {
+                fn_emit(ctx, "  " + reg + " = icmp eq i32 " + cmp_r + ", 0")
+            } else {
+                fn_emit(ctx, "  " + reg + " = icmp ne i32 " + cmp_r + ", 0")
+            }
+            return { ty: "i1", repr: reg }
+        }
+
+        // Floating-point arithmetic and comparisons
+        if l_val.ty == "double" or r_val.ty == "double" {
+            let lf = cast_to(ctx, l_val, "double")
+            let rf = cast_to(ctx, r_val, "double")
+
+            if op == "+" {
+                let reg = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + reg + " = fadd double " + lf.repr + ", " + rf.repr)
+                return { ty: "double", repr: reg }
+            } else if op == "-" {
+                let reg = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + reg + " = fsub double " + lf.repr + ", " + rf.repr)
+                return { ty: "double", repr: reg }
+            } else if op == "*" {
+                let reg = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + reg + " = fmul double " + lf.repr + ", " + rf.repr)
+                return { ty: "double", repr: reg }
+            } else if op == "/" {
+                let reg = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + reg + " = fdiv double " + lf.repr + ", " + rf.repr)
+                return { ty: "double", repr: reg }
+            } else if op == "%" {
+                let reg = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + reg + " = frem double " + lf.repr + ", " + rf.repr)
+                return { ty: "double", repr: reg }
+            } else if op == "==" {
+                let reg = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + reg + " = fcmp oeq double " + lf.repr + ", " + rf.repr)
+                return { ty: "i1", repr: reg }
+            } else if op == "!=" {
+                let reg = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + reg + " = fcmp one double " + lf.repr + ", " + rf.repr)
+                return { ty: "i1", repr: reg }
+            } else if op == "<" {
+                let reg = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + reg + " = fcmp olt double " + lf.repr + ", " + rf.repr)
+                return { ty: "i1", repr: reg }
+            } else if op == "<=" {
+                let reg = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + reg + " = fcmp ole double " + lf.repr + ", " + rf.repr)
+                return { ty: "i1", repr: reg }
+            } else if op == ">" {
+                let reg = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + reg + " = fcmp ogt double " + lf.repr + ", " + rf.repr)
+                return { ty: "i1", repr: reg }
+            } else if op == ">=" {
+                let reg = fn_next_reg(ctx)
+                fn_emit(ctx, "  " + reg + " = fcmp oge double " + lf.repr + ", " + rf.repr)
+                return { ty: "i1", repr: reg }
+            }
+        }
+
+        // Integer arithmetic & bitwise
+        if op == "+" {
+            let li = cast_to(ctx, l_val, "i64")
+            let ri = cast_to(ctx, r_val, "i64")
+            let reg = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + reg + " = add i64 " + li.repr + ", " + ri.repr)
             return { ty: "i64", repr: reg }
         } else if op == "-" {
+            let li = cast_to(ctx, l_val, "i64")
+            let ri = cast_to(ctx, r_val, "i64")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = sub i64 " + l_val.repr + ", " + r_val.repr)
+            fn_emit(ctx, "  " + reg + " = sub i64 " + li.repr + ", " + ri.repr)
             return { ty: "i64", repr: reg }
         } else if op == "*" {
+            let li = cast_to(ctx, l_val, "i64")
+            let ri = cast_to(ctx, r_val, "i64")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = mul i64 " + l_val.repr + ", " + r_val.repr)
+            fn_emit(ctx, "  " + reg + " = mul i64 " + li.repr + ", " + ri.repr)
             return { ty: "i64", repr: reg }
         } else if op == "/" {
+            let li = cast_to(ctx, l_val, "i64")
+            let ri = cast_to(ctx, r_val, "i64")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = sdiv i64 " + l_val.repr + ", " + r_val.repr)
+            fn_emit(ctx, "  " + reg + " = sdiv i64 " + li.repr + ", " + ri.repr)
             return { ty: "i64", repr: reg }
         } else if op == "%" {
+            let li = cast_to(ctx, l_val, "i64")
+            let ri = cast_to(ctx, r_val, "i64")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = srem i64 " + l_val.repr + ", " + r_val.repr)
+            fn_emit(ctx, "  " + reg + " = srem i64 " + li.repr + ", " + ri.repr)
             return { ty: "i64", repr: reg }
         } else if op == "&" {
+            let li = cast_to(ctx, l_val, "i64")
+            let ri = cast_to(ctx, r_val, "i64")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = and i64 " + l_val.repr + ", " + r_val.repr)
+            fn_emit(ctx, "  " + reg + " = and i64 " + li.repr + ", " + ri.repr)
             return { ty: "i64", repr: reg }
         } else if op == "|" {
+            let li = cast_to(ctx, l_val, "i64")
+            let ri = cast_to(ctx, r_val, "i64")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = or i64 " + l_val.repr + ", " + r_val.repr)
+            fn_emit(ctx, "  " + reg + " = or i64 " + li.repr + ", " + ri.repr)
             return { ty: "i64", repr: reg }
         } else if op == "^" {
+            let li = cast_to(ctx, l_val, "i64")
+            let ri = cast_to(ctx, r_val, "i64")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = xor i64 " + l_val.repr + ", " + r_val.repr)
+            fn_emit(ctx, "  " + reg + " = xor i64 " + li.repr + ", " + ri.repr)
             return { ty: "i64", repr: reg }
         } else if op == "<<" {
+            let li = cast_to(ctx, l_val, "i64")
+            let ri = cast_to(ctx, r_val, "i64")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = shl i64 " + l_val.repr + ", " + r_val.repr)
+            fn_emit(ctx, "  " + reg + " = shl i64 " + li.repr + ", " + ri.repr)
             return { ty: "i64", repr: reg }
         } else if op == ">>" {
+            let li = cast_to(ctx, l_val, "i64")
+            let ri = cast_to(ctx, r_val, "i64")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = ashr i64 " + l_val.repr + ", " + r_val.repr)
+            fn_emit(ctx, "  " + reg + " = ashr i64 " + li.repr + ", " + ri.repr)
             return { ty: "i64", repr: reg }
         } else if op == "==" {
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = icmp eq i64 " + l_val.repr + ", " + r_val.repr)
+            if l_val.ty == "i1" and r_val.ty == "i1" {
+                fn_emit(ctx, "  " + reg + " = icmp eq i1 " + l_val.repr + ", " + r_val.repr)
+            } else {
+                let li = cast_to(ctx, l_val, "i64")
+                let ri = cast_to(ctx, r_val, "i64")
+                fn_emit(ctx, "  " + reg + " = icmp eq i64 " + li.repr + ", " + ri.repr)
+            }
             return { ty: "i1", repr: reg }
         } else if op == "!=" {
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = icmp ne i64 " + l_val.repr + ", " + r_val.repr)
+            if l_val.ty == "i1" and r_val.ty == "i1" {
+                fn_emit(ctx, "  " + reg + " = icmp ne i1 " + l_val.repr + ", " + r_val.repr)
+            } else {
+                let li = cast_to(ctx, l_val, "i64")
+                let ri = cast_to(ctx, r_val, "i64")
+                fn_emit(ctx, "  " + reg + " = icmp ne i64 " + li.repr + ", " + ri.repr)
+            }
             return { ty: "i1", repr: reg }
         } else if op == "<" {
+            let li = cast_to(ctx, l_val, "i64")
+            let ri = cast_to(ctx, r_val, "i64")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = icmp slt i64 " + l_val.repr + ", " + r_val.repr)
+            fn_emit(ctx, "  " + reg + " = icmp slt i64 " + li.repr + ", " + ri.repr)
             return { ty: "i1", repr: reg }
         } else if op == "<=" {
+            let li = cast_to(ctx, l_val, "i64")
+            let ri = cast_to(ctx, r_val, "i64")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = icmp sle i64 " + l_val.repr + ", " + r_val.repr)
+            fn_emit(ctx, "  " + reg + " = icmp sle i64 " + li.repr + ", " + ri.repr)
             return { ty: "i1", repr: reg }
         } else if op == ">" {
+            let li = cast_to(ctx, l_val, "i64")
+            let ri = cast_to(ctx, r_val, "i64")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = icmp sgt i64 " + l_val.repr + ", " + r_val.repr)
+            fn_emit(ctx, "  " + reg + " = icmp sgt i64 " + li.repr + ", " + ri.repr)
             return { ty: "i1", repr: reg }
         } else if op == ">=" {
+            let li = cast_to(ctx, l_val, "i64")
+            let ri = cast_to(ctx, r_val, "i64")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = icmp sge i64 " + l_val.repr + ", " + r_val.repr)
+            fn_emit(ctx, "  " + reg + " = icmp sge i64 " + li.repr + ", " + ri.repr)
             return { ty: "i1", repr: reg }
         } else if op == "and" {
+            let lb = cast_to(ctx, l_val, "i1")
+            let rb = cast_to(ctx, r_val, "i1")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = and i1 " + l_val.repr + ", " + r_val.repr)
+            fn_emit(ctx, "  " + reg + " = and i1 " + lb.repr + ", " + rb.repr)
             return { ty: "i1", repr: reg }
         } else if op == "or" {
+            let lb = cast_to(ctx, l_val, "i1")
+            let rb = cast_to(ctx, r_val, "i1")
             let reg = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + reg + " = or i1 " + l_val.repr + ", " + r_val.repr)
+            fn_emit(ctx, "  " + reg + " = or i1 " + lb.repr + ", " + rb.repr)
             return { ty: "i1", repr: reg }
         }
         return l_val
@@ -229,6 +454,8 @@ fn compile_expr(ctx, expr) {
 
     if expr.type == "CallExpr" {
         let callee_name = expr.callee.name
+
+        // println / print
         if callee_name == "println" or callee_name == "print" {
             let is_nl = (callee_name == "println")
             if expr.args.len == 0 {
@@ -246,8 +473,13 @@ fn compile_expr(ctx, expr) {
                     fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_str_nl, i8* " + v.repr + ")")
                 } else if v.ty == "double" {
                     fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_flt_nl, double " + v.repr + ")")
+                } else if v.ty == "i1" {
+                    let sel = fn_next_reg(ctx)
+                    fn_emit(ctx, "  " + sel + " = select i1 " + v.repr + ", i8* @.fmt_bool_t_nl, i8* @.fmt_bool_f_nl")
+                    fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_str, i8* " + sel + ")")
                 } else {
-                    fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_int_nl, i64 " + v.repr + ")")
+                    let vi = cast_to(ctx, v, "i64")
+                    fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_int_nl, i64 " + vi.repr + ")")
                 }
                 return { ty: "i64", repr: "0" }
             }
@@ -260,8 +492,13 @@ fn compile_expr(ctx, expr) {
                     fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_str, i8* " + v.repr + ")")
                 } else if v.ty == "double" {
                     fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_flt, double " + v.repr + ")")
+                } else if v.ty == "i1" {
+                    let sel = fn_next_reg(ctx)
+                    fn_emit(ctx, "  " + sel + " = select i1 " + v.repr + ", i8* @.fmt_bool_t, i8* @.fmt_bool_f")
+                    fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_str, i8* " + sel + ")")
                 } else {
-                    fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_int, i64 " + v.repr + ")")
+                    let vi = cast_to(ctx, v, "i64")
+                    fn_emit(ctx, "  " + r + " = call i32 (i8*, ...) @printf(i8* @.fmt_int, i64 " + vi.repr + ")")
                 }
                 a = a + 1
             }
@@ -272,12 +509,65 @@ fn compile_expr(ctx, expr) {
             return { ty: "i64", repr: "0" }
         }
 
+        // puts
+        if callee_name == "puts" {
+            let str_val = "null"
+            if expr.args.len > 0 {
+                let v = compile_expr(ctx, expr.args[0])
+                let vp = cast_to(ctx, v, "i8*")
+                str_val = vp.repr
+            }
+            let r = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + r + " = call i32 @puts(i8* " + str_val + ")")
+            return { ty: "i32", repr: r }
+        }
+
+        // exit
+        if callee_name == "exit" {
+            let code_repr = "0"
+            if expr.args.len > 0 {
+                let v = compile_expr(ctx, expr.args[0])
+                let v32 = cast_to(ctx, v, "i32")
+                code_repr = v32.repr
+            }
+            fn_emit(ctx, "  call void @exit(i32 " + code_repr + ")")
+            fn_emit(ctx, "  unreachable")
+            ctx.blocks[ctx.cur_block].terminated = true
+            return { ty: "void", repr: "" }
+        }
+
+        // malloc
+        if callee_name == "malloc" {
+            let sz = "0"
+            if expr.args.len > 0 {
+                let v = compile_expr(ctx, expr.args[0])
+                let vi = cast_to(ctx, v, "i64")
+                sz = vi.repr
+            }
+            let r = fn_next_reg(ctx)
+            fn_emit(ctx, "  " + r + " = call i8* @malloc(i64 " + sz + ")")
+            return { ty: "i8*", repr: r }
+        }
+
+        // free
+        if callee_name == "free" {
+            let p = "null"
+            if expr.args.len > 0 {
+                let v = compile_expr(ctx, expr.args[0])
+                let vp = cast_to(ctx, v, "i8*")
+                p = vp.repr
+            }
+            fn_emit(ctx, "  call void @free(i8* " + p + ")")
+            return { ty: "void", repr: "" }
+        }
+
         // User function call
         let arg_strs = []
         let a = 0
         while a < expr.args.len {
             let v = compile_expr(ctx, expr.args[a])
-            arg_strs.push(v.ty + " " + v.repr)
+            let vi = cast_to(ctx, v, "i64")
+            arg_strs.push(vi.ty + " " + vi.repr)
             a = a + 1
         }
         let r = fn_next_reg(ctx)
@@ -300,15 +590,20 @@ fn compile_stmt(ctx, stmt) {
     if stmt.type == "LetStmt" {
         let name = stmt.pattern
         let val = compile_expr(ctx, stmt.init)
+        let var_ty = val.ty
 
         if ctx.name == "main" and ctx.globals.has(name) {
-            fn_emit(ctx, "  store i64 " + val.repr + ", i64* @" + name + ", align 8")
+            let g_ty = ctx.globals[name]
+            let c_val = cast_to(ctx, val, g_ty)
+            let align_val = type_align(g_ty)
+            fn_emit(ctx, "  store " + g_ty + " " + c_val.repr + ", " + g_ty + "* @" + name + ", align " + str(align_val))
         } else {
             let id = fn_next_id(ctx)
             let slot = "%" + name + ".addr." + str(id)
-            ctx.allocas.push("  " + slot + " = alloca i64, align 8")
-            fn_emit(ctx, "  store i64 " + val.repr + ", i64* " + slot + ", align 8")
-            ctx.locals[ctx.locals.len - 1][name] = { slot: slot, ty: "i64" }
+            let align_val = type_align(var_ty)
+            ctx.allocas.push("  " + slot + " = alloca " + var_ty + ", align " + str(align_val))
+            fn_emit(ctx, "  store " + var_ty + " " + val.repr + ", " + var_ty + "* " + slot + ", align " + str(align_val))
+            ctx.locals[ctx.locals.len - 1][name] = { slot: slot, ty: var_ty }
         }
         return null
     }
@@ -319,31 +614,36 @@ fn compile_stmt(ctx, stmt) {
 
         // Find in locals
         let found_slot = null
+        let found_ty = "i64"
+        let is_global = false
         let l_idx = ctx.locals.len - 1
         while l_idx >= 0 {
             let scope = ctx.locals[l_idx]
             if scope.has(name) {
                 found_slot = scope[name].slot
+                found_ty = scope[name].ty
                 break
             }
             l_idx = l_idx - 1
         }
 
+        if found_slot == null and ctx.globals.has(name) {
+            found_slot = "@" + name
+            found_ty = ctx.globals[name]
+            is_global = true
+        }
+
         if found_slot != null {
-            fn_emit(ctx, "  store i64 " + val.repr + ", i64* " + found_slot + ", align 8")
-        } else if ctx.globals.has(name) {
-            fn_emit(ctx, "  store i64 " + val.repr + ", i64* @" + name + ", align 8")
+            let c_val = cast_to(ctx, val, found_ty)
+            let align_val = type_align(found_ty)
+            fn_emit(ctx, "  store " + found_ty + " " + c_val.repr + ", " + found_ty + "* " + found_slot + ", align " + str(align_val))
         }
         return null
     }
 
     if stmt.type == "IfStmt" {
         let cond_val = compile_expr(ctx, stmt.condition)
-        if cond_val.ty != "i1" {
-            let cmp_r = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + cmp_r + " = icmp ne i64 " + cond_val.repr + ", 0")
-            cond_val = { ty: "i1", repr: cmp_r }
-        }
+        let cond_b = cast_to(ctx, cond_val, "i1")
 
         let id = fn_next_id(ctx)
         let then_lbl = "then." + str(id)
@@ -351,7 +651,7 @@ fn compile_stmt(ctx, stmt) {
         let merge_lbl = "merge." + str(id)
 
         if stmt.else_branch != null {
-            fn_emit(ctx, "  br i1 " + cond_val.repr + ", label %" + then_lbl + ", label %" + else_lbl)
+            fn_emit(ctx, "  br i1 " + cond_b.repr + ", label %" + then_lbl + ", label %" + else_lbl)
             ctx.blocks[ctx.cur_block].terminated = true
 
             // Then branch
@@ -392,7 +692,7 @@ fn compile_stmt(ctx, stmt) {
                 ctx.cur_block = ctx.blocks.len - 1
             }
         } else {
-            fn_emit(ctx, "  br i1 " + cond_val.repr + ", label %" + then_lbl + ", label %" + merge_lbl)
+            fn_emit(ctx, "  br i1 " + cond_b.repr + ", label %" + then_lbl + ", label %" + merge_lbl)
             ctx.blocks[ctx.cur_block].terminated = true
 
             // Then branch
@@ -430,12 +730,8 @@ fn compile_stmt(ctx, stmt) {
         ctx.blocks.push({ label: cond_lbl, instrs: [], terminated: false })
         ctx.cur_block = ctx.blocks.len - 1
         let cond_val = compile_expr(ctx, stmt.condition)
-        if cond_val.ty != "i1" {
-            let cmp_r = fn_next_reg(ctx)
-            fn_emit(ctx, "  " + cmp_r + " = icmp ne i64 " + cond_val.repr + ", 0")
-            cond_val = { ty: "i1", repr: cmp_r }
-        }
-        fn_emit(ctx, "  br i1 " + cond_val.repr + ", label %" + body_lbl + ", label %" + exit_lbl)
+        let cond_b = cast_to(ctx, cond_val, "i1")
+        fn_emit(ctx, "  br i1 " + cond_b.repr + ", label %" + body_lbl + ", label %" + exit_lbl)
         ctx.blocks[ctx.cur_block].terminated = true
 
         // Body block
@@ -461,22 +757,32 @@ fn compile_stmt(ctx, stmt) {
         return null
     }
 
+    if stmt.type == "BreakStmt" {
+        if ctx.loop_stack.len > 0 {
+            let top_loop = ctx.loop_stack[ctx.loop_stack.len - 1]
+            fn_emit(ctx, "  br label %" + top_loop.exit)
+            ctx.blocks[ctx.cur_block].terminated = true
+        }
+        return null
+    }
+
+    if stmt.type == "ContinueStmt" {
+        if ctx.loop_stack.len > 0 {
+            let top_loop = ctx.loop_stack[ctx.loop_stack.len - 1]
+            fn_emit(ctx, "  br label %" + top_loop.cond)
+            ctx.blocks[ctx.cur_block].terminated = true
+        }
+        return null
+    }
+
     if stmt.type == "ReturnStmt" {
         if stmt.value != null {
             let val = compile_expr(ctx, stmt.value)
-            if ctx.ret_ty == "i32" {
-                let r = fn_next_reg(ctx)
-                fn_emit(ctx, "  " + r + " = trunc i64 " + val.repr + " to i32")
-                fn_emit(ctx, "  ret i32 " + r)
-            } else {
-                fn_emit(ctx, "  ret " + ctx.ret_ty + " " + val.repr)
-            }
+            let c_val = cast_to(ctx, val, ctx.ret_ty)
+            fn_emit(ctx, "  ret " + ctx.ret_ty + " " + c_val.repr)
         } else {
-            if ctx.ret_ty == "i32" {
-                fn_emit(ctx, "  ret i32 0")
-            } else {
-                fn_emit(ctx, "  ret " + ctx.ret_ty + " 0")
-            }
+            let def_val = type_default(ctx.ret_ty)
+            fn_emit(ctx, "  ret " + ctx.ret_ty + " " + def_val)
         }
         ctx.blocks[ctx.cur_block].terminated = true
         return null
@@ -491,14 +797,19 @@ fn compile_stmt(ctx, stmt) {
 }
 
 fn render_function(ctx, params) {
-    let param_parts = []
-    let p = 0
-    while p < params.len {
-        param_parts.push("i64 %p" + str(p))
-        p = p + 1
+    let out = ""
+    if ctx.name == "main" {
+        out = "define i32 @main(i32 %argc, i8** %argv) " + r"{" + "\n"
+    } else {
+        let param_parts = []
+        let p = 0
+        while p < params.len {
+            param_parts.push("i64 %p" + str(p))
+            p = p + 1
+        }
+        out = "define " + ctx.ret_ty + " @" + ctx.name + "(" + param_parts.join(", ") + ") " + r"{" + "\n"
     }
 
-    let out = "define " + ctx.ret_ty + " @" + ctx.name + "(" + param_parts.join(", ") + ") " + r"{" + "\n"
     let b = 0
     while b < ctx.blocks.len {
         let blk = ctx.blocks[b]
@@ -524,12 +835,59 @@ fn render_function(ctx, params) {
     if not last_blk.terminated {
         if ctx.ret_ty == "i32" {
             out = out + "  ret i32 0\n"
+        } else if ctx.ret_ty == "double" {
+            out = out + "  ret double 0.0\n"
         } else {
             out = out + "  ret i64 0\n"
         }
     }
     out = out + r"}" + "\n"
     return out
+}
+
+fn infer_init_type(init_expr, globals) {
+    if init_expr == null {
+        return "i64"
+    }
+    if init_expr.type == "LiteralExpr" {
+        if init_expr.kind == "float" {
+            return "double"
+        } else if init_expr.kind == "bool" {
+            return "i1"
+        } else if init_expr.kind == "string" {
+            return "i8*"
+        } else {
+            return "i64"
+        }
+    }
+    if init_expr.type == "VariableExpr" {
+        if globals.has(init_expr.name) {
+            return globals[init_expr.name]
+        }
+        return "i64"
+    }
+    if init_expr.type == "UnaryExpr" {
+        if init_expr.op == "not" or init_expr.op == "!" {
+            return "i1"
+        }
+        return infer_init_type(init_expr.expr, globals)
+    }
+    if init_expr.type == "BinaryExpr" {
+        let op = init_expr.op
+        if op == "==" or op == "!=" or op == "<" or op == "<=" or op == ">" or op == ">=" or op == "and" or op == "or" {
+            return "i1"
+        }
+        let lt = infer_init_type(init_expr.left, globals)
+        let rt = infer_init_type(init_expr.right, globals)
+        if (lt == "i8*" or rt == "i8*") and op == "+" {
+            return "i8*"
+        }
+        if lt == "double" or rt == "double" {
+            return "double"
+        }
+        return "i64"
+    }
+    return "i64"
 }
 
 fn generate_llvm_ir(ast) {
@@ -550,8 +908,9 @@ fn generate_llvm_ir(ast) {
                 has_user_main = true
             }
         } else if stmt.type == "LetStmt" {
-            globals[stmt.pattern] = "i64"
-            global_names.push(stmt.pattern)
+            let g_ty = infer_init_type(stmt.init, globals)
+            globals[stmt.pattern] = g_ty
+            global_names.push({ name: stmt.pattern, ty: g_ty })
         }
         s = s + 1
     }
@@ -610,6 +969,10 @@ fn generate_llvm_ir(ast) {
     if not has_top_stmts and has_user_main {
         let r = fn_next_reg(main_ctx)
         fn_emit(main_ctx, "  " + r + " = call i64 @__shae_user_main()")
+        let tr = fn_next_reg(main_ctx)
+        fn_emit(main_ctx, "  " + tr + " = trunc i64 " + r + " to i32")
+        fn_emit(main_ctx, "  ret i32 " + tr)
+        main_ctx.blocks[main_ctx.cur_block].terminated = true
     }
 
     let main_code = render_function(main_ctx, [])
@@ -628,19 +991,11 @@ fn generate_llvm_ir(ast) {
     out = out + "@.fmt_flt = private unnamed_addr constant [3 x i8] c\"" + r"%f\00" + "\", align 1\n"
     out = out + "@.fmt_str_nl = private unnamed_addr constant [4 x i8] c\"" + r"%s\0A\00" + "\", align 1\n"
     out = out + "@.fmt_str = private unnamed_addr constant [3 x i8] c\"" + r"%s\00" + "\", align 1\n"
+    out = out + "@.fmt_bool_t_nl = private unnamed_addr constant [6 x i8] c\"" + r"true\0A\00" + "\", align 1\n"
+    out = out + "@.fmt_bool_f_nl = private unnamed_addr constant [7 x i8] c\"" + r"false\0A\00" + "\", align 1\n"
+    out = out + "@.fmt_bool_t = private unnamed_addr constant [5 x i8] c\"" + r"true\00" + "\", align 1\n"
+    out = out + "@.fmt_bool_f = private unnamed_addr constant [6 x i8] c\"" + r"false\00" + "\", align 1\n"
     out = out + "@.fmt_nl = private unnamed_addr constant [2 x i8] c\"" + r"\0A\00" + "\", align 1\n\n"
-
-    // Global variables
-    if global_names.len > 0 {
-        out = out + "; --- Global Variables ---\n"
-        let gn = 0
-        while gn < global_names.len {
-            let gname = global_names[gn]
-            out = out + "@" + gname + " = internal global i64 0, align 8\n"
-            gn = gn + 1
-        }
-        out = out + "\n"
-    }
 
     // String pool constants
     if string_pool.len > 0 {
@@ -654,13 +1009,33 @@ fn generate_llvm_ir(ast) {
         out = out + "\n"
     }
 
+    // Global variables
+    if global_names.len > 0 {
+        out = out + "; --- Global Variables ---\n"
+        let gn = 0
+        while gn < global_names.len {
+            let gitem = global_names[gn]
+            let gname = gitem.name
+            let gty = gitem.ty
+            let galign = type_align(gty)
+            let gdef = type_default(gty)
+            out = out + "@" + gname + " = internal global " + gty + " " + gdef + ", align " + str(galign) + "\n"
+            gn = gn + 1
+        }
+        out = out + "\n"
+    }
+
     // External declarations
     out = out + "; --- External Declarations ---\n"
     out = out + "declare i32 @printf(i8*, ...)\n"
     out = out + "declare i32 @puts(i8*)\n"
     out = out + "declare i8* @malloc(i64)\n"
     out = out + "declare void @free(i8*)\n"
-    out = out + "declare void @exit(i32)\n\n"
+    out = out + "declare void @exit(i32)\n"
+    out = out + "declare i64 @strlen(i8*)\n"
+    out = out + "declare i8* @strcpy(i8*, i8*)\n"
+    out = out + "declare i8* @strcat(i8*, i8*)\n"
+    out = out + "declare i32 @strcmp(i8*, i8*)\n\n"
 
     // User functions
     if compiled_fns.len > 0 {

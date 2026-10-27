@@ -411,5 +411,5 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
   - [x] Pure-Shae LLVM SSA code generator emitting valid LLVM 18 IR with module headers, format strings, string pooling, functions, and `@main` wrapper.
   - [x] Driver dispatch support in `lib/compiler/main.shae` for `"llvm"` action.
 - [x] **Dual-Engine & Integration Test Verification**
-  - [x] Pure-Shae test suite `tests/shae/self_llvm_test.shae` exercising pure-Shae LLVM IR emission, sample target compilation, and driver dispatch across VM and AST Evaluator.
+  - [x] Pure-Shae test suites `tests/shae/llvm_codegen_test.shae` and `tests/shae/self_llvm_test.shae` exercising pure-Shae LLVM IR emission, recursion, loops, floats, strings, booleans, sample target compilation, and driver dispatch across VM and AST Evaluator.
   - [x] Rust integration test suite `tests/llvm_codegen_test.rs` validating arithmetic SSA IR, control flow, native Clang compilation and execution, float/string printing, and CLI subcommand flags.

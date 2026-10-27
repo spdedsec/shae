@@ -255,6 +255,10 @@ impl LlvmCompiler {
             // Call user main if defined
             let reg = main_fc.next_reg();
             main_fc.emit(format!("  {} = call i64 @__shae_user_main()", reg));
+            let ret_reg = main_fc.next_reg();
+            main_fc.emit(format!("  {} = trunc i64 {} to i32", ret_reg, reg));
+            main_fc.emit(format!("  ret i32 {}", ret_reg));
+            main_fc.current_block_mut().terminated = true;
         }
 
         let main_func_code = main_fc.finish_main()?;
@@ -1463,6 +1467,24 @@ impl<'a> FunctionCompiler<'a> {
                         });
                     }
 
+                    if name == "puts" {
+                        let str_val = if !args.is_empty() {
+                            let val = self.compile_expr(&args[0])?;
+                            self.cast_to(val, &LlvmType::I8Ptr)
+                        } else {
+                            LlvmValue {
+                                ty: LlvmType::I8Ptr,
+                                repr: "null".to_string(),
+                            }
+                        };
+                        let reg = self.next_reg();
+                        self.emit(format!("  {} = call i32 @puts(i8* {})", reg, str_val.repr));
+                        return Ok(LlvmValue {
+                            ty: LlvmType::I32,
+                            repr: reg,
+                        });
+                    }
+
                     if name == "exit" {
                         let code_val = if !args.is_empty() {
                             let val = self.compile_expr(&args[0])?;
@@ -1474,6 +1496,7 @@ impl<'a> FunctionCompiler<'a> {
                             }
                         };
                         self.emit(format!("  call void @exit(i32 {})", code_val.repr));
+                        self.emit("  unreachable".to_string());
                         self.current_block_mut().terminated = true;
                         return Ok(LlvmValue {
                             ty: LlvmType::Void,

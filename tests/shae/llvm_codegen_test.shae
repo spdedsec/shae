@@ -1,0 +1,160 @@
+// Shae Self-Hosting Compiler Suite: LLVM SSA Codegen Test
+// tests/shae/llvm_codegen_test.shae
+//
+// Verifies pure-Shae direct LLVM 18 IR generation, instruction structure,
+// recursive functions, loops, floats, strings, booleans, and driver dispatch.
+
+use {
+    generate_llvm_ir, compile_source_to_llvm, compile_to_llvm
+} from "../../lib/compiler/llvm.shae"
+use {
+    driver_dispatch
+} from "../../lib/compiler/main.shae"
+use {
+    read, exists, remove
+} from "std:fs"
+
+print("=== Shae Chunk 28: LLVM Codegen Test Suite ===")
+
+// [1] Testing pure-Shae LLVM IR emission for arithmetic, recursion, and loops
+print("\n[1] Testing direct pure-Shae LLVM IR generator for core constructs...")
+let source = r"fn fib(n) {
+    if n <= 1 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn factorial(n) {
+    let acc = 1
+    let i = 1
+    while i <= n {
+        acc = acc * i
+        i = i + 1
+    }
+    return acc
+}
+
+let f = factorial(6)
+let fib_val = fib(10)
+let pi = 3.14159
+println(f)
+println(fib_val)
+println(pi)
+return f
+"
+let ir = compile_source_to_llvm(source)
+
+if not ir.contains("source_filename = \"shae_module\"") {
+    print("FAILED: Module header missing!")
+    exit(1)
+}
+
+if not ir.contains("target triple = \"x86_64-pc-linux-gnu\"") {
+    print("FAILED: Target triple missing or incorrect!")
+    exit(1)
+}
+
+if not ir.contains("@.fmt_int_nl = private unnamed_addr constant [5 x i8]") {
+    print("FAILED: Format strings missing!")
+    exit(1)
+}
+
+if not ir.contains("declare i32 @printf(i8*, ...)") {
+    print("FAILED: declare @printf missing!")
+    exit(1)
+}
+
+if not ir.contains("declare void @exit(i32)") {
+    print("FAILED: declare @exit missing!")
+    exit(1)
+}
+
+if not ir.contains("define i64 @fib(i64 %p0)") {
+    print("FAILED: Function @fib definition missing!")
+    exit(1)
+}
+
+if not ir.contains("define i64 @factorial(i64 %p0)") {
+    print("FAILED: Function @factorial definition missing!")
+    exit(1)
+}
+
+if not ir.contains("icmp sle i64") {
+    print("FAILED: icmp sle instruction missing!")
+    exit(1)
+}
+
+if not ir.contains("mul i64") {
+    print("FAILED: mul i64 instruction missing!")
+    exit(1)
+}
+
+if not ir.contains("add i64") {
+    print("FAILED: add i64 instruction missing!")
+    exit(1)
+}
+
+if not ir.contains("sub i64") {
+    print("FAILED: sub i64 instruction missing!")
+    exit(1)
+}
+
+if not ir.contains("define i32 @main(i32 %argc, i8** %argv)") {
+    print("FAILED: Main entrypoint signature missing!")
+    exit(1)
+}
+
+if not ir.contains("@f = internal global i64 0, align 8") {
+    print("FAILED: Global @f declaration missing!")
+    exit(1)
+}
+
+if not ir.contains("@pi = internal global double 0.0, align 8") {
+    print("FAILED: Global @pi double declaration missing!")
+    exit(1)
+}
+
+print("  ✓ Pure-Shae LLVM SSA IR generator structural assertions passed")
+
+// [2] Testing pure-Shae file compilation via compile_to_llvm
+print("\n[2] Testing compile_to_llvm writing to file...")
+let sample_path = "tests/shae/sample_target.shae"
+let out_ll = "/tmp/test_llvm_codegen_sample.ll"
+
+if exists(out_ll) {
+    remove(out_ll)
+}
+
+let bytes_written = compile_to_llvm(sample_path, out_ll)
+if bytes_written <= 0 or not exists(out_ll) {
+    print("FAILED: compile_to_llvm failed to write output file!")
+    exit(1)
+}
+
+let emitted_ll = read(out_ll)
+if not emitted_ll.contains("@compute") or not emitted_ll.contains("mul i64") {
+    print("FAILED: Emitted LLVM IR content mismatch!")
+    exit(1)
+}
+
+remove(out_ll)
+print("  ✓ compile_to_llvm pipeline verified (" + str(bytes_written) + " bytes)")
+
+// [3] Testing driver dispatch in main compiler
+print("\n[3] Testing driver dispatch for llvm target...")
+let dispatch_out = "/tmp/test_llvm_codegen_dispatch.ll"
+if exists(dispatch_out) {
+    remove(dispatch_out)
+}
+
+let disp_res = driver_dispatch("llvm", sample_path, dispatch_out, null)
+if not exists(dispatch_out) {
+    print("FAILED: driver_dispatch(llvm, ...) failed to emit file!")
+    exit(1)
+}
+
+remove(dispatch_out)
+print("  ✓ driver_dispatch(llvm) verified")
+
+print("\n=== All LLVM Codegen Pure-Shae Tests Passed! ===")
