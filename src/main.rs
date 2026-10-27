@@ -26,11 +26,11 @@ fn show_help() {
     println!("  shae disasm <file>         Disassemble a Shae script or .shaec to bytecode");
     println!("  shae check <file.shae>     Lint and check syntax/declarations of a Shae script");
     println!(
-        "  shae test [path]           Run Shae tests (*_test.shae) (default: VM; use --engine=ast)"
+        "  shae test [path]           Run Shae tests (*_test.shae) (--filter <pat>, --ast, --nocapture)"
     );
     println!("  shae fmt <file.shae>       Format a Shae script");
     println!(
-        "  shae doc [path]            Generate documentation site & reference (-o, --format html|md|json, --open)"
+        "  shae doc [path]            Generate documentation site & reference (-o, --format html|md|json, --serve, --port, --host, --open)"
     );
     println!("  shae new <project_name>    Create a new Shae project folder");
     println!("  shae init [name]           Initialize package manifest (shae.toml)");
@@ -126,7 +126,7 @@ fn run_repl(use_vm: bool) {
 }
 
 fn should_use_vm(args: &[String]) -> bool {
-    if args.iter().any(|a| a == "--engine=ast") {
+    if args.iter().any(|a| a == "--engine=ast" || a == "--ast") {
         return false;
     }
     if args.iter().any(|a| a == "--engine=vm" || a == "--vm") {
@@ -329,92 +329,6 @@ fn check_file(filename: &str) {
         );
     } else {
         println!("✅ Syntax and declarations OK. No issues found.");
-    }
-}
-
-fn run_tests(target: Option<&str>, use_vm: bool) {
-    let mut test_files = Vec::new();
-    let root = target.unwrap_or("tests");
-
-    if let Ok(metadata) = fs::metadata(root) {
-        if metadata.is_file() {
-            test_files.push(root.to_string());
-        } else if metadata.is_dir() {
-            find_test_files(Path::new(root), &mut test_files);
-        }
-    } else if target.is_none() {
-        find_test_files(Path::new("."), &mut test_files);
-    } else {
-        eprintln!("Error: Path '{}' not found", root);
-        process::exit(1);
-    }
-
-    if test_files.is_empty() {
-        println!(
-            "No test files (*_test.shae or test_*.shae) found in '{}'.",
-            root
-        );
-        return;
-    }
-
-    println!("running {} tests in '{}'...\n", test_files.len(), root);
-    let mut passed = 0;
-    let mut failed = 0;
-
-    for file in &test_files {
-        let source = match fs::read_to_string(file) {
-            Ok(s) => s,
-            Err(e) => {
-                println!("test {} ... FAILED (Failed to read file: {})", file, e);
-                failed += 1;
-                continue;
-            }
-        };
-
-        let res = if use_vm {
-            shae::run_file_vm(file)
-        } else {
-            shae::run_file(file)
-        };
-        match res {
-            Ok(_) => {
-                println!("test {} ... ok", file);
-                passed += 1;
-            }
-            Err(e) => {
-                println!("test {} ... FAILED", file);
-                eprintln!("{}\n", shae::render_error(&e, &source));
-                failed += 1;
-            }
-        }
-    }
-
-    println!();
-    if failed == 0 {
-        println!("test result: ok. {} passed; 0 failed", passed);
-    } else {
-        eprintln!("test result: FAILED. {} passed; {} failed", passed, failed);
-        process::exit(1);
-    }
-}
-
-fn find_test_files(dir: &Path, out: &mut Vec<String>) {
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if name != "target" && name != ".git" && name != "node_modules" {
-                    find_test_files(&path, out);
-                }
-            } else if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                if file_name.ends_with(".shae")
-                    && (file_name.ends_with("_test.shae") || file_name.starts_with("test_"))
-                {
-                    out.push(path.to_string_lossy().to_string());
-                }
-            }
-        }
     }
 }
 
@@ -820,6 +734,9 @@ fn main() {
             let mut output_dir = None;
             let mut format = None;
             let mut open_browser = false;
+            let mut serve = false;
+            let mut port: u16 = 8080;
+            let mut host = "127.0.0.1".to_string();
 
             let mut i = 2;
             while i < args.len() {
@@ -842,13 +759,35 @@ fn main() {
                             process::exit(1);
                         }
                     }
+                    "--serve" | "-s" => {
+                        serve = true;
+                        i += 1;
+                    }
+                    "--port" | "-p" => {
+                        if i + 1 < args.len() {
+                            port = args[i + 1].parse().unwrap_or(8080);
+                            i += 2;
+                        } else {
+                            eprintln!("Error: --port requires a port number");
+                            process::exit(1);
+                        }
+                    }
+                    "--host" | "-H" => {
+                        if i + 1 < args.len() {
+                            host = args[i + 1].clone();
+                            i += 2;
+                        } else {
+                            eprintln!("Error: --host requires a host address");
+                            process::exit(1);
+                        }
+                    }
                     "--open" => {
                         open_browser = true;
                         i += 1;
                     }
                     "-h" | "--help" => {
                         println!(
-                            "Usage: shae doc [PATH] [-o <DIR>] [--format html|md|json] [--open]\n"
+                            "Usage: shae doc [PATH] [-o <DIR>] [--format html|md|json] [--serve] [--port <PORT>] [--host <HOST>] [--open]\n"
                         );
                         println!(
                             "Generate documentation site & reference for a Shae project or file.\n"
@@ -857,6 +796,15 @@ fn main() {
                         println!("  -o, --output <DIR>   Output directory (default: doc)");
                         println!(
                             "  --format <FMT>       Output format: html, md, json, all (default: all)"
+                        );
+                        println!(
+                            "  --serve, -s          Start live static HTTP documentation dev server"
+                        );
+                        println!(
+                            "  -p, --port <PORT>    Port for live documentation server (default: 8080)"
+                        );
+                        println!(
+                            "  -H, --host <HOST>    Host address to bind (default: 127.0.0.1)"
                         );
                         println!("  --open               Open generated documentation in browser");
                         println!("  -h, --help           Show this help message");
@@ -892,6 +840,30 @@ fn main() {
                     if open_browser {
                         let html_file = Path::new(&out_path).join("index.html");
                         println!("🌐 Opening documentation at: {}", html_file.display());
+                    }
+                    if serve {
+                        let display_host = if host == "0.0.0.0" || host == "127.0.0.1" {
+                            "localhost"
+                        } else {
+                            &host
+                        };
+                        println!("⚡ Shae Live Documentation Server");
+                        println!("📂 Serving: {}", out_path);
+                        println!("🔗 Local:   http://{}:{}", display_host, port);
+                        println!("🛑 Press Ctrl+C to stop\n");
+                        let (_addr, handle) = match shae::doc::start_doc_server(
+                            Path::new(&out_path),
+                            &host,
+                            port,
+                            None,
+                        ) {
+                            Ok(res) => res,
+                            Err(e) => {
+                                eprintln!("Error starting doc server: {}", e);
+                                process::exit(1);
+                            }
+                        };
+                        let _ = handle.join();
                     }
                 }
                 Err(e) => {
@@ -951,12 +923,75 @@ fn main() {
             check_file(&args[2]);
         }
         "test" => {
-            let use_vm = should_use_vm(&args);
-            let target = args[2..]
-                .iter()
-                .find(|a| !a.starts_with('-'))
-                .map(|s| s.as_str());
-            run_tests(target, use_vm);
+            let mut target = None;
+            let mut filter = None;
+            let mut use_vm = should_use_vm(&args);
+            let mut nocapture = false;
+
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--help" | "-h" => {
+                        println!(
+                            "Shae Built-in Test Runner
+"
+                        );
+                        println!(
+                            "Usage: shae test [PATH] [--filter <PATTERN>] [--ast] [--nocapture]
+"
+                        );
+                        println!("Options:");
+                        println!("  -f, --filter <PATTERN>  Filter tests by name pattern");
+                        println!(
+                            "  --ast                   Use AST Tree-Walking Evaluator (default: VM)"
+                        );
+                        println!(
+                            "  --nocapture             Disable output capture and print stdout live"
+                        );
+                        println!("  -h, --help              Show this help message");
+                        return;
+                    }
+                    "--ast" | "--engine=ast" => {
+                        use_vm = false;
+                    }
+                    "--vm" | "--engine=vm" => {
+                        use_vm = true;
+                    }
+                    "--nocapture" => {
+                        nocapture = true;
+                    }
+                    "-f" | "--filter" => {
+                        if i + 1 < args.len() {
+                            filter = Some(args[i + 1].clone());
+                            i += 1;
+                        } else {
+                            eprintln!("Error: --filter requires a pattern argument");
+                            process::exit(1);
+                        }
+                    }
+                    arg if arg.starts_with("--filter=") => {
+                        filter = Some(arg.strip_prefix("--filter=").unwrap().to_string());
+                    }
+                    arg if !arg.starts_with('-') => {
+                        if target.is_none() {
+                            target = Some(arg.to_string());
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+
+            let options = shae::test_runner::TestOptions {
+                target,
+                filter,
+                use_vm,
+                nocapture,
+            };
+            let summary = shae::test_runner::run_test_suite(&options);
+            if summary.failed > 0 {
+                process::exit(1);
+            }
         }
         "fmt" => {
             let mut check_only = false;

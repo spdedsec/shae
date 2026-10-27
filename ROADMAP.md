@@ -331,3 +331,25 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
   - [x] Exact round-trip byte-for-byte extraction and restoration verification.
   - [x] SHA-256 integrity verification and tamper rejection verification.
   - [x] Dry-run and local filesystem registry publishing verification.
+
+---
+
+### **Chunk 25: Pure-Shae Test Runner (`shae test`) & Live Documentation Server (`shae doc --serve`)** *(Completed)*
+- [x] **Native Standard Assertion Framework (`std:test`, `src/stdlib.rs`)**
+  - [x] `test(description, callable)`: Isolated test case registration and execution with sub-millisecond execution timing.
+  - [x] `assert(condition, [message])`: Descriptive condition assertion error.
+  - [x] `assert_eq(actual, expected, [message])`: Formatted expected vs actual equality diffing.
+  - [x] `assert_ne(actual, expected, [message])`: Inequality assertion with clear error reporting.
+  - [x] `assert_throws(callable, [message])`: Exception raising verification supporting both sync and async callables.
+- [x] **CLI Test Runner Engine & Terminal Reporter (`src/test_runner.rs`, `shae test`)**
+  - [x] Recursive test discovery across `tests/shae/` and workspace `*_test.shae` files.
+  - [x] Name pattern filtering via `-f` / `--filter <pattern>`.
+  - [x] Dual-engine execution across Bytecode VM (default) and AST Evaluator (`--ast`).
+  - [x] Standard output capture buffering with `--nocapture` real-time passthrough.
+  - [x] Colored ANSI reporter showing test durations in milliseconds, failure summaries with captured output, and proper exit codes (0 for pass, 1 for failure).
+- [x] **Live Documentation Server (`shae doc --serve`, `src/doc.rs`)**
+  - [x] Live static HTTP development server integration via `--serve` (supporting `--port <PORT>` and `--host <HOST>`).
+  - [x] Instant local HTTP browsing of generated interactive documentation sites with non-blocking graceful shutdown support.
+- [x] **Dual-Engine Integration Tests & Pure-Shae Suite**
+  - [x] Pure-Shae sample test suite `tests/shae/sample_suite_test.shae` exercising the full `std:test` API.
+  - [x] Comprehensive Rust integration test suite `tests/shae_test_runner_test.rs` validating test discovery, dual-engine runs, filtering, failure diffs, and live doc server.

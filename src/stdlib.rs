@@ -41,8 +41,9 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "actor" | "actors" => Ok(build_actor_module()),
         "actor:cluster" | "cluster" => Ok(build_cluster_module()),
         "async" => Ok(build_async_module()),
+        "test" => Ok(build_test_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:async, std:test",
             clean_name
         ))
         .at(span)),
@@ -4350,4 +4351,39 @@ fn async_result(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
         }
         other => Ok(other.clone()),
     }
+}
+
+// =============================================================
+// std:test
+// -------------------------------------------------------------
+pub fn build_test_module() -> Value {
+    make_map(vec![
+        ("test", test_test),
+        ("assert", crate::builtins::builtin_assert),
+        ("assert_eq", crate::builtins::builtin_assert_eq),
+        ("assert_ne", crate::builtins::builtin_assert_ne),
+        ("assert_throws", crate::builtins::builtin_assert_throws),
+    ])
+}
+
+fn test_test(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(
+            RuntimeError::new("'test' expects 2 arguments (description, callable)".into()).at(span),
+        );
+    }
+    let desc = match &args[0] {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let callable = &args[1];
+    if !callable.is_callable() {
+        return Err(RuntimeError::new(format!(
+            "'test' expects a callable function as second argument, got {}",
+            callable.type_name()
+        ))
+        .at(span));
+    }
+
+    crate::test_runner::execute_test(&desc, callable, ev, span)
 }

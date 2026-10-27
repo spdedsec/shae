@@ -64,6 +64,9 @@ pub fn register(env: &mut Environment) {
         ("route_match", builtin_route_match),
         ("assert", builtin_assert),
         ("assert_eq", builtin_assert_eq),
+        ("assert_ne", builtin_assert_ne),
+        ("assert_throws", builtin_assert_throws),
+        ("panic", builtin_panic),
         ("gc", builtin_gc),
         ("jit", builtin_jit),
     ];
@@ -92,7 +95,12 @@ fn builtin_print(
     _span: Span,
 ) -> Result<Value, RuntimeError> {
     let out: Vec<String> = args.iter().map(|v| v.to_display()).collect();
-    println!("{}", out.join(" "));
+    let text = out.join(" ");
+    if crate::test_runner::is_capturing() {
+        crate::test_runner::capture_print(&text);
+    } else {
+        println!("{}", text);
+    }
     Ok(Value::Null)
 }
 
@@ -1527,7 +1535,7 @@ fn builtin_close(
     }
 }
 
-fn builtin_assert(
+pub fn builtin_assert(
     _eval: &mut Evaluator,
     args: Vec<Value>,
     span: Span,
@@ -1540,17 +1548,22 @@ fn builtin_assert(
     }
     let cond = &args[0];
     if !cond.is_truthy() {
-        let msg = if args.len() == 2 {
+        let raw_msg = if args.len() == 2 {
             args[1].to_display()
         } else {
             "Assertion failed".to_string()
+        };
+        let msg = if raw_msg.starts_with("Assertion failed") {
+            raw_msg
+        } else {
+            format!("Assertion failed: {}", raw_msg)
         };
         return Err(RuntimeError::new(msg).at(span));
     }
     Ok(Value::Null)
 }
 
-fn builtin_assert_eq(
+pub fn builtin_assert_eq(
     _eval: &mut Evaluator,
     args: Vec<Value>,
     span: Span,
@@ -1578,6 +1591,98 @@ fn builtin_assert_eq(
         .at(span));
     }
     Ok(Value::Null)
+}
+
+pub fn builtin_assert_ne(
+    _eval: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.len() < 2 || args.len() > 3 {
+        return Err(RuntimeError::new(
+            "'assert_ne' expects 2 or 3 arguments (actual, expected, [message])".into(),
+        )
+        .at(span));
+    }
+    let actual = &args[0];
+    let expected = &args[1];
+    if actual == expected {
+        let extra = if args.len() == 3 {
+            format!(": {}", args[2].to_display())
+        } else {
+            String::new()
+        };
+        return Err(RuntimeError::new(format!(
+            "Assertion failed: expected values to differ, but both were {}{}",
+            actual.to_repr(),
+            extra
+        ))
+        .at(span));
+    }
+    Ok(Value::Null)
+}
+
+pub fn builtin_assert_throws(
+    ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(RuntimeError::new(
+            "'assert_throws' expects 1 or 2 arguments (callable, [message])".into(),
+        )
+        .at(span));
+    }
+    let callable = &args[0];
+    if !callable.is_callable() {
+        return Err(RuntimeError::new(format!(
+            "'assert_throws' expects a callable function as first argument, got {}",
+            callable.type_name()
+        ))
+        .at(span));
+    }
+
+    let call_res = ev.call_value(callable, vec![], span);
+    let final_res = match call_res {
+        Ok(Value::Task(task_arc)) => {
+            let mut task = task_arc.lock().unwrap();
+            task.join()
+        }
+        other => other,
+    };
+
+    match final_res {
+        Ok(val) => {
+            let extra = if args.len() == 2 {
+                format!(": {}", args[1].to_display())
+            } else {
+                String::new()
+            };
+            Err(RuntimeError::new(format!(
+                "Assertion failed: expected callable to throw an error, but it returned {}{}",
+                val.to_repr(),
+                extra
+            ))
+            .at(span))
+        }
+        Err(_) => Ok(Value::Null),
+    }
+}
+
+pub fn builtin_panic(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    let msg = if args.is_empty() {
+        "explicit panic".to_string()
+    } else {
+        args.iter()
+            .map(|v| v.to_display())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    Err(RuntimeError::new(msg).at(span))
 }
 
 fn builtin_map(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {

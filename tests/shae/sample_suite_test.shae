@@ -1,0 +1,52 @@
+// Pure-Shae Test Runner Sample Suite
+// tests/shae/sample_suite_test.shae
+// Demonstrates native unit testing using the standard assertion framework.
+
+use { test, assert, assert_eq, assert_ne, assert_throws } from "std:test"
+
+test("arithmetic operations and equality assertions", fn() {
+    let a = 20;
+    let b = 22;
+    assert_eq(a + b, 42, "20 + 22 should equal 42");
+    assert_ne(a, b, "a and b must not be equal");
+    assert(a < b, "a must be less than b");
+});
+
+test("string concatenation and formatting", fn() {
+    let name = "Shae";
+    let msg = "Hello, " + name + "!";
+    assert_eq(msg, "Hello, Shae!");
+    assert_eq(len(name), 4);
+    assert_ne(msg, "Goodbye");
+});
+
+test("array manipulation and boundary validation", fn() {
+    let numbers = [10, 20, 30, 40];
+    assert_eq(len(numbers), 4);
+    assert_eq(numbers[0], 10);
+    assert_eq(numbers[3], 40);
+    assert_ne(numbers[0], numbers[1]);
+});
+
+test("map data structure assertions", fn() {
+    let user = {
+        name: "Nova",
+        level: 99,
+        verified: true
+    };
+    assert_eq(user.name, "Nova");
+    assert_eq(user.level, 99);
+    assert(user.verified, "user must be verified");
+});
+
+test("exception throwing and rejection with assert_throws", fn() {
+    assert_throws(fn() {
+        panic("deliberate test failure trigger");
+    }, "Callable was expected to throw");
+});
+
+test("async task coroutine execution in test runner", async fn() {
+    let base = 100;
+    let multiplier = 5;
+    assert_eq(base * multiplier, 500);
+});

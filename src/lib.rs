@@ -29,6 +29,7 @@ pub mod repl;
 pub mod sqlite;
 pub mod stdlib;
 pub mod suggest;
+pub mod test_runner;
 pub mod token;
 pub mod typecheck;
 pub mod unicode;

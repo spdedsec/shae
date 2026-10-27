@@ -889,3 +889,150 @@ fn collect_shae_files(dir: &Path, modules: &mut Vec<ModuleDoc>) -> Result<(), St
     }
     Ok(())
 }
+
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::JoinHandle;
+
+/// Starts a live static HTTP dev server serving generated documentation.
+pub fn start_doc_server(
+    dir: &Path,
+    host: &str,
+    port: u16,
+    shutdown: Option<Arc<AtomicBool>>,
+) -> Result<(SocketAddr, JoinHandle<()>), std::io::Error> {
+    let root = fs::canonicalize(dir)?;
+    if !root.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Path '{}' is not a directory", dir.display()),
+        ));
+    }
+
+    let bind_addr = format!("{}:{}", host, port);
+    let listener = TcpListener::bind(&bind_addr)?;
+    listener.set_nonblocking(true)?;
+    let local_addr = listener.local_addr()?;
+
+    let shutdown_flag = shutdown.unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    let root_arc = Arc::new(root);
+
+    let handle = std::thread::spawn(move || {
+        while !shutdown_flag.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let root = root_arc.clone();
+                    std::thread::spawn(move || {
+                        let _ = handle_doc_http_stream(&mut stream, &root);
+                    });
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(15));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    Ok((local_addr, handle))
+}
+
+fn handle_doc_http_stream(stream: &mut TcpStream, root: &Path) -> std::io::Result<()> {
+    let mut buf = [0u8; 4096];
+    let n = match stream.read(&mut buf) {
+        Ok(n) if n > 0 => n,
+        _ => return Ok(()),
+    };
+
+    let req_str = String::from_utf8_lossy(&buf[..n]);
+    let first_line = req_str.lines().next().unwrap_or("");
+    let mut parts = first_line.split_whitespace();
+    let method = parts.next().unwrap_or("GET");
+    let raw_url = parts.next().unwrap_or("/");
+
+    if method != "GET" && method != "HEAD" {
+        let _ = stream.write_all(
+            b"HTTP/1.1 405 Method Not Allowed
+Content-Length: 0
+
+",
+        );
+        return Ok(());
+    }
+
+    let path_part = raw_url.split('?').next().unwrap_or("/");
+    let rel_path = path_part.trim_start_matches('/');
+    let rel_path = if rel_path.is_empty() {
+        "index.html"
+    } else {
+        rel_path
+    };
+
+    let mut target = root.join(rel_path);
+    if target.is_dir() {
+        let idx = target.join("index.html");
+        if idx.is_file() {
+            target = idx;
+        }
+    }
+
+    if !target.exists() || !target.starts_with(root) {
+        let body = format!(
+            "<!DOCTYPE html><html><head><title>404 Not Found</title></head><body><h1>404 Not Found</h1><p>Doc file not found: {}</p></body></html>",
+            path_part
+        );
+        let resp = format!(
+            "HTTP/1.1 404 Not Found
+Content-Type: text/html; charset=utf-8
+Content-Length: {}
+Connection: close
+
+{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(resp.as_bytes());
+        return Ok(());
+    }
+
+    match fs::read(&target) {
+        Ok(content) => {
+            let mime = match target.extension().and_then(|e| e.to_str()).unwrap_or("") {
+                "html" => "text/html; charset=utf-8",
+                "js" => "application/javascript; charset=utf-8",
+                "css" => "text/css; charset=utf-8",
+                "json" => "application/json; charset=utf-8",
+                "md" => "text/markdown; charset=utf-8",
+                "svg" => "image/svg+xml",
+                "png" => "image/png",
+                _ => "text/plain; charset=utf-8",
+            };
+            let head = format!(
+                "HTTP/1.1 200 OK
+Content-Type: {}
+Content-Length: {}
+Connection: close
+
+",
+                mime,
+                content.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            if method == "GET" {
+                let _ = stream.write_all(&content);
+            }
+        }
+        Err(_) => {
+            let _ = stream.write_all(
+                b"HTTP/1.1 500 Internal Server Error
+Content-Length: 0
+
+",
+            );
+        }
+    }
+
+    Ok(())
+}
