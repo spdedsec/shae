@@ -41,9 +41,10 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "actor" | "actors" => Ok(build_actor_module()),
         "actor:cluster" | "cluster" => Ok(build_cluster_module()),
         "async" => Ok(build_async_module()),
+        "buffer" => Ok(build_buffer_module()),
         "test" => Ok(build_test_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:async, std:test",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:async, std:buffer, std:test",
             clean_name
         ))
         .at(span)),
@@ -4864,4 +4865,439 @@ fn test_test(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, 
     }
 
     crate::test_runner::execute_test(&desc, callable, ev, span)
+}
+
+
+// =============================================================
+// std:buffer
+// -------------------------------------------------------------
+pub fn build_buffer_module() -> Value {
+    make_map(vec![
+        ("ByteBuffer", buffer_byte_buffer_ctor),
+        ("alloc", buffer_alloc),
+        ("from", buffer_from),
+        ("from_hex", buffer_from_hex),
+        ("fromHex", buffer_from_hex),
+        ("from_utf8", buffer_from_utf8),
+        ("fromUtf8", buffer_from_utf8),
+        ("concat", buffer_concat),
+        ("pack", buffer_pack),
+        ("pack_into", buffer_pack_into),
+        ("packInto", buffer_pack_into),
+        ("unpack", buffer_unpack),
+        ("unpack_from", buffer_unpack_from),
+        ("unpackFrom", buffer_unpack_from),
+        ("calcsize", buffer_calcsize),
+        ("calc_size", buffer_calcsize),
+        ("calcSize", buffer_calcsize),
+    ])
+}
+
+pub(crate) fn buffer_byte_buffer_ctor(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Ok(Value::ByteBuffer(Arc::new(RwLock::new(
+            crate::buffer::ByteBuffer::alloc(0),
+        ))));
+    }
+    match &args[0] {
+        Value::Int(n) => {
+            if *n < 0 {
+                return Err(RuntimeError::new("Buffer size cannot be negative".into()).at(span));
+            }
+            Ok(Value::ByteBuffer(Arc::new(RwLock::new(
+                crate::buffer::ByteBuffer::alloc(*n as usize),
+            ))))
+        }
+        Value::Float(f) | Value::Number(f) => {
+            if *f < 0.0 || f.fract() != 0.0 {
+                return Err(RuntimeError::new(
+                    "Buffer size must be a non-negative integer".into(),
+                )
+                .at(span));
+            }
+            Ok(Value::ByteBuffer(Arc::new(RwLock::new(
+                crate::buffer::ByteBuffer::alloc(*f as usize),
+            ))))
+        }
+        Value::Array(arr) => {
+            let guard = arr.read().unwrap();
+            let mut bytes = Vec::with_capacity(guard.len());
+            for v in guard.iter() {
+                match v {
+                    Value::Int(b) if (0..=255).contains(b) => bytes.push(*b as u8),
+                    Value::Float(f) | Value::Number(f)
+                        if f.fract() == 0.0 && (0.0..=255.0).contains(f) =>
+                    {
+                        bytes.push(*f as u8)
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "Buffer array element must be a byte (0..255)".into(),
+                        )
+                        .at(span));
+                    }
+                }
+            }
+            Ok(Value::ByteBuffer(Arc::new(RwLock::new(
+                crate::buffer::ByteBuffer::from_vec(bytes),
+            ))))
+        }
+        Value::String(s) => Ok(Value::ByteBuffer(Arc::new(RwLock::new(
+            crate::buffer::ByteBuffer::from_utf8(s),
+        )))),
+        Value::ByteBuffer(b) => {
+            let copy = b.read().unwrap().copy();
+            Ok(Value::ByteBuffer(Arc::new(RwLock::new(copy))))
+        }
+        other => Err(RuntimeError::new(format!(
+            "ByteBuffer constructor expects integer size, byte array, or string, got {}",
+            other.type_name()
+        ))
+        .at(span)),
+    }
+}
+
+pub(crate) fn buffer_alloc(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("buffer.alloc", 1, &args, span)?;
+    let size = match &args[0] {
+        Value::Int(n) if *n >= 0 => *n as usize,
+        Value::Float(f) | Value::Number(f) if *f >= 0.0 && f.fract() == 0.0 => *f as usize,
+        _ => {
+            return Err(RuntimeError::new(
+                "buffer.alloc expects a non-negative integer size".into(),
+            )
+            .at(span));
+        }
+    };
+    Ok(Value::ByteBuffer(Arc::new(RwLock::new(
+        crate::buffer::ByteBuffer::alloc(size),
+    ))))
+}
+
+pub(crate) fn buffer_from(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("buffer.from", 1, &args, span)?;
+    match &args[0] {
+        Value::Array(arr) => {
+            let guard = arr.read().unwrap();
+            let mut bytes = Vec::with_capacity(guard.len());
+            for v in guard.iter() {
+                match v {
+                    Value::Int(b) if (0..=255).contains(b) => bytes.push(*b as u8),
+                    Value::Float(f) | Value::Number(f)
+                        if f.fract() == 0.0 && (0.0..=255.0).contains(f) =>
+                    {
+                        bytes.push(*f as u8)
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "buffer.from array element must be a byte (0..255)".into(),
+                        )
+                        .at(span));
+                    }
+                }
+            }
+            Ok(Value::ByteBuffer(Arc::new(RwLock::new(
+                crate::buffer::ByteBuffer::from_vec(bytes),
+            ))))
+        }
+        Value::String(s) => Ok(Value::ByteBuffer(Arc::new(RwLock::new(
+            crate::buffer::ByteBuffer::from_utf8(s),
+        )))),
+        Value::ByteBuffer(b) => {
+            let copy = b.read().unwrap().copy();
+            Ok(Value::ByteBuffer(Arc::new(RwLock::new(copy))))
+        }
+        other => Err(RuntimeError::new(format!(
+            "buffer.from expects byte array or string, got {}",
+            other.type_name()
+        ))
+        .at(span)),
+    }
+}
+
+pub(crate) fn buffer_from_hex(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("buffer.from_hex", 1, &args, span)?;
+    if let Value::String(s) = &args[0] {
+        let buf = crate::buffer::ByteBuffer::from_hex(s)
+            .map_err(|e| RuntimeError::new(e).at(span))?;
+        Ok(Value::ByteBuffer(Arc::new(RwLock::new(buf))))
+    } else {
+        Err(RuntimeError::new("buffer.from_hex expects a hex string argument".into()).at(span))
+    }
+}
+
+pub(crate) fn buffer_from_utf8(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("buffer.from_utf8", 1, &args, span)?;
+    if let Value::String(s) = &args[0] {
+        let buf = crate::buffer::ByteBuffer::from_utf8(s);
+        Ok(Value::ByteBuffer(Arc::new(RwLock::new(buf))))
+    } else {
+        Err(RuntimeError::new("buffer.from_utf8 expects a string argument".into()).at(span))
+    }
+}
+
+pub(crate) fn buffer_concat(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Ok(Value::ByteBuffer(Arc::new(RwLock::new(
+            crate::buffer::ByteBuffer::alloc(0),
+        ))));
+    }
+    let items: Vec<Value> = if args.len() == 1 && matches!(&args[0], Value::Array(_)) {
+        if let Value::Array(a) = &args[0] {
+            a.read().unwrap().clone()
+        } else {
+            Vec::new()
+        }
+    } else {
+        args
+    };
+
+    let mut bufs = Vec::with_capacity(items.len());
+    for it in &items {
+        match it {
+            Value::ByteBuffer(b) => {
+                bufs.push(b.read().unwrap().clone());
+            }
+            Value::Array(a) => {
+                let guard = a.read().unwrap();
+                let mut bytes = Vec::with_capacity(guard.len());
+                for v in guard.iter() {
+                    match v {
+                        Value::Int(b) if (0..=255).contains(b) => bytes.push(*b as u8),
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "buffer.concat array element must be a byte (0..255)".into(),
+                            )
+                            .at(span));
+                        }
+                    }
+                }
+                bufs.push(crate::buffer::ByteBuffer::from_vec(bytes));
+            }
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "buffer.concat expects ByteBuffer instances, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        }
+    }
+    let combined = crate::buffer::ByteBuffer::concat(&bufs);
+    Ok(Value::ByteBuffer(Arc::new(RwLock::new(combined))))
+}
+
+pub(crate) fn buffer_pack(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(
+            RuntimeError::new("buffer.pack expects at least format string".into()).at(span),
+        );
+    }
+    let fmt = match &args[0] {
+        Value::String(s) => s.as_str(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "buffer.pack format must be string, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+
+    let values: Vec<Value> = if args.len() == 2 && matches!(&args[1], Value::Array(_)) {
+        if let Value::Array(arr) = &args[1] {
+            arr.read().unwrap().clone()
+        } else {
+            Vec::new()
+        }
+    } else {
+        args[1..].to_vec()
+    };
+
+    let packed = crate::buffer::StructEngine::pack(fmt, &values)
+        .map_err(|e| RuntimeError::new(e).at(span))?;
+    Ok(Value::ByteBuffer(Arc::new(RwLock::new(packed))))
+}
+
+pub(crate) fn buffer_pack_into(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.len() < 3 {
+        return Err(RuntimeError::new(
+            "buffer.pack_into expects at least (format, buffer, offset)".into(),
+        )
+        .at(span));
+    }
+    let fmt = match &args[0] {
+        Value::String(s) => s.as_str(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "buffer.pack_into format must be string, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    let offset = match &args[2] {
+        Value::Int(n) if *n >= 0 => *n as usize,
+        Value::Float(f) | Value::Number(f) if *f >= 0.0 && f.fract() == 0.0 => *f as usize,
+        _ => {
+            return Err(RuntimeError::new(
+                "buffer.pack_into offset must be a non-negative integer".into(),
+            )
+            .at(span));
+        }
+    };
+
+    let values: Vec<Value> = if args.len() == 4 && matches!(&args[3], Value::Array(_)) {
+        if let Value::Array(arr) = &args[3] {
+            arr.read().unwrap().clone()
+        } else {
+            Vec::new()
+        }
+    } else {
+        args[3..].to_vec()
+    };
+
+    match &args[1] {
+        Value::ByteBuffer(b) => {
+            let mut buf = b.write().unwrap();
+            let written =
+                crate::buffer::StructEngine::pack_into(fmt, &mut buf, offset, &values)
+                    .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(written as i64))
+        }
+        other => Err(RuntimeError::new(format!(
+            "buffer.pack_into second argument must be ByteBuffer, got {}",
+            other.type_name()
+        ))
+        .at(span)),
+    }
+}
+
+pub(crate) fn buffer_unpack(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.len() < 2 || args.len() > 3 {
+        return Err(RuntimeError::new(
+            "buffer.unpack expects (format, buffer, [offset])".into(),
+        )
+        .at(span));
+    }
+    let fmt = match &args[0] {
+        Value::String(s) => s.as_str(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "buffer.unpack format must be string, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    let offset = if args.len() == 3 {
+        match &args[2] {
+            Value::Int(n) if *n >= 0 => *n as usize,
+            Value::Float(f) | Value::Number(f) if *f >= 0.0 && f.fract() == 0.0 => *f as usize,
+            _ => {
+                return Err(RuntimeError::new(
+                    "buffer.unpack offset must be a non-negative integer".into(),
+                )
+                .at(span));
+            }
+        }
+    } else {
+        0
+    };
+
+    let bytes: Vec<u8> = match &args[1] {
+        Value::ByteBuffer(b) => b.read().unwrap().to_bytes(),
+        Value::Array(a) => {
+            let guard = a.read().unwrap();
+            let mut out = Vec::with_capacity(guard.len());
+            for v in guard.iter() {
+                match v {
+                    Value::Int(b) if (0..=255).contains(b) => out.push(*b as u8),
+                    Value::Float(f) | Value::Number(f)
+                        if f.fract() == 0.0 && (0.0..=255.0).contains(f) =>
+                    {
+                        out.push(*f as u8)
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "buffer.unpack byte array must contain bytes 0..255".into(),
+                        )
+                        .at(span));
+                    }
+                }
+            }
+            out
+        }
+        Value::String(s) => s.as_bytes().to_vec(),
+        other => {
+            return Err(RuntimeError::new(format!(
+                "buffer.unpack expects ByteBuffer, byte array, or string, got {}",
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+
+    let unpacked = crate::buffer::StructEngine::unpack(fmt, &bytes, offset)
+        .map_err(|e| RuntimeError::new(e).at(span))?;
+    Ok(Value::Array(Arc::new(RwLock::new(unpacked))))
+}
+
+pub(crate) fn buffer_unpack_from(
+    ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    buffer_unpack(ev, args, span)
+}
+
+pub(crate) fn buffer_calcsize(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("buffer.calcsize", 1, &args, span)?;
+    if let Value::String(s) = &args[0] {
+        let size = crate::buffer::StructEngine::calcsize(s)
+            .map_err(|e| RuntimeError::new(e).at(span))?;
+        Ok(Value::Int(size as i64))
+    } else {
+        Err(RuntimeError::new("buffer.calcsize expects format string".into()).at(span))
+    }
 }
