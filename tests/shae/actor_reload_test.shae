@@ -1,0 +1,199 @@
+// Pure-Shae Hot-Code Reloading Test Suite
+// tests/shae/actor_reload_test.shae
+// Validates hot-code reloading for local actors and distributed cluster nodes
+// across both Bytecode VM and Tree-Walking AST Evaluator.
+
+use { test, assert, assert_eq, assert_ne, assert_throws } from "std:test"
+
+let actor = use "std:actor"
+let cluster = use "std:actor:cluster"
+
+test("Local stateful actor hot-reload preserves active daemon state", fn() {
+    let p = actor.spawn(100, fn(state, msg) {
+        if msg["op"] == "add" {
+            let next_st = state + msg["val"]
+            return { "state": next_st, "reply": next_st }
+        } else if msg["op"] == "get" {
+            return { "state": state, "reply": state }
+        }
+        return state
+    })
+
+    let res1 = p.ask({ "op": "add", "val": 25 })
+    assert_eq(res1, 125)
+
+    // Hot-reload with V2 handler multiplying instead of adding
+    let reload_ok = p.reload(fn(state, msg) {
+        if msg["op"] == "mult" {
+            let next_st = state * msg["val"]
+            return { "state": next_st, "reply": next_st }
+        } else if msg["op"] == "get" {
+            return { "state": state, "reply": state }
+        }
+        return state
+    })
+    assert_eq(reload_ok, true)
+
+    // Verify state 125 is preserved and new operation works
+    let res2 = p.ask({ "op": "mult", "val": 2 })
+    assert_eq(res2, 250)
+
+    let final_st = p.ask({ "op": "get" })
+    assert_eq(final_st, 250)
+
+    p.stop()
+})
+
+test("Local actor hot-reload with state migration function", fn() {
+    let p = actor.spawn(50, fn(state, msg) {
+        if msg == "get" {
+            return { "state": state, "reply": state }
+        }
+        return state
+    })
+
+    let initial = p.ask("get")
+    assert_eq(initial, 50)
+
+    // Migration function converts scalar state to map
+    let migration_fn = fn(old_st) {
+        return { "base": old_st, "multiplier": 10, "version": "v2" }
+    }
+
+    let v2_handler = fn(state, msg) {
+        if msg == "compute" {
+            let res = state["base"] * state["multiplier"]
+            return { "state": state, "reply": res }
+        } else if msg == "info" {
+            return { "state": state, "reply": state["version"] }
+        }
+        return state
+    }
+
+    let ok = p.reload(v2_handler, migration_fn)
+    assert_eq(ok, true)
+
+    let comp = p.ask("compute")
+    assert_eq(comp, 500)
+
+    let ver = p.ask("info")
+    assert_eq(ver, "v2")
+
+    p.stop()
+})
+
+test("Mailbox message queue continuity across reload", fn() {
+    let p = actor.spawn([], fn(state, msg) {
+        if msg["op"] == "step1" {
+            state.push("1:" + msg["data"])
+            return state
+        } else if msg["op"] == "get" {
+            return { "state": state, "reply": state }
+        }
+        return state
+    })
+
+    p.send({ "op": "step1", "data": "A" })
+    p.send({ "op": "step1", "data": "B" })
+
+    let ok = p.reload(fn(state, msg) {
+        if msg["op"] == "step2" {
+            state.push("2:" + msg["data"])
+            return state
+        } else if msg["op"] == "get" {
+            return { "state": state, "reply": state }
+        }
+        return state
+    })
+    assert_eq(ok, true)
+
+    p.send({ "op": "step2", "data": "C" })
+    p.send({ "op": "step2", "data": "D" })
+
+    let history = p.ask({ "op": "get" })
+    assert_eq(history, ["1:A", "1:B", "2:C", "2:D"])
+
+    p.stop()
+})
+
+test("Cluster daemon hot-reload across distributed mesh without connection drop", fn() {
+    let node_alpha = cluster.node("shae_test_node_alpha", "127.0.0.1:0", { "cookie": "cluster_reload_secret" })
+    let node_beta = cluster.node("shae_test_node_beta", "127.0.0.1:0", { "cookie": "cluster_reload_secret" })
+
+    assert(node_alpha.is_alive())
+    assert(node_beta.is_alive())
+
+    // Spawn telemetry actor on node_alpha
+    let telemetry_actor = node_alpha.spawn("telemetry_service", 1000, fn(state, msg) {
+        if msg == "report" {
+            return { "state": state, "reply": "alpha_v1:" + str(state) }
+        } else if msg == "inc" {
+            return state + 10
+        }
+        return state
+    })
+
+    let conn_ok = node_beta.connect(node_alpha.address())
+    assert(conn_ok)
+
+    let remote = node_beta.actor("telemetry_service", node_alpha.name())
+    assert(remote.is_alive())
+
+    let rep1 = remote.ask("report")
+    assert_eq(rep1, "alpha_v1:1000")
+
+    remote.send("inc")
+
+    // Hot-reload remote actor code over network mesh using Shae handler function
+    let v2_handler = fn(state, msg) {
+        if msg == "report" {
+            return { "state": state, "reply": "alpha_v2:" + str(state) }
+        } else if msg == "double" {
+            return state * 2
+        }
+        return state
+    }
+
+    let reload_ok = remote.reload(v2_handler)
+    assert_eq(reload_ok, true)
+
+    // Verify mesh connectivity is alive
+    assert(node_alpha.is_alive())
+    assert(node_beta.is_alive())
+
+    // Verify V2 behavior preserving updated state (1010)
+    let rep2 = remote.ask("report")
+    assert_eq(rep2, "alpha_v2:1010")
+
+    remote.send("double")
+    let rep3 = remote.ask("report")
+    assert_eq(rep3, "alpha_v2:2020")
+
+    telemetry_actor.stop()
+    node_beta.stop()
+    node_alpha.stop()
+})
+
+test("Migration error resilience keeps actor alive with existing code", fn() {
+    let p = actor.spawn(77, fn(state, msg) {
+        return { "state": state, "reply": state }
+    })
+
+    let bad_mig = fn(st) {
+        return 10 / 0
+    }
+
+    let caught = false
+    try {
+        p.reload(fn(st, msg) { st * 2 }, bad_mig)
+    } catch err {
+        caught = true
+    }
+
+    assert_eq(caught, true)
+    assert_eq(p.is_alive(), true)
+    let val = p.ask("ping")
+    assert_eq(val, 77)
+
+    p.stop()
+})

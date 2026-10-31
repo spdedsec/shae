@@ -3504,6 +3504,7 @@ fn build_actor_module() -> Value {
         ("spawnNamed", actor_spawn_named),
         ("send", actor_send),
         ("ask", actor_ask),
+        ("reload", actor_reload),
         ("stop", actor_stop),
         ("is_alive", actor_is_alive),
         ("isAlive", actor_is_alive),
@@ -3549,6 +3550,9 @@ pub fn build_cluster_module() -> Value {
         ("whereis", cluster_whereis),
         ("send", actor_send),
         ("ask", actor_ask),
+        ("reload", cluster_reload_actor),
+        ("reload_actor", cluster_reload_actor),
+        ("reloadActor", cluster_reload_actor),
         ("broadcast", cluster_broadcast),
         ("on_broadcast", cluster_on_broadcast),
         ("stop", cluster_stop),
@@ -5300,4 +5304,163 @@ pub(crate) fn buffer_calcsize(
     } else {
         Err(RuntimeError::new("buffer.calcsize expects format string".into()).at(span))
     }
+}
+
+fn actor_reload(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() < 2 || args.len() > 4 {
+        return Err(RuntimeError::new(
+            "reload expects 2 to 4 arguments: reload(actor, new_handler, [migration_fn], [timeout_ms])".into(),
+        )
+        .at(span));
+    }
+    let (migration, timeout) = match args.len() {
+        2 => (None, None),
+        3 => match &args[2] {
+            Value::Int(ms) if *ms >= 0 => (None, Some(std::time::Duration::from_millis(*ms as u64))),
+            Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => {
+                (None, Some(std::time::Duration::from_millis(*ms as u64)))
+            }
+            Value::Null => (None, None),
+            _ => (Some(args[2].clone()), None),
+        },
+        4 => {
+            let to = match &args[3] {
+                Value::Int(ms) if *ms >= 0 => Some(std::time::Duration::from_millis(*ms as u64)),
+                Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => {
+                    Some(std::time::Duration::from_millis(*ms as u64))
+                }
+                Value::Null => None,
+                _ => {
+                    return Err(RuntimeError::new(
+                        "reload timeout must be a non-negative number".into(),
+                    )
+                    .at(span));
+                }
+            };
+            let mig = match &args[2] {
+                Value::Null => None,
+                other => Some(other.clone()),
+            };
+            (mig, to)
+        }
+        _ => unreachable!(),
+    };
+
+    match &args[0] {
+        Value::Actor(act) => act
+            .reload(args[1].clone(), migration, timeout)
+            .map(Value::Bool)
+            .map_err(|e| e.to_runtime_error(span)),
+        Value::RemoteActor(rem) => rem
+            .reload(args[1].clone(), migration, timeout)
+            .map(Value::Bool)
+            .map_err(|e| e.to_runtime_error(span)),
+        Value::String(name) => {
+            if let Some(act) = ActorRegistry::whereis(name) {
+                act.reload(args[1].clone(), migration, timeout)
+                    .map(Value::Bool)
+                    .map_err(|e| e.to_runtime_error(span))
+            } else if let Some(node) = crate::actor_cluster::get_global_cluster() {
+                node.reload_actor(name, args[1].clone(), migration, timeout)
+                    .map(Value::Bool)
+                    .map_err(|e| e.to_runtime_error(span))
+            } else {
+                Err(ActorError::NameNotFound(name.clone()).to_runtime_error(span))
+            }
+        }
+        other => Err(RuntimeError::new(format!(
+            "reload expects actor handle or string name, got {}",
+            other.type_name()
+        ))
+        .at(span)),
+    }
+}
+
+fn cluster_reload_actor(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.len() < 2 || args.len() > 5 {
+        return Err(RuntimeError::new(
+            "cluster.reload_actor expects 2 to 5 arguments: reload_actor([node], actor_name, new_handler, [migration_fn], [timeout_ms])".into(),
+        )
+        .at(span));
+    }
+
+    let (node, name, handler, migration, timeout) = if let Value::ClusterNode(ref n) = args[0] {
+        if args.len() < 3 {
+            return Err(RuntimeError::new(
+                "cluster.reload_actor expects at least 3 arguments when node is specified".into(),
+            )
+            .at(span));
+        }
+        let actor_name = match &args[1] {
+            Value::String(s) => s.clone(),
+            other => return Err(RuntimeError::new(format!("Expected string actor_name, got {}", other.type_name())).at(span)),
+        };
+        let h = args[2].clone();
+        let (mig, to) = match args.len() {
+            3 => (None, None),
+            4 => match &args[3] {
+                Value::Int(ms) if *ms >= 0 => (None, Some(std::time::Duration::from_millis(*ms as u64))),
+                Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => (None, Some(std::time::Duration::from_millis(*ms as u64))),
+                Value::Null => (None, None),
+                _ => (Some(args[3].clone()), None),
+            },
+            5 => {
+                let to = match &args[4] {
+                    Value::Int(ms) if *ms >= 0 => Some(std::time::Duration::from_millis(*ms as u64)),
+                    Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => Some(std::time::Duration::from_millis(*ms as u64)),
+                    Value::Null => None,
+                    _ => return Err(RuntimeError::new("timeout must be non-negative number".into()).at(span)),
+                };
+                let mig = match &args[3] {
+                    Value::Null => None,
+                    other => Some(other.clone()),
+                };
+                (mig, to)
+            }
+            _ => unreachable!(),
+        };
+        (Arc::clone(n), actor_name, h, mig, to)
+    } else {
+        let global = crate::actor_cluster::get_global_cluster().ok_or_else(|| {
+            RuntimeError::new("No active cluster node found (pass node explicitly or call cluster.start)".into())
+                .at(span)
+        })?;
+        let actor_name = match &args[0] {
+            Value::String(s) => s.clone(),
+            other => return Err(RuntimeError::new(format!("Expected string actor_name, got {}", other.type_name())).at(span)),
+        };
+        let h = args[1].clone();
+        let (mig, to) = match args.len() {
+            2 => (None, None),
+            3 => match &args[2] {
+                Value::Int(ms) if *ms >= 0 => (None, Some(std::time::Duration::from_millis(*ms as u64))),
+                Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => (None, Some(std::time::Duration::from_millis(*ms as u64))),
+                Value::Null => (None, None),
+                _ => (Some(args[2].clone()), None),
+            },
+            4 => {
+                let to = match &args[3] {
+                    Value::Int(ms) if *ms >= 0 => Some(std::time::Duration::from_millis(*ms as u64)),
+                    Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => Some(std::time::Duration::from_millis(*ms as u64)),
+                    Value::Null => None,
+                    _ => return Err(RuntimeError::new("timeout must be non-negative number".into()).at(span)),
+                };
+                let mig = match &args[2] {
+                    Value::Null => None,
+                    other => Some(other.clone()),
+                };
+                (mig, to)
+            }
+            _ => unreachable!(),
+        };
+        (global, actor_name, h, mig, to)
+    };
+
+    node.reload_actor(&name, handler, migration, timeout)
+        .map(Value::Bool)
+        .map_err(|e| e.to_runtime_error(span))
 }

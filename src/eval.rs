@@ -1625,6 +1625,7 @@ impl Evaluator {
                             property.as_str(),
                             "send"
                                 | "ask"
+                                | "reload"
                                 | "stop"
                                 | "is_alive"
                                 | "isAlive"
@@ -1651,7 +1652,7 @@ impl Evaluator {
                     Value::RemoteActor(rem) => {
                         if matches!(
                             property.as_str(),
-                            "send" | "ask" | "is_alive" | "isAlive" | "node" | "name"
+                            "send" | "ask" | "reload" | "is_alive" | "isAlive" | "node" | "name"
                         ) {
                             Ok(Some(Value::BoundMethod {
                                 object: Box::new(Value::RemoteActor(rem.clone())),
@@ -1682,6 +1683,9 @@ impl Evaluator {
                                 | "registered"
                                 | "send"
                                 | "ask"
+                                | "reload"
+                                | "reload_actor"
+                                | "reloadActor"
                                 | "broadcast"
                                 | "on_broadcast"
                                 | "stop"
@@ -3563,6 +3567,57 @@ impl Evaluator {
                             Err(e) => Err(e),
                         }
                     }
+                    (Value::Actor(act), "reload") => {
+                        let (new_handler, migration, timeout) = match args.len() {
+                            1 => (args[0].clone(), None, None),
+                            2 => match &args[1] {
+                                Value::Int(ms) if *ms >= 0 => (
+                                    args[0].clone(),
+                                    None,
+                                    Some(std::time::Duration::from_millis(*ms as u64)),
+                                ),
+                                Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => (
+                                    args[0].clone(),
+                                    None,
+                                    Some(std::time::Duration::from_millis(*ms as u64)),
+                                ),
+                                Value::Null => (args[0].clone(), None, None),
+                                _ => (args[0].clone(), Some(args[1].clone()), None),
+                            },
+                            3 => {
+                                let to = match &args[2] {
+                                    Value::Int(ms) if *ms >= 0 => {
+                                        Some(std::time::Duration::from_millis(*ms as u64))
+                                    }
+                                    Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => {
+                                        Some(std::time::Duration::from_millis(*ms as u64))
+                                    }
+                                    Value::Null => None,
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "reload() timeout must be a non-negative number".into(),
+                                        )
+                                        .at(span));
+                                    }
+                                };
+                                let mig = match &args[1] {
+                                    Value::Null => None,
+                                    other => Some(other.clone()),
+                                };
+                                (args[0].clone(), mig, to)
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "reload() expects 1 to 3 arguments: reload(new_handler, [migration_fn], [timeout_ms])"
+                                        .into(),
+                                )
+                                .at(span));
+                            }
+                        };
+                        act.reload(new_handler, migration, timeout)
+                            .map(Value::Bool)
+                            .map_err(|e| e.to_runtime_error(span))
+                    }
                     (Value::Actor(act), "stop") => {
                         if !args.is_empty() {
                             Err(RuntimeError::new("stop() expects 0 arguments".into()).at(span))
@@ -3644,6 +3699,57 @@ impl Evaluator {
                         };
 
                         rem.ask(args[0].clone(), timeout)
+                            .map_err(|e| e.to_runtime_error(span))
+                    }
+                    (Value::RemoteActor(rem), "reload") => {
+                        let (new_handler, migration, timeout) = match args.len() {
+                            1 => (args[0].clone(), None, None),
+                            2 => match &args[1] {
+                                Value::Int(ms) if *ms >= 0 => (
+                                    args[0].clone(),
+                                    None,
+                                    Some(std::time::Duration::from_millis(*ms as u64)),
+                                ),
+                                Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => (
+                                    args[0].clone(),
+                                    None,
+                                    Some(std::time::Duration::from_millis(*ms as u64)),
+                                ),
+                                Value::Null => (args[0].clone(), None, None),
+                                _ => (args[0].clone(), Some(args[1].clone()), None),
+                            },
+                            3 => {
+                                let to = match &args[2] {
+                                    Value::Int(ms) if *ms >= 0 => {
+                                        Some(std::time::Duration::from_millis(*ms as u64))
+                                    }
+                                    Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => {
+                                        Some(std::time::Duration::from_millis(*ms as u64))
+                                    }
+                                    Value::Null => None,
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "reload() timeout must be a non-negative number".into(),
+                                        )
+                                        .at(span));
+                                    }
+                                };
+                                let mig = match &args[1] {
+                                    Value::Null => None,
+                                    other => Some(other.clone()),
+                                };
+                                (args[0].clone(), mig, to)
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "reload() expects 1 to 3 arguments: reload(new_handler, [migration_fn], [timeout_ms])"
+                                        .into(),
+                                )
+                                .at(span));
+                            }
+                        };
+                        rem.reload(new_handler, migration, timeout)
+                            .map(Value::Bool)
                             .map_err(|e| e.to_runtime_error(span))
                     }
                     (Value::RemoteActor(rem), "is_alive" | "isAlive") => {
@@ -3858,6 +3964,66 @@ impl Evaluator {
                                 values,
                             ))))
                         }
+                    }
+                    (Value::ClusterNode(node), "reload" | "reload_actor" | "reloadActor") => {
+                        if args.len() < 2 || args.len() > 4 {
+                            return Err(RuntimeError::new(
+                                "reload_actor() expects 2 to 4 arguments: reload_actor(actor_name, new_handler, [migration_fn], [timeout_ms])"
+                                    .into(),
+                            )
+                            .at(span));
+                        }
+                        let actor_name = match &args[0] {
+                            Value::String(s) => s.clone(),
+                            other => {
+                                return Err(RuntimeError::new(format!(
+                                    "reload_actor() expects string actor_name, got {}",
+                                    other.type_name()
+                                ))
+                                .at(span));
+                            }
+                        };
+                        let new_handler = args[1].clone();
+                        let (migration, timeout) = match args.len() {
+                            2 => (None, None),
+                            3 => match &args[2] {
+                                Value::Int(ms) if *ms >= 0 => {
+                                    (None, Some(std::time::Duration::from_millis(*ms as u64)))
+                                }
+                                Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => {
+                                    (None, Some(std::time::Duration::from_millis(*ms as u64)))
+                                }
+                                Value::Null => (None, None),
+                                _ => (Some(args[2].clone()), None),
+                            },
+                            4 => {
+                                let to = match &args[3] {
+                                    Value::Int(ms) if *ms >= 0 => {
+                                        Some(std::time::Duration::from_millis(*ms as u64))
+                                    }
+                                    Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => {
+                                        Some(std::time::Duration::from_millis(*ms as u64))
+                                    }
+                                    Value::Null => None,
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "reload_actor() timeout must be a non-negative number"
+                                                .into(),
+                                        )
+                                        .at(span));
+                                    }
+                                };
+                                let mig = match &args[2] {
+                                    Value::Null => None,
+                                    other => Some(other.clone()),
+                                };
+                                (mig, to)
+                            }
+                            _ => unreachable!(),
+                        };
+                        node.reload_actor(&actor_name, new_handler, migration, timeout)
+                            .map(Value::Bool)
+                            .map_err(|e| e.to_runtime_error(span))
                     }
                     (Value::ClusterNode(node), "send") => {
                         if args.len() != 2 {

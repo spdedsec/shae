@@ -22,6 +22,10 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+fn default_cluster_timeout_ms() -> u64 {
+    5000
+}
+
 static NEXT_REQ_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Binary wire framing: 4-byte big-endian payload length followed by bytes.
@@ -131,6 +135,18 @@ pub enum ClusterWireMsg {
         from_node: String,
         topic: String,
         payload: serde_json::Value,
+    },
+    Reload {
+        request_id: String,
+        from_node: String,
+        #[serde(alias = "target_actor")]
+        target: String,
+        #[serde(alias = "new_handler_code", alias = "code")]
+        handler_code: String,
+        #[serde(alias = "migration_code", default)]
+        migration_code: Option<String>,
+        #[serde(default = "default_cluster_timeout_ms")]
+        timeout_ms: u64,
     },
 }
 
@@ -408,6 +424,75 @@ pub struct RemoteActorRef {
     pub cluster_node: Arc<ClusterNode>,
 }
 
+/// Serializes a callable Shae value (string, AST function, or bytecode closure) into source representation.
+pub fn callable_to_source(val: &Value) -> Result<String, ActorError> {
+    match val {
+        Value::String(s) => Ok(s.clone()),
+        Value::Function { params, body, .. } => {
+            let prog = crate::ast::Program {
+                statements: body.as_ref().clone(),
+            };
+            let body_str = crate::fmt::Formatter::new().format_program(&prog);
+            Ok(format!("fn({}) {{\n{}\n}}", params.join(", "), body_str))
+        }
+        Value::Closure(c) => {
+            use base64::Engine;
+            let bytes = c.function.chunk.to_bytes();
+            let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+            Ok(format!("BYTECODE:{}:{}", c.function.arity, b64))
+        }
+        Value::CompiledFunction(f) => {
+            use base64::Engine;
+            let bytes = f.chunk.to_bytes();
+            let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+            Ok(format!("BYTECODE:{}:{}", f.arity, b64))
+        }
+        other => Err(ActorError::EvaluationError(format!(
+            "Expected handler code string or callable, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+/// Unpacks a handler code string into a runnable Value (either compiled from Shae code or decoded bytecode).
+pub fn unpack_handler_code(code: &str) -> Result<Value, String> {
+    if let Some(rest) = code.strip_prefix("BYTECODE:") {
+        use base64::Engine;
+        let parts: Vec<&str> = rest.splitn(2, ':').collect();
+        let (arity, b64) = if parts.len() == 2 {
+            (parts[0].parse::<usize>().unwrap_or(2), parts[1])
+        } else {
+            (2, parts[0])
+        };
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|e| format!("Base64 decode error: {}", e))?;
+        let chunk = crate::chunk::Chunk::from_bytes(&bytes)
+            .map_err(|e| format!("Bytecode decode error: {}", e))?;
+        let comp_fn = Arc::new(crate::value::CompiledFunction::new(
+            arity,
+            chunk,
+            None,
+            Vec::new(),
+            false,
+        ));
+        let closure = Arc::new(crate::value::Closure {
+            function: comp_fn,
+            upvalues: Vec::new(),
+            module_globals: None,
+        });
+        Ok(Value::Closure(closure))
+    } else {
+        let trimmed = code.trim();
+        let runnable = if trimmed.starts_with("fn(") || trimmed.starts_with("fn (") {
+            format!("let _h = {}; _h", trimmed)
+        } else {
+            code.to_string()
+        };
+        crate::run(&runnable).map_err(|e| format!("Failed to compile handler code: {}", e))
+    }
+}
+
 impl RemoteActorRef {
     pub fn new(
         node_name: String,
@@ -443,6 +528,32 @@ impl RemoteActorRef {
 
     pub fn name(&self) -> &str {
         &self.actor_name
+    }
+
+    /// Hot-reloads the remote actor with new handler code and optional state migration.
+    pub fn reload(
+        &self,
+        new_handler: Value,
+        migration_fn: Option<Value>,
+        timeout: Option<Duration>,
+    ) -> Result<bool, ActorError> {
+        let handler_str = callable_to_source(&new_handler)?;
+        let migration_str = match &migration_fn {
+            Some(v) => Some(callable_to_source(v)?),
+            None => None,
+        };
+        self.cluster_node.reload_remote(
+            &self.node_name,
+            &self.actor_name,
+            &handler_str,
+            migration_str.as_deref(),
+            timeout,
+        )
+    }
+
+    /// Convenience alias to reload only the message handler on the remote actor.
+    pub fn reload_handler(&self, new_handler: Value) -> Result<bool, ActorError> {
+        self.reload(new_handler, None, None)
     }
 }
 
@@ -955,6 +1066,165 @@ impl ClusterNode {
         }
     }
 
+    /// Sends a hot-code reload command to an actor running on a remote cluster node.
+    pub fn reload_remote(
+        &self,
+        peer_node: &str,
+        target_actor: &str,
+        handler_code: &str,
+        migration_code: Option<&str>,
+        timeout: Option<Duration>,
+    ) -> Result<bool, ActorError> {
+        let peer = {
+            let guard = self.peers.read().unwrap();
+            guard.get(peer_node).cloned()
+        };
+
+        let peer = peer.ok_or_else(|| {
+            ActorError::EvaluationError(format!("Node '{}' is not connected to cluster", peer_node))
+        })?;
+
+        let duration = timeout.unwrap_or(Duration::from_millis(5000));
+        let timeout_ms = duration.as_millis() as u64;
+
+        let req_id = format!(
+            "req-reload-{}-{}",
+            NEXT_REQ_ID.fetch_add(1, Ordering::Relaxed),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+
+        let reply_chan = Channel::new(Some(1));
+        {
+            let mut pending = self.pending_requests.write().unwrap();
+            pending.insert(req_id.clone(), Arc::clone(&reply_chan));
+        }
+
+        let envelope = ClusterWireMsg::Reload {
+            request_id: req_id.clone(),
+            from_node: self.name.clone(),
+            target: target_actor.to_string(),
+            handler_code: handler_code.to_string(),
+            migration_code: migration_code.map(|s| s.to_string()),
+            timeout_ms,
+        };
+
+        if let Err(e) = peer.send_msg(&envelope) {
+            let mut pending = self.pending_requests.write().unwrap();
+            pending.remove(&req_id);
+            return Err(e);
+        }
+
+        let span = Span::new(1, 1);
+        let reply = reply_chan.recv(Some(timeout_ms), span);
+
+        // Cleanup pending table
+        {
+            let mut pending = self.pending_requests.write().unwrap();
+            pending.remove(&req_id);
+        }
+
+        match reply {
+            Ok(Value::Array(arr)) => {
+                let items = arr.read().unwrap();
+                if items.len() == 2 {
+                    if let Value::String(ref tag) = items[0] {
+                        if tag == "ok" {
+                            return Ok(true);
+                        } else if tag == "err" {
+                            let err_str = match &items[1] {
+                                Value::String(s) => s.clone(),
+                                other => other.to_string(),
+                            };
+                            return Err(ActorError::ActorFailed(err_str));
+                        }
+                    }
+                }
+                Ok(true)
+            }
+            Ok(Value::Null) => Err(ActorError::Timeout),
+            Ok(_) => Ok(true),
+            Err(e) => Err(ActorError::EvaluationError(e.message)),
+        }
+    }
+
+    /// Hot-reloads an actor across local registry or remote cluster peers.
+    pub fn reload_actor(
+        self: &Arc<Self>,
+        actor_name: &str,
+        new_handler: Value,
+        migration_fn: Option<Value>,
+        timeout: Option<Duration>,
+    ) -> Result<bool, ActorError> {
+        // 1. Check local actors
+        let local_act = {
+            let local = self.local_actors.read().unwrap();
+            local.get(actor_name).cloned()
+        };
+        let local_act = local_act.or_else(|| ActorRegistry::whereis(actor_name));
+
+        if let Some(act) = local_act {
+            let handler_val = match &new_handler {
+                Value::String(code) => unpack_handler_code(code)
+                    .map_err(ActorError::EvaluationError)?,
+                other => other.clone(),
+            };
+            let mig_val = match migration_fn {
+                Some(Value::String(ref code)) => Some(
+                    unpack_handler_code(code).map_err(ActorError::EvaluationError)?,
+                ),
+                other => other,
+            };
+            return act.reload(handler_val, mig_val, timeout);
+        }
+
+        // 2. Check if actor_name contains '@' (e.g. "worker@peer")
+        if actor_name.contains('@') {
+            let parts: Vec<&str> = actor_name.splitn(2, '@').collect();
+            let target = parts[0];
+            let peer = parts[1];
+            let handler_str = callable_to_source(&new_handler)?;
+            let migration_str = match &migration_fn {
+                Some(v) => Some(callable_to_source(v)?),
+                None => None,
+            };
+            return self.reload_remote(
+                peer,
+                target,
+                &handler_str,
+                migration_str.as_deref(),
+                timeout,
+            );
+        }
+
+        // 3. Search peer known actors
+        let peers = self.peers.read().unwrap();
+        for (peer_name, peer) in peers.iter() {
+            let known = peer.known_actors.read().unwrap();
+            if known.contains(actor_name) {
+                let handler_str = callable_to_source(&new_handler)?;
+                let migration_str = match &migration_fn {
+                    Some(v) => Some(callable_to_source(v)?),
+                    None => None,
+                };
+                return self.reload_remote(
+                    peer_name,
+                    actor_name,
+                    &handler_str,
+                    migration_str.as_deref(),
+                    timeout,
+                );
+            }
+        }
+
+        Err(ActorError::NameNotFound(format!(
+            "Actor '{}' not found locally or in cluster",
+            actor_name
+        )))
+    }
+
     /// Broadcasts a message to all connected peers and local subscribers.
     pub fn broadcast(&self, topic: &str, msg: Value) {
         let envelope = ClusterWireMsg::Broadcast {
@@ -1331,6 +1601,85 @@ impl ClusterNode {
             ClusterWireMsg::Broadcast { topic, payload, .. } => {
                 let val = Value::from_json(&payload);
                 self.deliver_local_broadcast(&topic, &val);
+            }
+            ClusterWireMsg::Reload {
+                request_id,
+                target,
+                handler_code,
+                migration_code,
+                timeout_ms,
+                ..
+            } => {
+                let local_opt = {
+                    let local = self.local_actors.read().unwrap();
+                    local.get(&target).cloned()
+                };
+                let actor_target = local_opt.or_else(|| ActorRegistry::whereis(&target));
+                let peer_reply = Arc::clone(peer);
+
+                thread::spawn(move || match actor_target {
+                    Some(act) => {
+                        let handler_val = match unpack_handler_code(&handler_code) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                let reply = ClusterWireMsg::Reply {
+                                    request_id,
+                                    status: "err".into(),
+                                    payload: None,
+                                    error: Some(format!("Failed to compile handler code: {}", e)),
+                                };
+                                let _ = peer_reply.send_msg(&reply);
+                                return;
+                            }
+                        };
+                        let migration_val = match migration_code {
+                            Some(ref code) => match unpack_handler_code(code) {
+                                Ok(v) => Some(v),
+                                Err(e) => {
+                                    let reply = ClusterWireMsg::Reply {
+                                        request_id,
+                                        status: "err".into(),
+                                        payload: None,
+                                        error: Some(format!("Failed to compile migration code: {}", e)),
+                                    };
+                                    let _ = peer_reply.send_msg(&reply);
+                                    return;
+                                }
+                            },
+                            None => None,
+                        };
+
+                        match act.reload(handler_val, migration_val, Some(Duration::from_millis(timeout_ms))) {
+                            Ok(ok) => {
+                                let reply = ClusterWireMsg::Reply {
+                                    request_id,
+                                    status: "ok".into(),
+                                    payload: Some(serde_json::Value::Bool(ok)),
+                                    error: None,
+                                };
+                                let _ = peer_reply.send_msg(&reply);
+                            }
+                            Err(e) => {
+                                let reply = ClusterWireMsg::Reply {
+                                    request_id,
+                                    status: "err".into(),
+                                    payload: None,
+                                    error: Some(e.to_string()),
+                                };
+                                let _ = peer_reply.send_msg(&reply);
+                            }
+                        }
+                    }
+                    None => {
+                        let reply = ClusterWireMsg::Reply {
+                            request_id,
+                            status: "err".into(),
+                            payload: None,
+                            error: Some(format!("Actor '{}' not found", target)),
+                        };
+                        let _ = peer_reply.send_msg(&reply);
+                    }
+                });
             }
             _ => {}
         }

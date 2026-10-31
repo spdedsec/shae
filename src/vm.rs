@@ -1582,6 +1582,7 @@ impl VM {
                                 property.as_str(),
                                 "send"
                                     | "ask"
+                                    | "reload"
                                     | "stop"
                                     | "is_alive"
                                     | "isAlive"
@@ -1607,7 +1608,7 @@ impl VM {
                         Value::RemoteActor(ref _rem) => {
                             if matches!(
                                 property.as_str(),
-                                "send" | "ask" | "is_alive" | "isAlive" | "node" | "name"
+                                "send" | "ask" | "reload" | "is_alive" | "isAlive" | "node" | "name"
                             ) {
                                 self.stack.push(Value::BoundMethod {
                                     object: Box::new(target.clone()),
@@ -1637,6 +1638,9 @@ impl VM {
                                     | "registered"
                                     | "send"
                                     | "ask"
+                                    | "reload"
+                                    | "reload_actor"
+                                    | "reloadActor"
                                     | "broadcast"
                                     | "on_broadcast"
                                     | "stop"
