@@ -1,0 +1,67 @@
+// Shae Collections Throughput Benchmark Suite
+// benchmarks/collections_bench.shae
+// Array insertions, map lookups, filtering, and sorting throughput.
+
+use { bench } from "std:bench"
+
+bench("Array Insertion & Index Access (1000 items)", 50, fn() {
+    let arr = []
+    let i = 0
+    while i < 1000 {
+        arr.push(i)
+        i = i + 1
+    }
+    let sum = 0
+    let j = 0
+    while j < 1000 {
+        sum = sum + arr[j]
+        j = j + 1
+    }
+    assert(arr.len == 1000, "array len mismatch")
+    assert(sum == 499500, "array sum mismatch")
+})
+
+bench("Map Insertions & Key Lookups (500 items)", 50, fn() {
+    let map = {}
+    let i = 0
+    while i < 500 {
+        let k = "key_" + str(i)
+        map[k] = i * 3
+        i = i + 1
+    }
+    let j = 0
+    let sum = 0
+    while j < 500 {
+        let k = "key_" + str(j)
+        sum = sum + map[k]
+        j = j + 1
+    }
+    assert(sum > 0, "map sum mismatch")
+})
+
+bench("Array Functional Filtering & Mapping (500 items)", 30, fn() {
+    let items = []
+    let i = 0
+    while i < 500 {
+        items.push(i)
+        i = i + 1
+    }
+    let evens = items.filter(fn(x) { x % 2 == 0 })
+    let doubled = evens.map(fn(x) { x * 2 })
+    assert(evens.len == 250, "evens len mismatch")
+    assert(doubled.len == 250, "doubled len mismatch")
+    assert(doubled[0] == 0, "first doubled mismatch")
+    assert(doubled[1] == 4, "second doubled mismatch")
+})
+
+bench("Array Sorting Throughput (500 descending items)", 50, fn() {
+    let arr = []
+    let i = 500
+    while i > 0 {
+        arr.push(i)
+        i = i - 1
+    }
+    arr.sort()
+    assert(arr[0] == 1, "sort min mismatch")
+    assert(arr[499] == 500, "sort max mismatch")
+})

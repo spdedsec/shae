@@ -1,0 +1,55 @@
+// Shae Buffer Throughput Benchmark Suite
+// benchmarks/buffer_throughput.shae
+// Stressing std:buffer allocation, zero-copy slicing, endian binary I/O, and struct packing/unpacking throughput.
+
+use { bench } from "std:bench"
+use { ByteBuffer, alloc, pack, unpack, pack_into, calcsize } from "std:buffer"
+
+bench("ByteBuffer Allocation & Direct Indexing (4KB)", 500, fn() {
+    let buf = alloc(4096)
+    let i = 0
+    while i < 128 {
+        buf[i] = (i * 7) % 256
+        i = i + 1
+    }
+    assert(buf[10] == 70, "indexing mismatch")
+})
+
+bench("Zero-Copy Slicing & Mutation (10 Slices)", 500, fn() {
+    let parent = alloc(1024)
+    let s = 0
+    while s < 10 {
+        let slice = parent.slice(s * 50, (s + 1) * 50)
+        slice[0] = s + 1
+        s = s + 1
+    }
+    assert(parent[450] == 10, "zero-copy reflection mismatch")
+})
+
+bench("Endian Binary I/O (u32/u64/f64 LE/BE)", 200, fn() {
+    let buf = alloc(512)
+    let i = 0
+    while i < 16 {
+        let offset = i * 16
+        buf.write_u32_le(offset, 123456789)
+        buf.write_u64_be(offset + 4, 9876543210123)
+        buf.write_f64_le(offset + 12, 3.1415926535)
+        let r_u32 = buf.read_u32_le(offset)
+        let r_u64 = buf.read_u64_be(offset + 4)
+        let r_f64 = buf.read_f64_le(offset + 12)
+        assert(r_u32 == 123456789, "u32 mismatch")
+        i = i + 1
+    }
+})
+
+bench("Struct Packing & Unpacking (<I2h4s & >2d4B)", 500, fn() {
+    let packed1 = pack("<I2h4s", 3000000000, -1200, 2400, "DATA")
+    let u1 = unpack("<I2h4s", packed1)
+    assert(u1[0] == 3000000000, "unpack u32 mismatch")
+    assert(u1[3] == "DATA", "unpack str mismatch")
+
+    let packed2 = pack(">2d4B", 1.25, 2.75, 10, 20, 30, 40)
+    let u2 = unpack(">2d4B", packed2)
+    assert(u2[0] == 1.25, "unpack float mismatch")
+    assert(u2[5] == 40, "unpack byte mismatch")
+})

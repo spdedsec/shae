@@ -28,6 +28,9 @@ fn show_help() {
     println!(
         "  shae test [path]           Run Shae tests (*_test.shae) (--filter <pat>, --ast, --nocapture)"
     );
+    println!(
+        "  shae bench [filter]        Run benchmark suite in benchmarks/*.shae (--filter <pat>, --ast, -i <N>)"
+    );
     println!("  shae fmt <file.shae>       Format a Shae script");
     println!(
         "  shae doc [path]            Generate documentation site & reference (-o, --format html|md|json, --serve, --port, --host, --open)"
@@ -996,6 +999,9 @@ fn main() {
                 process::exit(1);
             }
         }
+        "bench" => {
+            run_bench_command(&args[2..]);
+        }
         "fmt" => {
             let mut check_only = false;
             let mut force = false;
@@ -1501,6 +1507,93 @@ fn format_target(target: &str, check_only: bool, force: bool) {
         println!("All {} file(s) already formatted.", files.len());
     } else {
         println!("Successfully formatted {} file(s).", formatted_count);
+    }
+}
+
+
+fn run_bench_command(args: &[String]) {
+    let mut filter = None;
+    let mut target = None;
+    let mut use_vm = true;
+    let mut iterations_override = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--help" | "-h" => {
+                println!("Shae Benchmark Suite Runner\n");
+                println!("Usage: shae bench [filter] [options]\n");
+                println!("Options:");
+                println!("  -f, --filter <PATTERN>        Filter benchmarks by name pattern");
+                println!("  --ast, --engine=ast           Use AST Tree-Walking Evaluator (default: VM)");
+                println!("  --vm, --engine=vm             Use Bytecode VM (default)");
+                println!("  -i, --iter, --iterations <N>   Override number of benchmark iterations");
+                println!("  -h, --help                    Show this help message");
+                return;
+            }
+            "--ast" | "--engine=ast" => {
+                use_vm = false;
+            }
+            "--vm" | "--engine=vm" => {
+                use_vm = true;
+            }
+            "-f" | "--filter" => {
+                if i + 1 < args.len() {
+                    filter = Some(args[i + 1].clone());
+                    i += 1;
+                } else {
+                    eprintln!("Error: --filter requires a pattern argument");
+                    process::exit(1);
+                }
+            }
+            arg if arg.starts_with("--filter=") => {
+                filter = Some(arg.strip_prefix("--filter=").unwrap().to_string());
+            }
+            "-i" | "--iter" | "--iterations" => {
+                if i + 1 < args.len() {
+                    if let Ok(n) = args[i + 1].parse::<usize>() {
+                        iterations_override = Some(n);
+                    }
+                    i += 1;
+                } else {
+                    eprintln!("Error: -i requires an iteration count");
+                    process::exit(1);
+                }
+            }
+            arg if arg.starts_with("--iter=") => {
+                if let Ok(n) = arg.strip_prefix("--iter=").unwrap().parse::<usize>() {
+                    iterations_override = Some(n);
+                }
+            }
+            arg if !arg.starts_with('-') => {
+                if arg.ends_with(".shae") || Path::new(arg).is_dir() {
+                    target = Some(arg.to_string());
+                } else if filter.is_none() {
+                    filter = Some(arg.to_string());
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let options = shae::bench::BenchOptions {
+        target,
+        filter,
+        use_vm,
+        iterations_override,
+    };
+
+    match shae::bench::run_benchmarks(&options) {
+        Ok(summary) => {
+            if summary.total_benchmarks == 0 {
+                println!("No benchmarks matched the filter criteria.");
+            }
+        }
+        Err(e) => {
+            eprintln!("Benchmark error: {}", e);
+            process::exit(1);
+        }
     }
 }
 

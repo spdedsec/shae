@@ -225,6 +225,54 @@ Import standard modules using `use { ... } from "std:<namespace>"`:
 * `now_ms() -> int`
 * `sleep_ms(ms)`
 
+### `std:buffer` (Zero-Copy Typed Memory Buffers & Struct Layouts)
+The `std:buffer` module provides low-level, high-performance byte manipulation, zero-copy slicing, endian-aware binary I/O, and structured memory layout serialization.
+
+* **Constructors & Factory Functions**:
+  * `alloc(size: Int) -> ByteBuffer`: Allocates a zero-initialized buffer of `size` bytes.
+  * `from(bytes: Array<Int>) -> ByteBuffer`: Creates a buffer from an array of byte integers (0..255).
+  * `from_hex(hex_str: String) -> ByteBuffer`: Parses an ASCII hexadecimal string into raw bytes.
+  * `from_utf8(text: String) -> ByteBuffer`: Encodes a UTF-8 string into raw bytes.
+  * `concat(buffers: Array<ByteBuffer>) -> ByteBuffer`: Merges multiple buffers into a contiguous buffer.
+* **Instance Properties & Methods**:
+  * `buf.len -> Int`: Buffer byte length.
+  * `buf.offset -> Int`: Buffer view offset into underlying storage.
+  * `buf.slice(start: Int, [end: Int]) -> ByteBuffer`: Returns a zero-copy sub-buffer sharing underlying memory with the parent buffer. Mutations through the slice are immediately visible to the parent and vice versa.
+  * `buf.copy() -> ByteBuffer`: Deep-copies the buffer view into a new, isolated buffer.
+  * `buf[index]`: Reads a byte at `index` (bounds checked).
+  * `buf[index] = value`: Writes a byte at `index` (validates `0 <= value <= 255`).
+  * `buf.to_hex() -> String`: Converts buffer contents to an ASCII hex string.
+  * `buf.to_utf8() -> String`: Decodes buffer contents as UTF-8 string.
+  * `buf.to_bytes() -> Array<Int>`: Converts buffer to an array of integers.
+* **Endian-Aware Numeric I/O**:
+  * Reads/writes for signed/unsigned integers: `read_u8`, `read_i8`, `read_u16_le`, `read_u16_be`, `read_i16_le`, `read_i16_be`, `read_u32_le`, `read_u32_be`, `read_i32_le`, `read_i32_be`, `read_u64_le`, `read_u64_be`, `read_i64_le`, `read_i64_be` and write counterparts.
+  * Reads/writes for floats: `read_f32_le`, `read_f32_be`, `read_f64_le`, `read_f64_be` and write counterparts (with camelCase aliases).
+* **Struct Packing Engine**:
+  * `calcsize(format: String) -> Int`: Computes packed byte length for the format string (e.g. `calcsize("<I2h4s") == 12`, `calcsize(">2d4B") == 20`).
+  * `pack(format: String, ...values) -> ByteBuffer`: Packs values into a newly allocated buffer.
+  * `pack_into(format: String, buffer: ByteBuffer, offset: Int, ...values) -> Int`: Packs values directly into an existing buffer at `offset`.
+  * `unpack(format: String, buffer: ByteBuffer | Array | String, [offset: Int]) -> Array<Value>`: Deserializes binary layouts into Shae values.
+
+### `std:actor` & `std:actor:cluster` Hot-Code Reloading
+Hot-code reloading enables zero-downtime upgrades for long-running stateful daemons and distributed cluster meshes.
+
+* **Local Actor Reload**:
+  * `actor.reload(new_handler: Function, [migration_fn: Function]) -> Bool`: Swaps the active message handler in place while preserving actor state and mailbox queue continuity.
+  * If `migration_fn` is supplied, transforms existing state before subsequent message handling (`state = migration_fn(state)`).
+* **Cluster Mesh Reload**:
+  * `remote_actor.reload(new_handler: Function, [migration_fn: Function]) -> Bool`: Transmits handler logic across the TCP/TLS cluster mesh via `ClusterWireMsg::Reload`, dynamically upgrading the remote actor without closing network connections or dropping cluster topology.
+  * `node.reload_actor(actor_name: String, new_handler: Function, [migration_fn: Function]) -> Bool`: Reloads a registered actor on the node.
+
+### `std:bench` & Benchmark Suite (`shae bench`)
+Built-in benchmarking runner and reporting framework for performance profiling and regression detection.
+
+* **CLI Command**:
+  * `shae bench [filter] [options]`: Discovers and executes benchmark scripts in `benchmarks/*.shae`.
+  * Options: `-f, --filter <PATTERN>`, `--ast`, `--vm`, `-i, --iter <N>`.
+  * Formatted table output displays benchmark name, iterations, total execution time, average latency per iteration, throughput (ops/sec), and summary metrics.
+* **`std:bench` Standard Module**:
+  * `bench(name: String, [iterations: Int], callable: Function)`: Registers and runs a benchmark workload with warmup passes and precise latency measurements.
+
 ---
 
 ## 9. Modules & Project System

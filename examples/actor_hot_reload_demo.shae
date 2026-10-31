@@ -1,0 +1,169 @@
+// Shae Actor Hot-Code Reloading Showcase Demo
+// examples/actor_hot_reload_demo.shae
+// Demonstrates Chunk 30 features: Local actor hot-code reload with active state preservation,
+// state schema migrations, and distributed cluster actor reload across nodes.
+
+let actor = use "std:actor"
+let cluster = use "std:actor:cluster"
+
+println("==================================================================")
+println("     Shae Hot-Code Reloading for Actors & Clusters (Chunk 30)     ")
+println("==================================================================\n")
+
+// -------------------------------------------------------------
+// 1. Local Stateful Actor Hot-Reload with State Preservation
+// -------------------------------------------------------------
+println("[1] Spawning stateful 'account_daemon' actor (Version 1)...")
+let account = actor.spawn({ "balance": 1000, "transactions": 0 }, fn(state, msg) {
+    if msg["op"] == "deposit" {
+        let new_bal = state["balance"] + msg["amount"]
+        let new_tx = state["transactions"] + 1
+        let next_st = { "balance": new_bal, "transactions": new_tx }
+        return { "state": next_st, "reply": next_st }
+    } else if msg["op"] == "query" {
+        return { "state": state, "reply": state }
+    }
+    return state
+})
+
+let tx1 = account.ask({ "op": "deposit", "amount": 250 })
+println("  • Transaction 1 deposited 250 => Current balance:", tx1["balance"], "(tx count:", tx1["transactions"], ")")
+assert(tx1["balance"] == 1250, "Deposit mismatch")
+
+// Hot-reload to Version 2 handler: adds bonus reward on deposits
+println("\n  • [Hot-Reloading] Swapping handler to Version 2 (bonus rewards) without restarting daemon...")
+let v2_handler = fn(state, msg) {
+    if msg["op"] == "deposit" {
+        let bonus = msg["amount"] / 10 // 10% bonus credit in V2
+        let new_bal = state["balance"] + msg["amount"] + bonus
+        let new_tx = state["transactions"] + 1
+        let next_st = { "balance": new_bal, "transactions": new_tx }
+        return { "state": next_st, "reply": { "balance": new_bal, "bonus": bonus, "tx": new_tx } }
+    } else if msg["op"] == "query" {
+        return { "state": state, "reply": state }
+    }
+    return state
+}
+
+let reload_ok = account.reload(v2_handler)
+println("  • Reload acknowledged by actor:", reload_ok)
+assert(reload_ok, "Actor reload failed")
+
+// Verify active daemon state was preserved (balance is still 1250, tx count is 1)
+let check_st = account.ask({ "op": "query" })
+println("  • State preserved across reload: Balance =", check_st["balance"], "| Tx Count =", check_st["transactions"])
+assert(check_st["balance"] == 1250 && check_st["transactions"] == 1, "State preservation failed")
+
+// Now execute transaction under Version 2 handler logic
+let tx2 = account.ask({ "op": "deposit", "amount": 100 })
+println("  • Transaction 2 deposited 100 with V2 bonus:", tx2["bonus"], "=> New balance:", tx2["balance"])
+assert(tx2["balance"] == 1360, "V2 bonus calculation mismatch")
+
+// -------------------------------------------------------------
+// 2. Schema Migration with Migration Function
+// -------------------------------------------------------------
+println("\n[2] Executing hot-reload with state migration function (V2 -> V3 schema)...")
+
+// Migration function: transforms plain state into versioned structured schema
+let migration_fn = fn(old_state) {
+    return {
+        "schema_version": 3,
+        "account_id": "ACC-8890",
+        "funds": old_state["balance"],
+        "tier": "platinum",
+        "migrated_tx_count": old_state["transactions"]
+    }
+}
+
+// Version 3 handler: uses new schema fields
+let v3_handler = fn(state, msg) {
+    if msg["op"] == "tier_info" {
+        let reply_info = { "tier": state["tier"], "version": state["schema_version"], "funds": state["funds"] }
+        return { "state": state, "reply": reply_info }
+    } else if msg["op"] == "add_funds" {
+        let new_funds = state["funds"] + msg["amount"]
+        let next_st = {
+            "schema_version": state["schema_version"],
+            "account_id": state["account_id"],
+            "funds": new_funds,
+            "tier": state["tier"],
+            "migrated_tx_count": state["migrated_tx_count"] + 1
+        }
+        return { "state": next_st, "reply": new_funds }
+    }
+    return state
+}
+
+let mig_ok = account.reload(v3_handler, migration_fn)
+println("  • Migration and reload status:", mig_ok)
+assert(mig_ok, "Migration reload failed")
+
+let tier_status = account.ask({ "op": "tier_info" })
+println("  • V3 Schema Status: Tier =", tier_status["tier"], "| Funds =", tier_status["funds"], "| Schema Version =", tier_status["version"])
+assert(tier_status["tier"] == "platinum" && tier_status["funds"] == 1360, "Migration schema mismatch")
+
+account.stop()
+println("  • Local account daemon stopped.")
+
+// -------------------------------------------------------------
+// 3. Distributed Cluster Actor Reload Across Network Nodes
+// -------------------------------------------------------------
+println("\n[3] Bootstrapping distributed cluster nodes for network hot-reload...")
+let node_primary = cluster.node("demo_primary", "127.0.0.1:0", { "cookie": "hot_reload_secret" })
+let node_worker = cluster.node("demo_worker", "127.0.0.1:0", { "cookie": "hot_reload_secret" })
+
+println("  • Primary Node bound to:", node_primary.address())
+println("  • Worker Node bound to: ", node_worker.address())
+
+// Spawn 'pricing_engine' actor on worker node
+println("  • Spawning 'pricing_engine' on worker node (V1 base rate = 100)...")
+let pricing_actor = node_worker.spawn("pricing_engine", { "base_rate": 100, "calls": 0 }, fn(state, msg) {
+    if msg["op"] == "calculate" {
+        let cost = state["base_rate"] * msg["units"]
+        let next_st = { "base_rate": state["base_rate"], "calls": state["calls"] + 1 }
+        return { "state": next_st, "reply": { "cost": cost, "rate": state["base_rate"] } }
+    }
+    return state
+})
+
+// Connect Primary Node to Worker Node
+let mesh_ok = node_primary.connect(node_worker.address())
+println("  • Mesh connection established:", mesh_ok)
+assert(mesh_ok, "Cluster mesh connect failed")
+
+// Obtain remote reference on primary node
+let remote_pricing = node_primary.actor("pricing_engine", "demo_worker")
+println("  • Obtained remote actor handle:", remote_pricing.name(), "on node", remote_pricing.node())
+
+let quote1 = remote_pricing.ask({ "op": "calculate", "units": 5 }, 5000)
+println("  • V1 Remote calculation for 5 units => Cost:", quote1["cost"], "(rate:", quote1["rate"], ")")
+assert(quote1["cost"] == 500, "V1 calculation mismatch")
+
+// Remotely hot-reload 'pricing_engine' over TCP cluster connection
+println("\n  • [Cluster Mesh Reload] Transmitting V2 handler to remote node across network...")
+let v2_cluster_handler = fn(state, msg) {
+    if msg["op"] == "calculate" {
+        // V2 discount pricing: 15% discount for bulk orders (units >= 5)
+        let discount = 15
+        let total = (state["base_rate"] * msg["units"] * 85) / 100
+        let next_st = { "base_rate": state["base_rate"], "calls": state["calls"] + 1 }
+        return { "state": next_st, "reply": { "cost": total, "discount_pct": discount, "calls": next_st["calls"] } }
+    }
+    return state
+}
+
+let remote_reload_ok = remote_pricing.reload(v2_cluster_handler)
+println("  • Remote actor hot-reload ack from cluster mesh:", remote_reload_ok)
+assert(remote_reload_ok, "Remote reload failed")
+
+// Execute query with new code across cluster mesh
+let quote2 = remote_pricing.ask({ "op": "calculate", "units": 5 }, 5000)
+println("  • V2 Remote calculation for 5 units => Discounted Cost:", quote2["cost"], "(discount:", quote2["discount_pct"], "%, total calls:", quote2["calls"], ")")
+assert(quote2["cost"] == 425 && quote2["discount_pct"] == 15, "V2 discounted cost mismatch")
+assert(quote2["calls"] == 2, "Remote state call counter mismatch")
+
+// Cleanup
+pricing_actor.stop()
+node_primary.stop()
+node_worker.stop()
+println("\n=== All Actor Hot-Reload Showcase Demonstrations Passed Cleanly! ===")

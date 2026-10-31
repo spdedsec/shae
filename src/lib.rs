@@ -5,6 +5,7 @@ pub mod async_rt;
 pub mod builtins;
 pub mod bundle;
 pub mod buffer;
+pub mod bench;
 pub mod channel;
 pub mod chunk;
 pub mod compiler;

@@ -1,0 +1,161 @@
+// Shae Zero-Copy Typed Memory Buffers & Struct Layouts Showcase Demo
+// examples/buffer_demo.shae
+// Demonstrates Chunk 29 features: ByteBuffer container, zero-copy slicing,
+// hex/utf8 conversions, endian-aware reads/writes, and struct pack/unpack engine.
+
+use {
+    ByteBuffer,
+    alloc,
+    from_hex,
+    fromHex,
+    from_utf8,
+    fromUtf8,
+    concat,
+    pack,
+    pack_into,
+    unpack,
+    calcsize
+} from "std:buffer"
+
+let buffer = use "std:buffer"
+
+println("==================================================================")
+println("     Shae Zero-Copy Memory Buffers & Struct Layouts (Chunk 29)    ")
+println("==================================================================\n")
+
+// -------------------------------------------------------------
+// 1. Buffer Allocation & Direct Indexing
+// -------------------------------------------------------------
+println("[1] Allocating 32-byte ByteBuffer...")
+let buf = alloc(32)
+println("  • Buffer length: ", buf.len, "bytes")
+println("  • Buffer offset: ", buf.offset)
+
+// Write and read individual bytes (0..255)
+buf[0] = 72   // 'H'
+buf[1] = 69   // 'E'
+buf[2] = 88   // 'X'
+buf[3] = 33   // '!'
+println("  • Direct byte access: [", buf[0], buf[1], buf[2], buf[3], "]")
+assert(buf[0] == 72 && buf[1] == 69 && buf[2] == 88 && buf[3] == 33, "Direct indexing mismatch")
+
+// -------------------------------------------------------------
+// 2. Zero-Copy Slicing & Shared Memory Mutations
+// -------------------------------------------------------------
+println("\n[2] Demonstrating zero-copy memory slicing...")
+let parent = alloc(24)
+let i = 0
+while i < 24 {
+    parent[i] = i * 2
+    i = i + 1
+}
+
+// Slice bytes [8..16) sharing the same underlying Arc storage
+let slice = parent.slice(8, 16)
+println("  • Parent length: ", parent.len, "| Slice length: ", slice.len, "| Slice offset: ", slice.offset)
+println("  • Slice initial byte 0 (parent[8]):", slice[0])
+assert(slice[0] == 16, "Slice read mismatch")
+
+// Mutate via slice — must reflect immediately in parent
+println("  • Writing 255 to slice[0]...")
+slice[0] = 255
+println("  • Parent[8] now reads:", parent[8], "(zero-copy verified!)")
+assert(parent[8] == 255, "Zero-copy mutation reflection failed")
+
+// Mutate via parent — must reflect immediately in slice
+println("  • Writing 120 to parent[9]...")
+parent[9] = 120
+println("  • Slice[1] now reads: ", slice[1], "(zero-copy verified!)")
+assert(slice[1] == 120, "Zero-copy reverse mutation reflection failed")
+
+// Deep copy creates independent isolated storage
+let clone_buf = slice.copy()
+clone_buf[0] = 42
+assert(parent[8] == 255, "Deep copy mutation must not affect parent")
+println("  • Deep-copied buffer cloned successfully.")
+
+// -------------------------------------------------------------
+// 3. Hex & UTF-8 Encodings & Concatenation
+// -------------------------------------------------------------
+println("\n[3] Conversions across Hex, UTF-8, and Raw Bytes...")
+let hex_data = "48656c6c6f2c205368616521" // "Hello, Shae!" in ASCII hex
+let from_hex_buf = from_hex(hex_data)
+println("  • Decoded from Hex string:", from_hex_buf.to_utf8())
+assert(from_hex_buf.to_utf8() == "Hello, Shae!", "Hex to UTF-8 mismatch")
+
+let utf8_buf = from_utf8("Zero-Copy Buffers")
+println("  • Encoded to Hex string:  ", utf8_buf.to_hex())
+assert(utf8_buf.to_utf8() == "Zero-Copy Buffers", "UTF-8 roundtrip mismatch")
+
+let combined = concat([from_utf8("Chunk 29: "), from_utf8("Rocks!")])
+println("  • Concatenated buffers:   ", combined.to_utf8())
+assert(combined.to_utf8() == "Chunk 29: Rocks!", "Concat mismatch")
+
+// -------------------------------------------------------------
+// 4. Endian-Aware Numeric Reads and Writes
+// -------------------------------------------------------------
+println("\n[4] Endian-aware multi-byte numeric reads/writes...")
+let num_buf = alloc(64)
+
+// 16-bit integer (Little-Endian vs Big-Endian)
+num_buf.write_u16_le(0, 0x1234)
+num_buf.write_u16_be(2, 0x1234)
+println("  • u16 LE bytes [0, 1]:", num_buf[0], num_buf[1], "=> Value:", num_buf.read_u16_le(0))
+println("  • u16 BE bytes [2, 3]:", num_buf[2], num_buf[3], "=> Value:", num_buf.read_u16_be(2))
+assert(num_buf[0] == 0x34 && num_buf[1] == 0x12, "u16 LE byte order mismatch")
+assert(num_buf[2] == 0x12 && num_buf[3] == 0x34, "u16 BE byte order mismatch")
+
+// 32-bit & 64-bit integers
+num_buf.write_u32_le(4, 305419896) // 0x12345678
+num_buf.write_i64_be(8, -8888888888888)
+assert(num_buf.read_u32_le(4) == 305419896, "u32 LE read mismatch")
+assert(num_buf.read_i64_be(8) == -8888888888888, "i64 BE read mismatch")
+println("  • u32 LE and i64 BE successfully written and verified.")
+
+// Floating point numbers (f32, f64)
+num_buf.write_f32_le(16, 42.5)
+num_buf.write_f64_be(20, 123456.789012)
+println("  • f32 LE read: ", num_buf.read_f32_le(16))
+println("  • f64 BE read: ", num_buf.read_f64_be(20))
+assert(num_buf.read_f32_le(16) == 42.5, "f32 LE read mismatch")
+
+// -------------------------------------------------------------
+// 5. High-Performance Struct Layout Packing & Unpacking
+// -------------------------------------------------------------
+println("\n[5] Struct Layout Packing and Unpacking Engine...")
+
+// Format: "<I2h4s" (Little-Endian: u32, two i16s, 4-char string)
+let sz1 = calcsize("<I2h4s")
+println("  • Struct layout '<I2h4s' size:", sz1, "bytes")
+assert(sz1 == 12, "calcsize <I2h4s mismatch")
+
+let packed1 = pack("<I2h4s", 4000000000, -800, 1600, "SHAE")
+println("  • Packed '<I2h4s' buffer hex: ", packed1.to_hex())
+
+let fields1 = unpack("<I2h4s", packed1)
+println("  • Unpacked fields: u32=", fields1[0], ", i16[0]=", fields1[1], ", i16[1]=", fields1[2], ", str='", fields1[3], "'")
+assert(fields1[0] == 4000000000, "Unpack u32 mismatch")
+assert(fields1[1] == -800 && fields1[2] == 1600, "Unpack i16 mismatch")
+assert(fields1[3] == "SHAE", "Unpack string mismatch")
+
+// Format: ">2d4B" (Big-Endian: two 64-bit floats, four 8-bit unsigned integers)
+let sz2 = calcsize(">2d4B")
+println("  • Struct layout '>2d4B' size: ", sz2, "bytes")
+assert(sz2 == 20, "calcsize >2d4B mismatch")
+
+let packed2 = pack(">2d4B", 3.14159, 2.71828, 10, 20, 30, 40)
+let fields2 = unpack(">2d4B", packed2)
+println("  • Unpacked fields: d1=", fields2[0], ", d2=", fields2[1], ", bytes=[", fields2[2], fields2[3], fields2[4], fields2[5], "]")
+assert(fields2[2] == 10 && fields2[5] == 40, "Unpack byte mismatch")
+
+// Packing into pre-allocated buffer at an offset
+let packet_buf = alloc(32)
+let bytes_written = pack_into("<I2h4s", packet_buf, 4, 1234567, -42, 42, "PING")
+println("  • Pack into offset 4 wrote: ", bytes_written, "bytes")
+assert(bytes_written == 12, "pack_into written bytes mismatch")
+
+let unpacked_offset = unpack("<I2h4s", packet_buf, 4)
+println("  • Unpacked at offset 4:     ", unpacked_offset[0], unpacked_offset[3])
+assert(unpacked_offset[0] == 1234567 && unpacked_offset[3] == "PING", "Unpack offset mismatch")
+
+println("\n=== All Buffer Showcase Demonstrations Passed Cleanly! ===")
