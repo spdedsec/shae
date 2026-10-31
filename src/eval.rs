@@ -787,6 +787,59 @@ impl Evaluator {
                             Err(RuntimeError::new("Map key must be a string".into()).at(*span))
                         }
                     }
+                    Value::ByteBuffer(b) => {
+                        let byte_val = match value {
+                            Value::Int(n) => {
+                                if (0..=255).contains(&n) {
+                                    n as u8
+                                } else {
+                                    return Err(RuntimeError::new(format!(
+                                        "Buffer element must be in range 0..255, got {}",
+                                        n
+                                    )).at(*span));
+                                }
+                            }
+                            Value::Float(f) | Value::Number(f) => {
+                                if f.fract() == 0.0 && (0.0..=255.0).contains(&f) {
+                                    f as u8
+                                } else {
+                                    return Err(RuntimeError::new(format!(
+                                        "Buffer element must be an integer in range 0..255, got {}",
+                                        f
+                                    )).at(*span));
+                                }
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "Buffer element must be a byte number (0..255)".into(),
+                                ).at(*span));
+                            }
+                        };
+                        let len = b.read().unwrap().len();
+                        let res = match idx_val {
+                            Value::Int(i) => resolve_int_index(i, len),
+                            Value::Float(n) | Value::Number(n) => resolve_index(n, len),
+                            _ => {
+                                return Err(RuntimeError::new("Buffer index must be a number".into()).at(*span));
+                            }
+                        };
+                        match res {
+                            Ok(i) => {
+                                match b.write().unwrap().set_byte(i, byte_val) {
+                                    Ok(()) => Ok(()),
+                                    Err(e) => Err(RuntimeError::new(e).at(*span)),
+                                }
+                            }
+                            Err(IndexError::NotWhole) => Err(RuntimeError::new(
+                                "Buffer index must be a whole number".into(),
+                            ).at(*span)),
+                            Err(IndexError::OutOfRange(_)) => Err(RuntimeError::new(format!(
+                                "Index {} out of bounds for buffer of length {}",
+                                idx_val.to_display(),
+                                len
+                            )).at(*span)),
+                        }
+                    }
                     other => Err(RuntimeError::new(format!(
                         "Cannot index into {}",
                         other.type_name()
@@ -1686,6 +1739,61 @@ impl Evaluator {
                             .at(*span))
                         }
                     }
+                    Value::ByteBuffer(b) => {
+                        if property == "len" {
+                            Ok(Some(Value::Int(b.read().unwrap().len() as i64)))
+                        } else if property == "offset" {
+                            Ok(Some(Value::Int(b.read().unwrap().offset() as i64)))
+                        } else if crate::buffer::is_buffer_method(property) {
+                            Ok(Some(Value::BoundMethod {
+                                object: Box::new(Value::ByteBuffer(b.clone())),
+                                method: property.clone(),
+                            }))
+                        } else if *safe || lenient {
+                            Ok(None)
+                        } else {
+                            Err(RuntimeError::new(format!(
+                                "ByteBuffer has no property or method '{}'",
+                                property
+                            ))
+                            .at(*span))
+                        }
+                    }
+                    Value::Builtin { name, .. } if name == "ByteBuffer" => {
+                        match property.as_str() {
+                            "alloc" => Ok(Some(Value::Builtin {
+                                name: "alloc".into(),
+                                func: crate::stdlib::buffer_alloc,
+                            })),
+                            "from" => Ok(Some(Value::Builtin {
+                                name: "from".into(),
+                                func: crate::stdlib::buffer_from,
+                            })),
+                            "from_hex" | "fromHex" => Ok(Some(Value::Builtin {
+                                name: property.clone(),
+                                func: crate::stdlib::buffer_from_hex,
+                            })),
+                            "from_utf8" | "fromUtf8" => Ok(Some(Value::Builtin {
+                                name: property.clone(),
+                                func: crate::stdlib::buffer_from_utf8,
+                            })),
+                            "concat" => Ok(Some(Value::Builtin {
+                                name: "concat".into(),
+                                func: crate::stdlib::buffer_concat,
+                            })),
+                            _ => {
+                                if *safe || lenient {
+                                    Ok(None)
+                                } else {
+                                    Err(RuntimeError::new(format!(
+                                        "ByteBuffer has no static property '{}'",
+                                        property
+                                    ))
+                                    .at(*span))
+                                }
+                            }
+                        }
+                    }
                     other => {
                         if *safe || lenient {
                             Ok(None)
@@ -1799,6 +1907,42 @@ impl Evaluator {
                                 } else {
                                     Err(RuntimeError::new(format!(
                                         "Index {} out of bounds for string of length {}",
+                                        idx_val.to_display(),
+                                        len
+                                    ))
+                                    .at(*span))
+                                }
+                            }
+                        }
+                    }
+                    Value::ByteBuffer(b) => {
+                        let buf = b.read().unwrap();
+                        let len = buf.len();
+                        let res = match &idx_val {
+                            Value::Int(i) => resolve_int_index(*i, len),
+                            Value::Float(n) | Value::Number(n) => resolve_index(*n, len),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "Buffer index must be a number".into(),
+                                )
+                                .at(*span));
+                            }
+                        };
+                        match res {
+                            Ok(i) => match buf.get_byte(i) {
+                                Ok(byte) => Ok(Some(Value::Int(byte as i64))),
+                                Err(e) => Err(RuntimeError::new(e).at(*span)),
+                            },
+                            Err(IndexError::NotWhole) => Err(RuntimeError::new(
+                                "Buffer index must be a whole number".into(),
+                            )
+                            .at(*span)),
+                            Err(IndexError::OutOfRange(_)) => {
+                                if lenient {
+                                    Ok(None)
+                                } else {
+                                    Err(RuntimeError::new(format!(
+                                        "Index {} out of bounds for buffer of length {}",
                                         idx_val.to_display(),
                                         len
                                     ))
@@ -4040,6 +4184,9 @@ impl Evaluator {
                             Ok(Value::Bool(sup.is_alive()))
                         }
                     }
+                    (Value::ByteBuffer(b), _) => {
+                        eval_buffer_bound_method(&b, &method, args, span)
+                    }
                     _ => Err(RuntimeError::new(format!("Method {} not found", method)).at(span)),
                 }
             }
@@ -4286,4 +4433,533 @@ impl Evaluator {
             }
         }
     }
+}
+
+
+fn eval_buffer_bound_method(
+    b: &std::sync::Arc<std::sync::RwLock<crate::buffer::ByteBuffer>>,
+    method: &str,
+    args: Vec<Value>,
+    span: crate::ast::Span,
+) -> Result<Value, RuntimeError> {
+    match method {
+        "slice" => {
+            if args.is_empty() || args.len() > 2 {
+                return Err(RuntimeError::new(
+                    "slice() expects 1 or 2 arguments (start, [end])".into(),
+                )
+                .at(span));
+            }
+            let start = match &args[0] {
+                Value::Int(n) if *n >= 0 => *n as usize,
+                Value::Float(f) | Value::Number(f) if *f >= 0.0 && f.fract() == 0.0 => *f as usize,
+                _ => {
+                    return Err(RuntimeError::new(
+                        "slice() start must be a non-negative integer".into(),
+                    )
+                    .at(span));
+                }
+            };
+            let end = if args.len() == 2 {
+                match &args[1] {
+                    Value::Int(n) if *n >= 0 => Some(*n as usize),
+                    Value::Float(f) | Value::Number(f) if *f >= 0.0 && f.fract() == 0.0 => {
+                        Some(*f as usize)
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "slice() end must be a non-negative integer".into(),
+                        )
+                        .at(span));
+                    }
+                }
+            } else {
+                None
+            };
+            let sliced = b
+                .read()
+                .unwrap()
+                .slice(start, end)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::ByteBuffer(std::sync::Arc::new(
+                std::sync::RwLock::new(sliced),
+            )))
+        }
+        "copy" => {
+            if !args.is_empty() {
+                return Err(RuntimeError::new("copy() expects 0 arguments".into()).at(span));
+            }
+            let copied = b.read().unwrap().copy();
+            Ok(Value::ByteBuffer(std::sync::Arc::new(
+                std::sync::RwLock::new(copied),
+            )))
+        }
+        "to_hex" | "toHex" => {
+            if !args.is_empty() {
+                return Err(RuntimeError::new("to_hex() expects 0 arguments".into()).at(span));
+            }
+            Ok(Value::String(b.read().unwrap().to_hex()))
+        }
+        "to_utf8" | "toUtf8" => {
+            if !args.is_empty() {
+                return Err(RuntimeError::new("to_utf8() expects 0 arguments".into()).at(span));
+            }
+            let s = b
+                .read()
+                .unwrap()
+                .to_utf8()
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::String(s))
+        }
+        "to_bytes" | "toBytes" => {
+            if !args.is_empty() {
+                return Err(RuntimeError::new("to_bytes() expects 0 arguments".into()).at(span));
+            }
+            let bytes = b.read().unwrap().to_bytes();
+            let arr: Vec<Value> = bytes
+                .into_iter()
+                .map(|byte| Value::Int(byte as i64))
+                .collect();
+            Ok(Value::Array(std::sync::Arc::new(std::sync::RwLock::new(
+                arr,
+            ))))
+        }
+        // Endian reads (1 argument: pos)
+        "read_u8" | "readU8" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_u8(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(v as i64))
+        }
+        "read_i8" | "readI8" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_i8(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(v as i64))
+        }
+        "read_u16_le" | "readU16LE" | "read_u16LE" | "readU16Le" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_u16_le(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(v as i64))
+        }
+        "read_u16_be" | "readU16BE" | "read_u16BE" | "readU16Be" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_u16_be(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(v as i64))
+        }
+        "read_i16_le" | "readI16LE" | "read_i16LE" | "readI16Le" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_i16_le(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(v as i64))
+        }
+        "read_i16_be" | "readI16BE" | "read_i16BE" | "readI16Be" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_i16_be(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(v as i64))
+        }
+        "read_u32_le" | "readU32LE" | "read_u32LE" | "readU32Le" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_u32_le(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(v as i64))
+        }
+        "read_u32_be" | "readU32BE" | "read_u32BE" | "readU32Be" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_u32_be(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(v as i64))
+        }
+        "read_i32_le" | "readI32LE" | "read_i32LE" | "readI32Le" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_i32_le(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(v as i64))
+        }
+        "read_i32_be" | "readI32BE" | "read_i32BE" | "readI32Be" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_i32_be(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(v as i64))
+        }
+        "read_u64_le" | "readU64LE" | "read_u64LE" | "readU64Le" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_u64_le(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(v as i64))
+        }
+        "read_u64_be" | "readU64BE" | "read_u64BE" | "readU64Be" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_u64_be(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(v as i64))
+        }
+        "read_i64_le" | "readI64LE" | "read_i64LE" | "readI64Le" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_i64_le(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(v))
+        }
+        "read_i64_be" | "readI64BE" | "read_i64BE" | "readI64Be" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_i64_be(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(v))
+        }
+        "read_f32_le" | "readF32LE" | "read_f32LE" | "readF32Le" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_f32_le(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Float(v as f64))
+        }
+        "read_f32_be" | "readF32BE" | "read_f32BE" | "readF32Be" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_f32_be(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Float(v as f64))
+        }
+        "read_f64_le" | "readF64LE" | "read_f64LE" | "readF64Le" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_f64_le(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Float(v))
+        }
+        "read_f64_be" | "readF64BE" | "read_f64BE" | "readF64Be" => {
+            let pos = get_read_pos(method, &args, span)?;
+            let v = b
+                .read()
+                .unwrap()
+                .read_f64_be(pos)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Float(v))
+        }
+        // Endian writes (2 arguments: pos, val)
+        "write_u8" | "writeU8" => {
+            let (pos, val) = get_write_pos_int(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_u8(pos, val as u8)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(1))
+        }
+        "write_i8" | "writeI8" => {
+            let (pos, val) = get_write_pos_int(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_i8(pos, val as i8)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(1))
+        }
+        "write_u16_le" | "writeU16LE" | "write_u16LE" | "writeU16Le" => {
+            let (pos, val) = get_write_pos_int(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_u16_le(pos, val as u16)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(2))
+        }
+        "write_u16_be" | "writeU16BE" | "write_u16BE" | "writeU16Be" => {
+            let (pos, val) = get_write_pos_int(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_u16_be(pos, val as u16)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(2))
+        }
+        "write_i16_le" | "writeI16LE" | "write_i16LE" | "writeI16Le" => {
+            let (pos, val) = get_write_pos_int(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_i16_le(pos, val as i16)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(2))
+        }
+        "write_i16_be" | "writeI16BE" | "write_i16BE" | "writeI16Be" => {
+            let (pos, val) = get_write_pos_int(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_i16_be(pos, val as i16)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(2))
+        }
+        "write_u32_le" | "writeU32LE" | "write_u32LE" | "writeU32Le" => {
+            let (pos, val) = get_write_pos_int(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_u32_le(pos, val as u32)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(4))
+        }
+        "write_u32_be" | "writeU32BE" | "write_u32BE" | "writeU32Be" => {
+            let (pos, val) = get_write_pos_int(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_u32_be(pos, val as u32)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(4))
+        }
+        "write_i32_le" | "writeI32LE" | "write_i32LE" | "writeI32Le" => {
+            let (pos, val) = get_write_pos_int(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_i32_le(pos, val as i32)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(4))
+        }
+        "write_i32_be" | "writeI32BE" | "write_i32BE" | "writeI32Be" => {
+            let (pos, val) = get_write_pos_int(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_i32_be(pos, val as i32)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(4))
+        }
+        "write_u64_le" | "writeU64LE" | "write_u64LE" | "writeU64Le" => {
+            let (pos, val) = get_write_pos_int(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_u64_le(pos, val as u64)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(8))
+        }
+        "write_u64_be" | "writeU64BE" | "write_u64BE" | "writeU64Be" => {
+            let (pos, val) = get_write_pos_int(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_u64_be(pos, val as u64)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(8))
+        }
+        "write_i64_le" | "writeI64LE" | "write_i64LE" | "writeI64Le" => {
+            let (pos, val) = get_write_pos_int(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_i64_le(pos, val)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(8))
+        }
+        "write_i64_be" | "writeI64BE" | "write_i64BE" | "writeI64Be" => {
+            let (pos, val) = get_write_pos_int(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_i64_be(pos, val)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(8))
+        }
+        "write_f32_le" | "writeF32LE" | "write_f32LE" | "writeF32Le" => {
+            let (pos, val) = get_write_pos_float(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_f32_le(pos, val as f32)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(4))
+        }
+        "write_f32_be" | "writeF32BE" | "write_f32BE" | "writeF32Be" => {
+            let (pos, val) = get_write_pos_float(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_f32_be(pos, val as f32)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(4))
+        }
+        "write_f64_le" | "writeF64LE" | "write_f64LE" | "writeF64Le" => {
+            let (pos, val) = get_write_pos_float(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_f64_le(pos, val)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(8))
+        }
+        "write_f64_be" | "writeF64BE" | "write_f64BE" | "writeF64Be" => {
+            let (pos, val) = get_write_pos_float(method, &args, span)?;
+            b.write()
+                .unwrap()
+                .write_f64_be(pos, val)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
+            Ok(Value::Int(8))
+        }
+        _ => Err(RuntimeError::new(format!(
+            "Method {} not found on ByteBuffer",
+            method
+        ))
+        .at(span)),
+    }
+}
+
+fn get_read_pos(
+    method: &str,
+    args: &[Value],
+    span: crate::ast::Span,
+) -> Result<usize, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::new(format!(
+            "{}() expects 1 argument (offset)",
+            method
+        ))
+        .at(span));
+    }
+    match &args[0] {
+        Value::Int(n) if *n >= 0 => Ok(*n as usize),
+        Value::Float(f) | Value::Number(f) if *f >= 0.0 && f.fract() == 0.0 => Ok(*f as usize),
+        Value::Int(n) if *n < 0 => Err(RuntimeError::new(format!(
+            "Offset cannot be negative, got {}",
+            n
+        ))
+        .at(span)),
+        Value::Float(f) | Value::Number(f) if *f < 0.0 => Err(RuntimeError::new(format!(
+            "Offset cannot be negative, got {}",
+            f
+        ))
+        .at(span)),
+        other => Err(RuntimeError::new(format!(
+            "{}() offset must be an integer, got {}",
+            method,
+            other.type_name()
+        ))
+        .at(span)),
+    }
+}
+
+fn get_write_pos_int(
+    method: &str,
+    args: &[Value],
+    span: crate::ast::Span,
+) -> Result<(usize, i64), RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::new(format!(
+            "{}() expects 2 arguments (offset, value)",
+            method
+        ))
+        .at(span));
+    }
+    let pos = match &args[0] {
+        Value::Int(n) if *n >= 0 => *n as usize,
+        Value::Float(f) | Value::Number(f) if *f >= 0.0 && f.fract() == 0.0 => *f as usize,
+        Value::Int(n) if *n < 0 => {
+            return Err(RuntimeError::new(format!("Offset cannot be negative, got {}", n)).at(span));
+        }
+        Value::Float(f) | Value::Number(f) if *f < 0.0 => {
+            return Err(RuntimeError::new(format!("Offset cannot be negative, got {}", f)).at(span));
+        }
+        other => {
+            return Err(RuntimeError::new(format!(
+                "{}() offset must be an integer, got {}",
+                method,
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    let val = match &args[1] {
+        Value::Int(i) => *i,
+        Value::Float(f) | Value::Number(f) if f.fract() == 0.0 => *f as i64,
+        other => {
+            return Err(RuntimeError::new(format!(
+                "{}() value must be an integer, got {}",
+                method,
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    Ok((pos, val))
+}
+
+fn get_write_pos_float(
+    method: &str,
+    args: &[Value],
+    span: crate::ast::Span,
+) -> Result<(usize, f64), RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::new(format!(
+            "{}() expects 2 arguments (offset, value)",
+            method
+        ))
+        .at(span));
+    }
+    let pos = match &args[0] {
+        Value::Int(n) if *n >= 0 => *n as usize,
+        Value::Float(f) | Value::Number(f) if *f >= 0.0 && f.fract() == 0.0 => *f as usize,
+        Value::Int(n) if *n < 0 => {
+            return Err(RuntimeError::new(format!("Offset cannot be negative, got {}", n)).at(span));
+        }
+        Value::Float(f) | Value::Number(f) if *f < 0.0 => {
+            return Err(RuntimeError::new(format!("Offset cannot be negative, got {}", f)).at(span));
+        }
+        other => {
+            return Err(RuntimeError::new(format!(
+                "{}() offset must be an integer, got {}",
+                method,
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    let val = match &args[1] {
+        Value::Float(f) | Value::Number(f) => *f,
+        Value::Int(i) => *i as f64,
+        other => {
+            return Err(RuntimeError::new(format!(
+                "{}() value must be a number, got {}",
+                method,
+                other.type_name()
+            ))
+            .at(span));
+        }
+    };
+    Ok((pos, val))
 }

@@ -1123,6 +1123,33 @@ impl VM {
                                 }
                             }
                         }
+                        Value::ByteBuffer(b) => {
+                            let borrow = b.read().unwrap();
+                            let idx_res = match index {
+                                Value::Int(i) => resolve_int_index(i, borrow.len()),
+                                Value::Float(f) | Value::Number(f) => {
+                                    resolve_index(f, borrow.len())
+                                }
+                                _ => {
+                                    runtime_error!(self, "Buffer index must be a number.",);
+                                }
+                            };
+                            match idx_res {
+                                Ok(idx) => match borrow.get_byte(idx) {
+                                    Ok(byte) => self.stack.push(Value::Int(byte as i64)),
+                                    Err(e) => runtime_error!(self, e),
+                                },
+                                Err(IndexError::NotWhole) => {
+                                    runtime_error!(self, "Buffer index must be a whole number.",);
+                                }
+                                Err(IndexError::OutOfRange(len)) => {
+                                    runtime_error!(
+                                        self,
+                                        format!("Index out of bounds for buffer of length {}", len)
+                                    );
+                                }
+                            }
+                        }
                         other => {
                             runtime_error!(
                                 self,
@@ -1207,6 +1234,60 @@ impl VM {
                                 self.stack.push(value);
                             } else {
                                 runtime_error!(self, "Map key must be a string.",);
+                            }
+                        }
+                        Value::ByteBuffer(b) => {
+                            let byte_val = match value {
+                                Value::Int(n) => {
+                                    if (0..=255).contains(&n) {
+                                        n as u8
+                                    } else {
+                                        runtime_error!(
+                                            self,
+                                            format!("Buffer element must be in range 0..255, got {}", n)
+                                        );
+                                    }
+                                }
+                                Value::Float(f) | Value::Number(f) => {
+                                    if f.fract() == 0.0 && (0.0..=255.0).contains(&f) {
+                                        f as u8
+                                    } else {
+                                        runtime_error!(
+                                            self,
+                                            format!("Buffer element must be an integer in range 0..255, got {}", f)
+                                        );
+                                    }
+                                }
+                                _ => {
+                                    runtime_error!(self, "Buffer element must be a byte number (0..255)");
+                                }
+                            };
+                            let len = b.read().unwrap().len();
+                            let idx_res = match index {
+                                Value::Int(i) => resolve_int_index(i, len),
+                                Value::Float(f) | Value::Number(f) => {
+                                    resolve_index(f, len)
+                                }
+                                _ => {
+                                    runtime_error!(self, "Buffer index must be a number.");
+                                }
+                            };
+                            match idx_res {
+                                Ok(idx) => {
+                                    match b.write().unwrap().set_byte(idx, byte_val) {
+                                        Ok(()) => self.stack.push(value),
+                                        Err(e) => runtime_error!(self, e),
+                                    }
+                                }
+                                Err(IndexError::NotWhole) => {
+                                    runtime_error!(self, "Buffer index must be a whole number.");
+                                }
+                                Err(IndexError::OutOfRange(len)) => {
+                                    runtime_error!(
+                                        self,
+                                        format!("Index out of bounds for buffer of length {}", len)
+                                    );
+                                }
                             }
                         }
                         other => {
@@ -1635,6 +1716,62 @@ impl VM {
                                 );
                             }
                         }
+                        Value::ByteBuffer(ref b) => {
+                            if property == "len" {
+                                self.stack.push(Value::Int(b.read().unwrap().len() as i64));
+                            } else if property == "offset" {
+                                self.stack.push(Value::Int(b.read().unwrap().offset() as i64));
+                            } else if crate::buffer::is_buffer_method(&property) {
+                                self.stack.push(Value::BoundMethod {
+                                    object: Box::new(target.clone()),
+                                    method: property,
+                                });
+                            } else if is_safe {
+                                self.stack.push(Value::Null);
+                            } else {
+                                runtime_error!(
+                                    self,
+                                    format!("ByteBuffer has no property or method '{}'", property)
+                                );
+                            }
+                        }
+                        Value::Builtin { ref name, .. } if name == "ByteBuffer" => {
+                            match property.as_str() {
+                                "alloc" => self.stack.push(Value::Builtin {
+                                    name: "alloc".into(),
+                                    func: crate::stdlib::buffer_alloc,
+                                }),
+                                "from" => self.stack.push(Value::Builtin {
+                                    name: "from".into(),
+                                    func: crate::stdlib::buffer_from,
+                                }),
+                                "from_hex" | "fromHex" => self.stack.push(Value::Builtin {
+                                    name: property,
+                                    func: crate::stdlib::buffer_from_hex,
+                                }),
+                                "from_utf8" | "fromUtf8" => self.stack.push(Value::Builtin {
+                                    name: property,
+                                    func: crate::stdlib::buffer_from_utf8,
+                                }),
+                                "concat" => self.stack.push(Value::Builtin {
+                                    name: "concat".into(),
+                                    func: crate::stdlib::buffer_concat,
+                                }),
+                                _ => {
+                                    if is_safe {
+                                        self.stack.push(Value::Null);
+                                    } else {
+                                        runtime_error!(
+                                            self,
+                                            format!(
+                                                "ByteBuffer has no static property '{}'",
+                                                property
+                                            )
+                                        );
+                                    }
+                                }
+                            }
+                        }
                         other => {
                             runtime_error!(
                                 self,
@@ -1810,6 +1947,26 @@ impl VM {
                             };
                             match idx_opt {
                                 Some(idx) => self.stack.push(values[idx].clone()),
+                                None => self.stack.push(Value::Null),
+                            }
+                        }
+                        Value::ByteBuffer(ref b) => {
+                            let borrow = b.read().unwrap();
+                            let len = borrow.len();
+                            let idx_opt = match index {
+                                Value::Int(i) if i >= 0 && (i as usize) < len => Some(i as usize),
+                                Value::Float(f) | Value::Number(f)
+                                    if f >= 0.0 && (f as usize) < len =>
+                                {
+                                    Some(f as usize)
+                                }
+                                _ => None,
+                            };
+                            match idx_opt {
+                                Some(idx) => match borrow.get_byte(idx) {
+                                    Ok(byte) => self.stack.push(Value::Int(byte as i64)),
+                                    Err(_) => self.stack.push(Value::Null),
+                                },
                                 None => self.stack.push(Value::Null),
                             }
                         }
