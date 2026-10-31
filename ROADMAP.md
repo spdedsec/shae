@@ -413,3 +413,65 @@ Shae is evolving into a strict, predictable, yet extremely ergonomic general-pur
 - [x] **Dual-Engine & Integration Test Verification**
   - [x] Pure-Shae test suites `tests/shae/llvm_codegen_test.shae` and `tests/shae/self_llvm_test.shae` exercising pure-Shae LLVM IR emission, recursion, loops, floats, strings, booleans, sample target compilation, and driver dispatch across VM and AST Evaluator.
   - [x] Rust integration test suite `tests/llvm_codegen_test.rs` validating arithmetic SSA IR, control flow, native Clang compilation and execution, float/string printing, and CLI subcommand flags.
+
+---
+
+### **Chunk 29: Zero-Copy Typed Memory Buffers & Struct Layouts (`std:buffer`)** *(Completed)*
+- [x] **Zero-Copy Typed Memory Buffer (`src/buffer.rs`, `std:buffer`)**
+  - [x] `ByteBuffer` container encapsulating `Arc<RwLock<Vec<u8>>>`, `offset: usize`, and `length: usize`.
+  - [x] Zero-copy slicing: `buf.slice(start, [end])` sharing underlying storage without memory copies; mutations in slices reflect immediately in parent buffers and vice versa.
+  - [x] Constructors & conversions: `alloc(size)`, `from(bytes)`, `from_hex(hex)`, `from_utf8(text)`, `concat(buffers)`, `.copy()`, `.to_hex()`, `.to_utf8()`, `.to_bytes()`.
+  - [x] Bounds safety & direct byte indexing: `buf[i]` read/write with bounds checking and `0..=255` byte range validation.
+- [x] **Endian-Aware Binary Numeric I/O**
+  - [x] 8, 16, 32, and 64-bit signed and unsigned integer reads/writes (`u8`, `i8`, `u16_le`, `u16_be`, `i16_le`, `i16_be`, `u32_le`, `u32_be`, `i32_le`, `i32_be`, `u64_le`, `u64_be`, `i64_le`, `i64_be`).
+  - [x] 32-bit and 64-bit IEEE 754 floating-point reads/writes (`f32_le`, `f32_be`, `f64_le`, `f64_be`) with camelCase aliases (`readU32LE`, `writeU32BE`, etc.).
+- [x] **High-Performance Struct Packing & Unpacking Engine**
+  - [x] Format specifier parser supporting endian prefixes (`<`, `>`, `!`, `=`, `@`), repetition counts, and field types (`x`, `c`, `b`, `B`, `?`, `h`, `H`, `i`, `I`, `l`, `L`, `q`, `Q`, `f`, `d`, `s`, `p`).
+  - [x] `calcsize(format)`: Packed struct layout byte length computation (e.g. `<I2h4s` = 12 bytes, `>2d4B` = 20 bytes).
+  - [x] `pack(format, ...values)`: Serializing variadic or array arguments into packed byte buffers.
+  - [x] `pack_into(format, buffer, offset, ...values)`: Direct serialization into existing buffer at offset.
+  - [x] `unpack(format, buffer_or_bytes, [offset])`: Deserializing binary layouts into Shae values.
+- [x] **Dual-Engine Parity & Integration Test Verification**
+  - [x] Identical execution semantics across Stack-Based Bytecode VM and Tree-Walking AST Evaluator.
+  - [x] Pure-Shae test suite `tests/shae/buffer_suite_test.shae` validating allocation, zero-copy mutations, endian I/O, and struct pack/unpack.
+  - [x] Rust integration test suite `tests/buffer_test.rs` validating 9 comprehensive test vectors.
+
+---
+
+### **Chunk 30: Hot-Code Reloading for Distributed Cluster Nodes & Long-Running Daemons (`std:actor:cluster` & `std:actor`)** *(Completed)*
+- [x] **Local Actor Daemon Hot-Code Reloading (`src/actor.rs`, `std:actor`)**
+  - [x] Dynamic handler hot-swapping via `ActorMessage::Reload` without terminating actor worker threads or dropping active daemon state.
+  - [x] FIFO mailbox queue continuity: Unconsumed messages are safely retained and processed by the newly loaded handler.
+  - [x] State schema migrations: Optional migration function (`migration_fn(&mut state)`) transforms active state before subsequent message handling.
+  - [x] Failure resilience: If state migration encounters runtime errors, existing handler and state are safely retained.
+- [x] **Distributed Cluster Node Hot-Code Reloading (`src/actor_cluster.rs`, `std:actor:cluster`)**
+  - [x] `ClusterWireMsg::Reload` wire protocol transmitting handler code or base64 bytecode closures (`BYTECODE:<arity>:<base64>`) over TCP/TLS mesh connections.
+  - [x] Remote reload routing: `remote_actor.reload(new_handler, [migration_fn])` and `node.reload_actor(name, new_handler, [migration_fn])`.
+  - [x] Zero connection drops: Running cluster daemons upgrade code remotely while keeping mesh TCP/TLS sessions established.
+- [x] **Dual-Engine Parity & Integration Test Verification**
+  - [x] Full parity across Tree-Walking Evaluator and Bytecode VM.
+  - [x] Pure-Shae test suite `tests/shae/actor_reload_test.shae` covering local actor reload, state migration, mailbox FIFO continuity, and distributed cluster mesh reload.
+  - [x] Rust integration test suite `tests/actor_reload_test.rs` covering 6 comprehensive test scenarios.
+
+---
+
+### **Chunk 31: Benchmark Suite, Showcase Demonstrations, & Documentation (`shae bench`)** *(Completed)*
+- [x] **CLI Benchmark Suite Engine (`src/bench.rs`, `shae bench`)**
+  - [x] `shae bench [filter]`: Subcommand with automatic benchmark discovery across `benchmarks/*.shae`.
+  - [x] Options: `-f, --filter <pattern>`, `--ast` / `--engine=ast`, `--vm` / `--engine=vm`, `-i, --iter <N>`.
+  - [x] Formatted ASCII table reporting benchmark name, iterations, total execution time, average latency per iteration, and throughput (ops/sec).
+  - [x] `std:bench` standard library module exporting `bench(name, [iterations], callable)` with warmup passes and precise latency measurements.
+- [x] **Realistic Compute & System-Intensive Benchmark Suites (`benchmarks/`)**
+  - [x] `benchmarks/fibonacci.shae`: Recursive and iterative arithmetic benchmark with sequence sum workloads.
+  - [x] `benchmarks/buffer_throughput.shae`: Stressing `std:buffer` allocation, zero-copy slicing, endian binary I/O, and struct packing/unpacking throughput.
+  - [x] `benchmarks/actor_throughput.shae`: Stressing `std:actor` request-reply (ask), tell/send batching, state mutation, and reload throughput.
+  - [x] `benchmarks/collections_bench.shae`: Array insertions, map lookups, functional filter/map closures, and in-place sorting throughput.
+- [x] **Comprehensive Language Showcase Demonstrations (`examples/`)**
+  - [x] `examples/buffer_demo.shae`: Complete showcase of Chunk 29 `std:buffer` features (ByteBuffer allocation, zero-copy memory slicing reflection, hex/utf8 conversions, endian numeric reads/writes, struct layout pack/unpack `<I2h4s` and `>2d4B`).
+  - [x] `examples/actor_hot_reload_demo.shae`: Complete showcase of Chunk 30 hot-reloading features (local stateful actor reload with daemon state preservation, schema migration functions, and distributed cluster actor reload across nodes).
+- [x] **Documentation Updates & Live Documentation Server**
+  - [x] Specification documentation updated in `LANGUAGE.md` for `std:buffer`, `std:actor` hot-reloading, and `std:bench`.
+  - [x] Project roadmap updated in `ROADMAP.md` covering Chunks 29, 30, and 31.
+  - [x] Live static HTTP documentation server verified via `shae doc --serve` on loopback.
+- [x] **Integration Test Verification**
+  - [x] Rust integration test suite `tests/bench_test.rs` validating benchmark discovery, execution timing, filtering, dual-engine parity, documentation generation, and live HTTP doc server serving.

@@ -43,8 +43,9 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "async" => Ok(build_async_module()),
         "buffer" => Ok(build_buffer_module()),
         "test" => Ok(build_test_module()),
+        "bench" | "benchmark" => Ok(build_bench_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:async, std:buffer, std:test",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:async, std:buffer, std:test, std:bench",
             clean_name
         ))
         .at(span)),
@@ -4870,6 +4871,56 @@ fn test_test(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, 
 
     crate::test_runner::execute_test(&desc, callable, ev, span)
 }
+
+
+pub fn build_bench_module() -> Value {
+    make_map(vec![
+        ("bench", bench_bench),
+        ("benchmark", bench_bench),
+        ("run", bench_bench),
+    ])
+}
+
+fn bench_bench(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() || args.len() > 3 {
+        return Err(RuntimeError::new(
+            "'bench' expects 2 or 3 arguments: bench(name, [iterations], callable)".into(),
+        )
+        .at(span));
+    }
+
+    let name = match &args[0] {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+
+    let (iters, callable) = if args.len() == 2 {
+        (100usize, &args[1])
+    } else {
+        let iters = match &args[1] {
+            Value::Int(i) => (*i).max(1) as usize,
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "'bench' iterations must be an integer, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
+        };
+        (iters, &args[2])
+    };
+
+    if !callable.is_callable() {
+        return Err(RuntimeError::new(format!(
+            "'bench' expects a callable function, got {}",
+            callable.type_name()
+        ))
+        .at(span));
+    }
+
+    crate::bench::execute_bench(&name, iters, callable, ev, span)
+}
+
 
 
 // =============================================================

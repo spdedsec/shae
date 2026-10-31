@@ -1,0 +1,56 @@
+// Shae Fibonacci Benchmark Suite
+// benchmarks/fibonacci.shae
+// Arithmetic performance testing across recursive, iterative, and sequential workloads.
+
+use { bench } from "std:bench"
+
+// Recursive Fibonacci
+fn fib_rec(n) {
+    if n <= 1 {
+        return n
+    }
+    return fib_rec(n - 1) + fib_rec(n - 2)
+}
+
+// Iterative Fibonacci with modulo to prevent 64-bit integer overflow
+fn fib_iter(n) {
+    if n <= 1 {
+        return n
+    }
+    let a = 0
+    let b = 1
+    let i = 2
+    while i <= n {
+        let tmp = (a + b) % 1000000007
+        a = b
+        b = tmp
+        i = i + 1
+    }
+    return b
+}
+
+// Sequence sum
+fn fib_sequence_sum(count) {
+    let sum = 0
+    let i = 0
+    while i < count {
+        sum = (sum + fib_iter(i)) % 1000000007
+        i = i + 1
+    }
+    return sum
+}
+
+bench("Fibonacci Recursive (n=20)", 100, fn() {
+    let res = fib_rec(20)
+    assert(res == 6765, "fib_rec(20) mismatch")
+})
+
+bench("Fibonacci Iterative (n=1000)", 1000, fn() {
+    let res = fib_iter(1000)
+    assert(res >= 0, "fib_iter(1000) mismatch")
+})
+
+bench("Fibonacci Sequence Sum (count=100)", 500, fn() {
+    let sum = fib_sequence_sum(100)
+    assert(sum >= 0, "fib_sequence_sum mismatch")
+})

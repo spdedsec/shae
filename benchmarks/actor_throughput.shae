@@ -1,0 +1,66 @@
+// Shae Actor Throughput Benchmark Suite
+// benchmarks/actor_throughput.shae
+// Stressing std:actor message passing, ask/tell requests, state mutation, and reload throughput.
+
+use { bench } from "std:bench"
+let actor = use "std:actor"
+
+bench("Actor Request-Reply (ask) Throughput", 150, fn() {
+    let counter = actor.spawn(0, fn(state, msg) {
+        if msg == "inc" {
+            let next_st = state + 1
+            return { "state": next_st, "reply": next_st }
+        } else if msg == "get" {
+            return { "state": state, "reply": state }
+        }
+        return state
+    })
+
+    let i = 0
+    while i < 10 {
+        let val = counter.ask("inc")
+        i = i + 1
+    }
+    let final_val = counter.ask("get")
+    assert(final_val == 10, "counter mismatch")
+    counter.stop()
+})
+
+bench("Actor Fire-and-Forget (send/tell) Batching", 100, fn() {
+    let accum = actor.spawn([], fn(state, msg) {
+        if msg["op"] == "push" {
+            state.push(msg["val"])
+            return state
+        } else if msg["op"] == "len" {
+            return { "state": state, "reply": state.len }
+        }
+        return state
+    })
+
+    let i = 0
+    while i < 20 {
+        accum.send({ "op": "push", "val": i })
+        i = i + 1
+    }
+    let count = accum.ask({ "op": "len" })
+    assert(count == 20, "accum length mismatch")
+    accum.stop()
+})
+
+bench("Actor Hot-Code Reloading Throughput", 100, fn() {
+    let worker = actor.spawn(100, fn(state, msg) {
+        let next_st = state + msg
+        return { "state": next_st, "reply": next_st }
+    })
+
+    // Hot-reload handler to multiplying version
+    let ok = worker.reload(fn(state, msg) {
+        let next_st = state * msg
+        return { "state": next_st, "reply": next_st }
+    })
+    assert(ok, "reload failed")
+
+    let res = worker.ask(2)
+    assert(res == 200, "reloaded execution mismatch")
+    worker.stop()
+})
