@@ -23,6 +23,18 @@
 
 ---
 
+## 🚀 Getting Started & IDE Setup
+
+Looking to write and run Shae in your favorite editor or IDE? Check out the step-by-step guide:
+
+* 💻 **[Getting Started Tutorial](GETTING_STARTED.md)**: Comprehensive step-by-step instructions for:
+  * **Visual Studio Code & Cursor**: Installing the extension (`.vsix`), real-time LSP diagnostics, autocompletion, hover docs, formatting on save (`shae fmt`), and one-click execution (`Shae: Run Active File` or `F5`).
+  * **JetBrains IDEs (IntelliJ, WebStorm, CLion)**: File type mapping, external tool setup, and shortcut configuration.
+  * **Neovim / Vim**: Filetype detection, `nvim-lspconfig` configuration, and execution keymaps.
+  * **Terminal & CLI Workflows**: Running files (`shae run`), interactive REPL (`shae repl`), unit tests (`shae test`), benchmarks (`shae bench`), and native LLVM standalone compilation (`shae llvm`).
+
+---
+
 ## 📖 The Complete Architectural Guide & Book (PDF)
 
 Looking for an end-to-end explanation of the entire language and runtime? Check out the official publication-grade reference book:
