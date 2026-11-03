@@ -23,6 +23,15 @@
 
 ---
 
+## 📖 The Complete Architectural Guide & Book (PDF)
+
+Looking for an end-to-end explanation of the entire language and runtime? Check out the official publication-grade reference book:
+
+* 📕 **[Download The Shae Book (PDF)](docs/shae_the_complete_guide.pdf)**: A 42-page comprehensive guide structured using **The Dual-Lens Philosophy**: every concept is explained through an intuitive real-world metaphor (ELI5) followed immediately by the deep systems reality (CPU registers, cache hierarchies, stack frames, Pratt parsing precedence, Bytecode opcodes, LLVM SSA form, zero-copy memory buffers, TLS cluster mesh, and self-hosting bootstrap pipeline).
+* 📝 **[LaTeX Book Sources & Build Instructions](docs/README.md)**: Modular LaTeX sources (`docs/guide/`) with built-in `Makefile` for compiling with `pdflatex`.
+
+---
+
 ## ✨ Why Shae?
 
 Shae is designed to hit the sweet spot between safety, ergonomics, raw utility, and high execution speed:

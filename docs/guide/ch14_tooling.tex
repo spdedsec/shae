@@ -1,0 +1,34 @@
+\chapter{The Developer Tooling Ecosystem}
+
+\section{The Super-Swiss-Army Knife}
+
+\begin{kidbox}{The Complete Adventure Backpack}
+When you go camping in the woods, you don't just take a pair of shoes.
+You bring a tent, a compass, a warm sleeping bag, a flashlight, a water bottle, and a campfire kit!
+Shae does not make you download dozens of complicated mystery tools from thirty different websites.
+Every single tool you need to write, test, format, check, benchmark, document, and package your software is built directly into the \texttt{shae} command!
+\end{kidbox}
+
+\section{The Complete Tooling Suite}
+
+\begin{longtable}{ll}
+\toprule
+\textbf{Subcommand} & \textbf{Purpose and Features} \\
+\midrule
+\endhead
+\texttt{shae run <file.shae>} & Executes source files with \texttt{--engine=vm} or \texttt{--engine=ast} \\
+\texttt{shae ast <file.shae>} & Pretty-prints the Abstract Syntax Tree for debugging \\
+\texttt{shae disasm <file.shae>} & Disassembles bytecode into human-readable assembly \\
+\texttt{shae fmt <file.shae>} & Formats code automatically to canonical Shae style guidelines \\
+\texttt{shae fmt --check} & Verifies code formatting in continuous integration pipelines \\
+\texttt{shae lint <file.shae>} & Detects unused bindings, dead code, and variable shadowing \\
+\texttt{shae doc [path]} & Generates JSON API specifications and documentation \\
+\texttt{shae doc --serve} & Spawns a local HTTP server serving documentation \\
+\texttt{shae bench [filter]} & Runs microbenchmarks with high-resolution latency tracking \\
+\texttt{shae llvm <file.shae>} & Compiles to native binary using LLVM SSA and Clang \\
+\texttt{shae link <file.shaec>} & Links bytecode or object chunks into native ELF/PE binaries \\
+\texttt{shae pkg init <name>} & Initializes a new package with manifest file (\texttt{shae.toml}) \\
+\texttt{shae pkg build} & Compiles package source modules and dependencies \\
+\texttt{shae pkg publish} & Publishes package to the central package registry \\
+\bottomrule
+\end{longtable}

@@ -1,0 +1,41 @@
+\chapter{Cross-Platform Distribution \& The Universal Installer}
+
+\section{Traveling Across Operating Systems}
+
+\begin{kidbox}{The International Passport}
+Imagine you have friends all over the world:
+\begin{itemize}
+    \item Charlie uses a Linux desktop computer.
+    \item Maya uses an Apple MacBook.
+    \item Leo uses a Windows gaming PC.
+\end{itemize}
+Does Shae tell Maya: "Sorry, you cannot play with us"? Never!
+Shae has an international passport that lets it run everywhere with zero hassle!
+\end{kidbox}
+
+\section{Automated Multi-Platform Release Pipeline}
+
+Every official release of Shae is built and packaged across 6 distinct target architectures in automated GitHub Actions CI/CD workflows:
+\begin{enumerate}
+    \item \textbf{Linux x86\_64 (glibc)}: Standard desktop and enterprise Linux distributions (Ubuntu, Debian, Fedora, Arch).
+    \item \textbf{Linux x86\_64 (musl)}: Lightweight static distributions and micro-containers (Alpine Linux).
+    \item \textbf{Linux aarch64}: 64-bit ARM cloud instances (AWS Graviton) and single-board computers (Raspberry Pi 4/5).
+    \item \textbf{macOS Apple Silicon (aarch64-apple-darwin)}: Modern M1, M2, M3, and M4 MacBooks.
+    \item \textbf{macOS Intel (x86\_64-apple-darwin)}: Legacy Intel Mac hardware.
+    \item \textbf{Windows x86\_64 (x86\_64-pc-windows-msvc)}: Modern 64-bit Windows systems.
+\end{enumerate}
+
+\section{The Single-Line Universal Installer}
+
+Installing Shae on Linux or macOS requires running a single universal shell command:
+\begin{lstlisting}[language=bash]
+curl -fsSL https://shae-lang.org/install.sh | bash
+\end{lstlisting}
+
+The installer automatically:
+\begin{enumerate}
+    \item Detects your operating system and CPU architecture.
+    \item Downloads the matching standalone release archive.
+    \item Verifies the cryptographic SHA-256 checksum against \texttt{SHA256SUMS.txt}.
+    \item Extracts the binary into \texttt{\$HOME/.shae/bin} and sets up your shell \texttt{\$PATH}.
+\end{enumerate}

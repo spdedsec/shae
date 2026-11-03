@@ -1,0 +1,42 @@
+\chapter{Concurrency: Fibers, Coroutines, and Channels}
+
+\section{The Kitchen Analogy: Threads vs. Fibers}
+
+\begin{kidbox}{Ten Heavyweight Sumo Wrestlers vs. One Nimble Ninja}
+Imagine you have a small kitchen, and you want to prepare breakfast: make toast, boil tea, and fry eggs.
+\begin{itemize}
+    \item \textbf{OS Threads}: Imagine hiring ten giant heavyweight sumo wrestlers to cook breakfast. The kitchen is cramped! Every time one wrestler wants to reach the stove, they bump into another wrestler, knock over the salt shaker, and spend all their time apologizing! Your kitchen gets exhausted just handling the wrestling!
+    \item \textbf{Fibers}: Imagine hiring one nimble ninja chef. The ninja puts bread in the toaster, and while the bread is toasting, flips an egg on the pan! While the egg is sizzling, the ninja pours hot water for the tea! The ninja never bumps into anyone because there is only one chef moving super gracefully between tasks!
+\end{itemize}
+Shae's \textbf{Fibers} are lightweight green threads that let you run hundreds of thousands of tasks without exhausting your computer's memory!
+\end{kidbox}
+
+\begin{deepbox}{Kernel Stacks vs. User-Space Cooperative Scheduling}
+Operating System threads (POSIX pthreads on Linux, Win32 threads on Windows) are expensive:
+\begin{enumerate}
+    \item \textbf{Memory Footprint}: Each OS thread requires a dedicated kernel stack (typically 2MB to 8MB of virtual memory). Allocating 10,000 OS threads requires $>20\text{ GB}$ of RAM.
+    \item \textbf{Context Switch Cost}: Switching between OS threads requires a privilege transition into kernel mode (Ring 0), saving all CPU registers to the thread task structure, updating page tables, and invalidating CPU L1/L2 cache lines and TLBs (costing 1,000 to 3,000 CPU cycles).
+    \item \textbf{Shae Fibers}: Fibers are scheduled cooperatively in user-space. Each fiber requires only a lightweight control block and execution state ($\sim 512\text{ bytes}$). Switching between fibers is a simple pointer swap requiring $<10\text{ CPU cycles}$ with zero kernel overhead.
+\end{enumerate}
+\end{deepbox}
+
+\section{Channels: Secret Pneumatic Tubes (CSP)}
+
+To communicate safely between concurrent tasks without messy locks or data races, Shae provides \textbf{Channels} based on Communicating Sequential Processes (CSP):
+
+\begin{lstlisting}[language=shaelang]
+let ch = channel.new();
+
+// Spawn a background fiber to compute a heavy math sequence
+fiber.spawn(fn() {
+    let sum = 0;
+    for i in 1..=1000 {
+        sum = sum + i;
+    }
+    ch.send(sum); // Drop the letter into the tube!
+});
+
+// Main execution waits for the result to arrive
+let final_sum = ch.recv();
+println("Received computed sum: " + final_sum);
+\end{lstlisting}

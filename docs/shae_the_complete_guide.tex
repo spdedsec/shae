@@ -1,0 +1,196 @@
+\documentclass[11pt,a4paper,oneside]{book}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=0.85in]{geometry}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{amsmath,amssymb}
+\usepackage{fancyhdr}
+\setlength{\headheight}{14pt}
+\usepackage{titlesec}
+\usepackage{hyperref}
+
+\definecolor{shaeNavy}{RGB}{26, 54, 93}
+\definecolor{shaeTeal}{RGB}{13, 148, 136}
+\definecolor{shaeAmber}{RGB}{180, 83, 9}
+\definecolor{shaeSlate}{RGB}{51, 65, 85}
+\definecolor{codeBg}{RGB}{248, 250, 252}
+\definecolor{codeFrame}{RGB}{203, 213, 225}
+\definecolor{kwColor}{RGB}{194, 65, 12}
+\definecolor{typeColor}{RGB}{14, 116, 144}
+\definecolor{strColor}{RGB}{21, 128, 61}
+\definecolor{commentColor}{RGB}{100, 116, 139}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=shaeNavy,
+    citecolor=shaeTeal,
+    urlcolor=shaeTeal,
+    pdftitle={The Shae Programming Language: From Sand to Supercomputers},
+    pdfauthor={The Shae Core Development Team},
+    pdfsubject={Comprehensive Reference and Pedagogical Guide to Shae},
+    pdfkeywords={Shae, Programming Language, Compiler, Virtual Machine, LLVM, Actors, Concurrency}
+}
+
+\lstdefinelanguage{shaelang}{
+    keywords={let, const, fn, if, else, while, for, in, return, break, continue, match, try, catch, throw, actor, import, export, struct, enum, pub, true, false, null, Option, Result, Some, None, Ok, Err, pack, unpack, calcsize, tell, ask, reload, spawn, yield},
+    keywordstyle=\color{kwColor}\bfseries,
+    ndkeywords={Int, Float, Bool, String, Array, Map, ByteBuffer, Actor, Node, Fiber, Channel},
+    ndkeywordstyle=\color{typeColor}\bfseries,
+    sensitive=true,
+    comment=[l]{//},
+    morecomment=[s]{/*}{*/},
+    commentstyle=\color{commentColor}\itshape,
+    stringstyle=\color{strColor},
+    morestring=[b]",
+    morestring=[b]'
+}
+
+\lstset{
+    language=shaelang,
+    backgroundcolor=\color{codeBg},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    rulecolor=\color{codeFrame},
+    numbers=left,
+    numberstyle=\tiny\color{commentColor},
+    numbersep=8pt,
+    tabsize=4,
+    showstringspaces=false,
+    keepspaces=true
+}
+
+\newtcolorbox{kidbox}[1]{
+    breakable,
+    enhanced,
+    colback=shaeAmber!8!white,
+    colframe=shaeAmber,
+    coltitle=white,
+    fonttitle=\bfseries\sffamily,
+    title={Explain It Like I'm 5: #1},
+    arc=4mm,
+    boxrule=1.2pt,
+    left=12pt,
+    right=12pt,
+    top=10pt,
+    bottom=10pt,
+    before skip=12pt,
+    after skip=12pt
+}
+
+\newtcolorbox{deepbox}[1]{
+    breakable,
+    enhanced,
+    colback=shaeSlate!8!white,
+    colframe=shaeNavy,
+    coltitle=white,
+    fonttitle=\bfseries\sffamily,
+    title={Deep Systems Reality (Under the Hood): #1},
+    arc=4mm,
+    boxrule=1.2pt,
+    left=12pt,
+    right=12pt,
+    top=10pt,
+    bottom=10pt,
+    before skip=12pt,
+    after skip=12pt
+}
+
+\newtcolorbox{syntaxbox}[1]{
+    breakable,
+    enhanced,
+    colback=shaeTeal!6!white,
+    colframe=shaeTeal,
+    coltitle=white,
+    fonttitle=\bfseries\sffamily,
+    title={Formal Specification and Syntax: #1},
+    arc=3mm,
+    boxrule=1pt,
+    left=10pt,
+    right=10pt,
+    top=8pt,
+    bottom=8pt,
+    before skip=10pt,
+    after skip=10pt
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\textsl{\nouppercase{\leftmark}}}
+\fancyhead[R]{\textbf{The Shae Programming Language}}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+\titleformat{\chapter}[display]
+  {\normalfont\bfseries\color{shaeNavy}}
+  {\Large\MakeUppercase{\chaptertitlename} \thechapter}{1ex}
+  {\titlerule\vspace{1ex}\Huge}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{1.5cm}
+{\Huge\bfseries\color{shaeNavy} The Shae Programming Language \par}
+\vspace{0.6cm}
+{\Large\bfseries\color{shaeTeal} From Sand to Supercomputers \par}
+\vspace{0.4cm}
+{\large\itshape An All-Encompassing Guide from Kindergarten Metaphors to Deep Systems Architecture \par}
+\vspace{1.5cm}
+\begin{tcolorbox}[colback=shaeNavy!5!white,colframe=shaeNavy,arc=3mm,width=0.88\textwidth,center]
+\centering
+\vspace{4pt}
+\textbf{The Definitive Reference Book on Shae}\\
+\small Covering Language Syntax, Dual Execution Engines, Bytecode VM, Pratt Parsing, Low-Level Zero-Copy Buffers, Distributed Cluster Actors, LLVM SSA Generation, and Self-Hosting Compilation.
+\vspace{4pt}
+\end{tcolorbox}
+\vfill
+{\textbf{Author:}\ The Shae Core Development Team \par}
+{\textbf{Version:}\ 0.4.0 / 0.5.0 Enterprise Architecture \par}
+{\textbf{Date:}\ \today \par}
+\vspace*{1cm}
+\end{titlepage}
+
+\frontmatter
+\chapter*{Preface: The Dual-Lens Philosophy}
+Welcome to the official, complete reference manual and pedagogical treatise for the \textbf{Shae Programming Language}.
+
+Most programming books make a tragic mistake: they either treat the reader like an academic mathematician and bury the joy of discovery under impenetrable jargon, or they treat the reader like a beginner forever and never pull back the curtain on how CPUs, caches, registers, and compilers actually run code.
+
+This book is founded on a unique principle called \textbf{The Dual-Lens Philosophy}:
+\begin{enumerate}
+    \item \textbf{The 5-Year-Old Lens (ELI5)}: Every fundamental concept starts with a physical, tactile, real-world metaphor. If you cannot explain why a computer needs a stack or an actor mailbox using building blocks, post office boxes, and toy trains, you do not truly understand it yet.
+    \item \textbf{The Systems Architect Lens (Deep Reality)}: Immediately following the metaphor, we dive into the unvarnished engineering truth. We examine CPU register allocation, cache hierarchy, stack frame pointers, Static Single Assignment (SSA) form, memory alignment, POSIX sockets, TLS handshakes, and binary ELF executable layouts.
+\end{enumerate}
+
+Whether you are a newcomer writing your very first lines of code or a veteran systems engineer designing high-throughput distributed microservices, this book will guide you from the silicon sand of your motherboard all the way to global supercomputer actor clusters.
+
+\tableofcontents
+
+\mainmatter
+
+\input{guide/ch01_magic}
+\input{guide/ch02_journey}
+\input{guide/ch03_variables}
+\input{guide/ch04_types}
+\input{guide/ch05_control_flow}
+\input{guide/ch06_functions}
+\input{guide/ch07_errors}
+\input{guide/ch08_vm}
+\input{guide/ch09_concurrency}
+\input{guide/ch10_actors}
+\input{guide/ch11_buffer}
+\input{guide/ch12_llvm}
+\input{guide/ch13_self_hosting}
+\input{guide/ch14_tooling}
+\input{guide/ch15_distribution}
+\input{guide/ch16_glossary}
+
+\end{document}

@@ -1,0 +1,90 @@
+\chapter{Inside the Engine Room: Virtual Machine Architecture \& Bytecodes}
+
+\section{What is a Virtual Machine?}
+
+\begin{kidbox}{The Imaginary Computer Inside Your Computer}
+Have you ever played Minecraft or a video game where you can build an arcade machine inside the game?
+You are sitting in front of your real television, playing a game, and inside that game, your character is playing another little game!
+A \textbf{Virtual Machine} is an imaginary computer built completely out of software code that lives inside your real computer.
+It has its own imaginary brain, its own imaginary instructions, and its own imaginary memory!
+\end{kidbox}
+
+\section{The Pancake Stack Architecture}
+
+\begin{kidbox}{Stack of Fluffy Pancakes}
+Imagine a stack of pancakes on a plate at breakfast:
+\begin{itemize}
+    \item If you want to add a pancake, you put it on \textbf{TOP}. We call this \textbf{PUSH}!
+    \item If you want to eat a pancake, you take it from the \textbf{TOP}. We call this \textbf{POP}!
+    \item You can never pull a pancake from the middle without making the whole stack fall over!
+\end{itemize}
+The Shae Virtual Machine is a \textbf{Stack Machine}! 
+To add $10 + 20$:
+\begin{enumerate}
+    \item Push 10 onto the pancake stack.
+    \item Push 20 onto the pancake stack.
+    \item Execute \texttt{OpAdd}: The VM pops 20, pops 10, adds them together ($10 + 20 = 30$), and pushes 30 back onto the top of the stack!
+\end{enumerate}
+\end{kidbox}
+
+\begin{deepbox}{The Shae Opcode Instruction Set}
+The Shae compiler transforms AST nodes into high-density 8-bit bytecode instructions (\texttt{src/chunk.rs}, \texttt{src/compiler.rs}, \texttt{src/vm.rs}):
+
+\begin{longtable}{lll}
+\toprule
+\textbf{Opcode} & \textbf{Operands} & \textbf{Stack Transformation \& Description} \\
+\midrule
+\endhead
+\texttt{OpConstant} & \texttt{idx: u16} & $[\dots] \to [\dots, \text{constants}[idx]]$ \\
+\texttt{OpPop} & None & $[\dots, v] \to [\dots]$ \\
+\texttt{OpDup} & None & $[\dots, v] \to [\dots, v, v]$ \\
+\texttt{OpAdd} & None & $[\dots, a, b] \to [\dots, a + b]$ \\
+\texttt{OpSub} & None & $[\dots, a, b] \to [\dots, a - b]$ \\
+\texttt{OpMul} & None & $[\dots, a, b] \to [\dots, a \times b]$ \\
+\texttt{OpDiv} & None & $[\dots, a, b] \to [\dots, a / b]$ \\
+\texttt{OpModulo} & None & $[\dots, a, b] \to [\dots, a \pmod b]$ \\
+\texttt{OpEqual} & None & $[\dots, a, b] \to [\dots, a == b]$ \\
+\texttt{OpGreater} & None & $[\dots, a, b] \to [\dots, a > b]$ \\
+\texttt{OpLess} & None & $[\dots, a, b] \to [\dots, a < b]$ \\
+\texttt{OpNot} & None & $[\dots, v] \to [\dots, \neg v]$ \\
+\texttt{OpBitAnd} & None & $[\dots, a, b] \to [\dots, a \ \& \ b]$ \\
+\texttt{OpBitOr} & None & $[\dots, a, b] \to [\dots, a \mid b]$ \\
+\texttt{OpBitXor} & None & $[\dots, a, b] \to [\dots, a \oplus b]$ \\
+\texttt{OpBitShl} & None & $[\dots, a, b] \to [\dots, a \ll b]$ \\
+\texttt{OpBitShr} & None & $[\dots, a, b] \to [\dots, a \gg b]$ \\
+\texttt{OpGetLocal} & \texttt{slot: u16} & $[\dots] \to [\dots, \text{stack}[\text{base} + slot]]$ \\
+\texttt{OpSetLocal} & \texttt{slot: u16} & $[\dots, v] \to [\dots]$ (writes to local slot) \\
+\texttt{OpGetGlobal} & \texttt{name\_idx: u16} & $[\dots] \to [\dots, \text{globals}[\text{name}]]$ \\
+\texttt{OpSetGlobal} & \texttt{name\_idx: u16} & $[\dots, v] \to [\dots]$ \\
+\texttt{OpJump} & \texttt{offset: u16} & Unconditional jump: $ip \gets ip + offset$ \\
+\texttt{OpJumpIfFalse}& \texttt{offset: u16} & Jump if top of stack is falsy \\
+\texttt{OpLoop} & \texttt{offset: u16} & Backwards loop jump: $ip \gets ip - offset$ \\
+\texttt{OpClosure} & \texttt{fn\_idx: u16} & Pushes closure wrapping function and upvalues \\
+\texttt{OpCall} & \texttt{argc: u8} & Invokes callable with $argc$ arguments \\
+\texttt{OpReturn} & None & Returns top of stack to caller frame \\
+\texttt{OpArray} & \texttt{count: u16} & Pops $count$ values and creates dynamic array \\
+\texttt{OpMap} & \texttt{pairs: u16} & Pops $pairs \times 2$ keys and values to form map \\
+\bottomrule
+\end{longtable}
+\end{deepbox}
+
+\section{Disassembling Bytecode with \texttt{shae disasm}}
+
+You can inspect the exact compiled bytecode of any Shae program using the CLI disassembler:
+\begin{lstlisting}[language=bash]
+shae disasm program.shae
+\end{lstlisting}
+
+Output:
+\begin{lstlisting}[language=shaelang]
+== Disassembly: main ==
+Offset  Line  OpCode            Operand
+---------------------------------------------
+0000    1     OpConstant        #0 (100)
+0003    1     OpConstant        #1 (50)
+0006    1     OpAdd
+0007    1     OpSetLocal        slot #0 (score)
+0010    2     OpGetLocal        slot #0
+0013    2     OpPrint
+0014    2     OpReturn
+\end{lstlisting}
