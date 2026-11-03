@@ -1,0 +1,59 @@
+\chapter{Complete Syntax Grammar \& Vocabulary Glossary}
+
+\section{Formal Grammar Specification (EBNF Summary)}
+
+\begin{syntaxbox}{Shae Grammar in Extended Backus-Naur Form}
+\begin{lstlisting}[language=shaelang]
+Program      ::= Statement* EOF ;
+Statement    ::= LetStmt | ConstStmt | FnDecl | ReturnStmt 
+               | WhileStmt | ForStmt | TryCatchStmt | ExprStmt ;
+
+LetStmt      ::= "let" Pattern "=" Expr ";" ;
+ConstStmt    ::= "const" Pattern "=" Expr ";" ;
+FnDecl       ::= "fn" IDENT "(" ParamList? ")" Block ;
+ReturnStmt   ::= "return" Expr? ";" ;
+WhileStmt    ::= "while" Expr Block ;
+ForStmt      ::= "for" Pattern "in" Expr Block ;
+TryCatchStmt ::= "try" Block "catch" "(" IDENT ")" Block ;
+
+Pattern      ::= IDENT | ArrayPat | MapPat | Literal ;
+ArrayPat     ::= "[" (Pattern ("," Pattern)*)? (",." "." IDENT)? "]" ;
+MapPat       ::= "{" (IDENT (":" Pattern)? ("," IDENT (":" Pattern)?)*)? (",." "." IDENT)? "}" ;
+
+Expr         ::= PipelineExpr ;
+PipelineExpr ::= LogicOrExpr ("|>" LogicOrExpr)* ;
+LogicOrExpr  ::= LogicAndExpr (("or" | "||") LogicAndExpr)* ;
+LogicAndExpr ::= EqualityExpr (("and" | "&&") EqualityExpr)* ;
+EqualityExpr ::= RelationalExpr (("==" | "!=") RelationalExpr)* ;
+RelationalExpr ::= AdditiveExpr (("<" | "<=" | ">" | ">=") AdditiveExpr)* ;
+AdditiveExpr ::= MultExpr (("+" | "-") MultExpr)* ;
+MultExpr     ::= UnaryExpr (("*" | "/" | "%") UnaryExpr)* ;
+UnaryExpr    ::= ("-" | "!" | "~") UnaryExpr | PrimaryExpr ;
+PrimaryExpr  ::= Literal | IDENT | MatchExpr | IfExpr | Block | "(" Expr ")" ;
+\end{lstlisting}
+\end{syntaxbox}
+
+\section{Comprehensive Vocabulary Glossary}
+
+\begin{description}
+    \item[Abstract Syntax Tree (AST)] A tree representation of source code structure produced by the parser.
+    \item[Actor Model] A mathematical model of concurrent computation where actors maintain private state and communicate exclusively via asynchronous message passing.
+    \item[Application Binary Interface (ABI)] The low-level binary contract specifying register usage, stack frame layout, and calling conventions between compiled software units.
+    \item[Big-Endian] A byte ordering convention where the most significant byte of a word is stored at the lowest memory address.
+    \item[Bytecode] An intermediate, compact instruction set designed for execution by a software virtual machine.
+    \item[Call Frame] An activation record pushed onto the call stack representing a function invocation, storing the return instruction pointer and local variable slots.
+    \item[Closure] A first-class function paired with an environment capturing variables from its enclosing lexical scope.
+    \item[Communicating Sequential Processes (CSP)] A formal concurrency model where tasks synchronize and exchange data exclusively via message channels.
+    \item[Dead Code Elimination (DCE)] A compiler optimization pass that detects and removes instructions that have no effect on program execution.
+    \item[Endianness] The sequential order in which bytes of a multi-byte word are arranged in computer memory.
+    \item[Fiber] A lightweight, user-space cooperative thread of execution with minimal memory overhead.
+    \item[Hot-Code Reloading] The ability to update the running executable code of an active process or actor without terminating state or severing network connections.
+    \item[Little-Endian] A byte ordering convention where the least significant byte of a word is stored at the lowest memory address (standard for x86\_64 and ARM64).
+    \item[LLVM SSA] Static Single Assignment form utilized by the LLVM compiler framework where every virtual register is assigned a value exactly once.
+    \item[Pratt Parser] A top-down operator precedence parsing algorithm designed by Vaughan Pratt for efficient expression parsing without deep grammar trees.
+    \item[Result Type] An algebraic data type representing either a successful computation (\texttt{Result.Ok}) or an error condition (\texttt{Result.Err}).
+    \item[Self-Hosting] The capability of a programming language compiler to compile its own source code into a fully functioning compiler binary.
+    \item[Span] A source code location descriptor recording starting and ending line and column coordinates for rich diagnostic reporting.
+    \item[Upvalue] A runtime mechanism enabling closures to reference and mutate variables declared in enclosing outer scopes.
+    \item[Zero-Copy] A high-performance systems programming technique allowing operations to read or slice memory buffers without allocating or copying underlying bytes.
+\end{description}

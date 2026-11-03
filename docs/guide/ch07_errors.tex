@@ -1,0 +1,57 @@
+\chapter{When Things Go Wrong: Predictable Error Handling}
+
+\section{Why Programs Crash}
+
+\begin{kidbox}{Dropping a Glass of Milk}
+Imagine you are carrying a glass of milk to the breakfast table, and your foot trips on a toy truck.
+Crash! The glass hits the floor and milk spills everywhere!
+What does a sensible person do?
+Do you scream and burn down the entire house? Of course not!
+You get a paper towel, wipe up the spilled milk, wash your hands, and pour a fresh glass!
+In computer programs, when something goes wrong (like trying to read a file that does not exist or dividing by zero), bad languages burn down the house (they crash and quit!).
+Shae teaches your computer how to wipe up the milk safely!
+\end{kidbox}
+
+\section{The Banishment of Null}
+
+\begin{kidbox}{The Empty Birthday Present Box}
+Imagine it is your birthday. A friend hands you a beautifully wrapped box with a golden bow.
+You smile excitedly and unwrap the paper. You open the lid...
+And inside there is nothing. Not even air! It is a black hole that makes your bedroom vanish!
+In 1965, a computer scientist named Sir Tony Hoare invented \texttt{null}. Decades later, he called it his \textbf{"Billion-Dollar Mistake"} because unhandled null pointers have crashed millions of computers and caused billions of dollars in software bugs.
+Shae banishes raw, dangerous \texttt{null} pointers! Instead, Shae gives you explicit \texttt{Option} and \texttt{Result} boxes!
+\end{kidbox}
+
+\section{Structured Exceptions: Try, Catch, and Throw}
+
+For unexpected runtime conditions, Shae provides structured exception handling:
+
+\begin{lstlisting}[language=shaelang]
+fn read_secure_file(path) {
+    if path == "" {
+        throw "Path cannot be empty!";
+    }
+    // Attempt file reading...
+    return "Secret file contents";
+}
+
+try {
+    let data = read_secure_file("");
+    println(data);
+} catch (error) {
+    println("Caught an error gracefully: " + error);
+}
+
+println("Program continues running safely!");
+\end{lstlisting}
+
+\begin{deepbox}{Stack Unwinding and Exception Frames}
+When a \texttt{throw} statement executes:
+\begin{enumerate}
+    \item The runtime captures the thrown value and constructs an error diagnostic backtrace.
+    \item In the Bytecode VM, the engine inspects the current \texttt{CallFrame}. If no active exception handler is registered in the frame, the frame is popped, local variables are dropped, and execution unwinds to the caller frame.
+    \item Unwinding continues recursively until an active handler frame is encountered.
+    \item The instruction pointer \texttt{ip} is jumped to the catch block offset, the caught error value is pushed onto the VM stack, and normal execution resumes.
+    \item If the call stack unwinds completely without finding any catch handler, a clean fatal error diagnostic is printed to \texttt{stderr} with full source file, line, and column spans.
+\end{enumerate}
+\end{deepbox}

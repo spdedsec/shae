@@ -1,0 +1,154 @@
+\chapter{The Building Blocks: The Complete Type System}
+
+\section{The Taxonomy of Values}
+
+\begin{kidbox}{The Shape Sorter Bucket}
+When you were very little, you probably had a plastic bucket with holes in the lid: a circle hole, a square hole, a triangle hole, and a star hole.
+You cannot push the wooden triangle into the round hole! It simply will not fit.
+In Shae, every piece of information has a shape called its \textbf{Type}:
+\begin{itemize}
+    \item \textbf{Int}: Counting blocks ($1, 2, 100, -5$). Whole numbers!
+    \item \textbf{Float}: Measuring cups ($3.14159, 0.5$). Numbers with decimal fractions!
+    \item \textbf{Bool}: The light switch ($true$ or $false$).
+    \item \textbf{String}: A necklace of letter beads ($"Hello, World!"$).
+    \item \textbf{Array}: A toy train with hooked cars holding a list of items ($[10, 20, 30]$).
+    \item \textbf{Map}: A phone directory connecting names to values ($\{"alice": 100\}$).
+\end{itemize}
+\end{kidbox}
+
+\section{The Number System: Integers and Floats}
+
+Shae provides a strict, unambiguous separation between whole integers and floating-point real numbers.
+
+\begin{lstlisting}[language=shaelang]
+// 1. Standard Decimal Integers
+let count = 42;
+let negative_val = -100;
+
+// 2. Hexadecimal, Binary, and Octal Radix Literals
+let hex_mask = 0xFF;           // 255 in base 16
+let binary_flags = 0b1010_0101; // 165 in base 2 with separators
+let octal_perms = 0o755;        // 493 in base 8
+
+// 3. Bitwise Operators on Integers
+let a = 0b1100; // 12
+let b = 0b1010; // 10
+
+let bit_and = a & b;  // 0b1000 = 8
+let bit_or  = a | b;  // 0b1110 = 14
+let bit_xor = a ^ b;  // 0b0110 = 6
+let bit_not = ~a;     // Two's complement bit inversion
+let shl     = a << 2; // 0b110000 = 48
+let shr     = a >> 1; // 0b0110 = 6
+
+// 4. Floating Point Numbers (IEEE-754 64-bit)
+let pi = 3.141592653589793;
+let temperature = -12.5;
+\end{lstlisting}
+
+\begin{deepbox}{Two's Complement and IEEE-754 Representation}
+In the Shae runtime:
+\begin{itemize}
+    \item \textbf{Integer}: Stored internally as an \texttt{i64} (64-bit signed two's complement integer). The value range spans from $-9,223,372,036,854,775,808$ ($-2^{63}$) to $9,223,372,036,854,775,807$ ($2^{63}-1$).
+    \item \textbf{Float}: Stored internally as an \texttt{f64} (IEEE-754 double precision floating point). The representation consists of:
+    \begin{itemize}
+        \item 1 Sign bit ($s$)
+        \item 11 Exponent bits ($e$) with bias $1023$
+        \item 52 Fraction / Mantissa bits ($m$)
+    \end{itemize}
+    \begin{equation}
+    v = (-1)^s \times 2^{e - 1023} \times \left(1 + \sum_{i=1}^{52} b_{52-i} 2^{-i}\right)
+    \end{equation}
+\end{itemize}
+\end{deepbox}
+
+\section{Strings: UTF-8 Text and Slicing}
+
+Strings in Shae are valid UTF-8 sequences equipped with rich built-in manipulation methods:
+
+\begin{lstlisting}[language=shaelang]
+let greeting = "  Hello, Shae Developers!  ";
+
+let trimmed = greeting.trim();
+let contains_shae = trimmed.contains("Shae"); // true
+let starts = trimmed.starts_with("Hello");    // true
+let ends   = trimmed.ends_with("!");          // true
+
+// Padding for neat console tables
+let padded = "42".pad_start(5, "0"); // "00042"
+
+// Splitting into lines and characters
+let multi = "Line 1\nLine 2\nLine 3";
+let lines_list = multi.lines(); // ["Line 1", "Line 2", "Line 3"]
+let chars_list = "Shae".chars(); // ["S", "h", "a", "e"]
+\end{lstlisting}
+
+\section{Arrays: Contiguous Dynamic Lists}
+
+\begin{lstlisting}[language=shaelang]
+let nums = [1, 2, 3, 4, 5];
+
+// 1. Functional transformations
+let doubled = nums.map(fn(x) { x * 2 });       // [2, 4, 6, 8, 10]
+let evens   = nums.filter(fn(x) { x % 2 == 0 }); // [2, 4]
+let sum     = nums.reduce(0, fn(acc, x) { acc + x }); // 15
+
+// 2. Search & Predicates
+let found = nums.find(fn(x) { x > 3 }); // 4
+let has_neg = nums.some(fn(x) { x < 0 }); // false
+let all_pos = nums.every(fn(x) { x > 0 }); // true
+
+// 3. Slicing and Reversing
+let slice_mid = nums.slice(1, 4); // [2, 3, 4]
+let reversed  = nums.reverse();   // [5, 4, 3, 2, 1]
+let joined    = nums.join(" - "); // "1 - 2 - 3 - 4 - 5"
+\end{lstlisting}
+
+\section{Maps: Fast Key-Value Hash Tables}
+
+\begin{lstlisting}[language=shaelang]
+let config = {
+    "host": "127.0.0.1",
+    "port": 8080,
+    "ssl": true,
+    "timeout": 30
+};
+
+// Accessing fields
+let host = config["host"];
+let port = config["port"];
+
+// Checking keys and size
+println("Keys: " + config.keys());
+println("Values: " + config.values());
+println("Entries count: " + config.len());
+\end{lstlisting}
+
+\section{Algebraic Data Types: Option and Result}
+
+Shae eliminates the concept of raw unhandled \texttt{null} pointers by offering the standard algebraic data types: \texttt{Option} and \texttt{Result}.
+
+\begin{lstlisting}[language=shaelang]
+// Option: Either Some(value) or None
+fn find_user(id) {
+    if id == 1 {
+        return Option.Some("Alice");
+    } else {
+        return Option.None;
+    }
+}
+
+// Result: Either Ok(value) or Err(message)
+fn divide(a, b) {
+    if b == 0 {
+        return Result.Err("Cannot divide by zero!");
+    }
+    return Result.Ok(a / b);
+}
+
+// Pattern matching on Option & Result
+match find_user(1) {
+    Option.Some(name) => println("Found: " + name),
+    Option.None => println("No user found!"),
+}
+\end{lstlisting}

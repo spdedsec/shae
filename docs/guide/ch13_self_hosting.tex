@@ -1,0 +1,40 @@
+\chapter{The Holy Grail: The Self-Hosting Compiler Pipeline}
+
+\section{What is Self-Hosting?}
+
+\begin{kidbox}{The Wooden Robot That Builds a Metal Robot}
+Imagine you are stranded on a deserted tropical island, and you want to build a shiny, high-tech titanium robot.
+Do you have a titanium factory on the beach? No!
+So what do you do?
+\begin{enumerate}
+    \item You carve a clumsy wooden robot out of palm tree branches using a sharp seashell!
+    \item You use the wooden robot to dig iron ore out of the mountain and forge a sturdy iron robot!
+    \item Finally, you use the iron robot to mine titanium and assemble the shiny, ultimate super-robot!
+\end{enumerate}
+In computer programming, this is called \textbf{Self-Hosting}!
+First, we wrote Shae using Rust. Then, we wrote Shae using Shae!
+Now, Shae compiles its own source code to create itself! It is completely independent and free!
+\end{kidbox}
+
+\begin{deepbox}{The Three-Stage Bootstrap Architecture}
+Shae's self-hosting compiler pipeline (\texttt{lib/compiler/}) achieves the pinnacle of compiler engineering through a three-stage bootstrap verification:
+\begin{enumerate}
+    \item \textbf{Stage 0 (Rust Host Compiler)}: The reference compiler \texttt{shaec} compiles Shae source code into stack bytecode or LLVM IR.
+    \item \textbf{Stage 1 (Pure-Shae Compiler)}: The pure-Shae source modules in \texttt{lib/compiler/}:
+    \begin{itemize}
+        \item \texttt{lexer.shae}: Lexical tokenizer written entirely in Shae.
+        \item \texttt{ast.shae} \& \texttt{parser.shae}: Pratt expression parser and recursive descent AST generator written in Shae.
+        \item \texttt{codegen.shae}: Bytecode chunk compiler generating \texttt{.shaec} binary instruction chunks.
+        \item \texttt{disasm.shae}: Bytecode disassembler and diagnostic formatter.
+    \end{itemize}
+    \item \textbf{Stage 2 (Self-Compiled Binary)}: Stage 0 compiles Stage 1, producing \texttt{target/bootstrap/shaec\_v1}. Then \texttt{shaec\_v1} compiles Stage 1 to produce \texttt{shaec\_v2}. When \texttt{shaec\_v1} and \texttt{shaec\_v2} produce identical output, compiler bootstrapping is complete!
+\end{enumerate}
+\end{deepbox}
+
+\section{Direct Native Linking (\texttt{shae link}, \texttt{elf.shae}, \texttt{pe.shae})}
+
+Shae does not rely on external system linkers (like GNU \texttt{ld} or LLVM \texttt{lld}) to produce executables. Instead, pure-Shae modules construct executable file formats from scratch:
+\begin{itemize}
+    \item \texttt{lib/compiler/elf.shae}: Constructs 64-bit ELF (Executable and Linkable Format) binaries for Linux, generating the ELF Header, \texttt{PT\_LOAD} Program Header tables, and \texttt{.text} code sections.
+    \item \texttt{lib/compiler/pe.shae}: Constructs Windows Portable Executable (PE32+) binaries, generating MS-DOS stubs, COFF File Headers, Optional Headers, and Section Tables.
+\end{itemize}

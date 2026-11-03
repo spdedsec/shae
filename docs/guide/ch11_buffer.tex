@@ -1,0 +1,87 @@
+\chapter{Raw Systems Programming \& Zero-Copy Memory (\texttt{std:buffer})}
+
+\section{The Physical Reality of Memory}
+
+\begin{kidbox}{The Street with Billions of Tiny Houses}
+Imagine you are walking down the longest street in the world.
+On both sides of the street, there are billions of tiny houses, side by side.
+Every single house has a street number painted on the front door: House \#0, House \#1, House \#2, all the way to House \#16,000,000,000!
+Inside every house, there is a tiny shelf that can hold exactly one byte (a number between 0 and 255).
+In computers, this street is called \textbf{RAM} (Random Access Memory), and the house numbers are called \textbf{Memory Addresses}!
+\end{kidbox}
+
+\section{Endianness: Reading Backwards or Forwards?}
+
+\begin{kidbox}{The Egg-Breaking War}
+In the famous story of \textit{Gulliver's Travels}, two kingdoms went to war over whether soft-boiled breakfast eggs should be cracked open from the Big End or the Little End!
+Computers had the exact same argument:
+\begin{itemize}
+    \item \textbf{Big-Endian}: Writing numbers the way humans write them: most significant byte first. The internet network protocol uses Big-Endian!
+    \item \textbf{Little-Endian}: Writing numbers least significant byte first (backwards!). Intel and ARM computer chips use Little-Endian because it makes math circuits faster!
+\end{itemize}
+Shae's \texttt{ByteBuffer} lets you read and write both with complete precision!
+\end{kidbox}
+
+\section{Zero-Copy Memory Slicing}
+
+\begin{kidbox}{Looking Through the Magic Window}
+Imagine your friend has a giant coloring book with 5,000 pages of drawings.
+You want to show your teacher page 42.
+Do you spend three hours and fifty dollars making a photocopy of the entire coloring book just to show one page?
+No! You just open page 42 and hold it up!
+In computer memory, making copies of big chunks of data is what makes computers slow and drains their battery.
+Shae's \texttt{ByteBuffer} supports \textbf{Zero-Copy Slicing}: you create a view into the memory without copying a single byte!
+\end{kidbox}
+
+\begin{syntaxbox}{Using \texttt{ByteBuffer} in Shae}
+\begin{lstlisting}[language=shaelang]
+import "std:buffer";
+
+// 1. Allocate a raw 64-byte buffer
+let buf = ByteBuffer.allocate(64);
+
+// 2. Write numeric values with explicit endianness
+buf.write_u32_le(0, 0x12345678);
+buf.write_f64_be(4, 3.1415926535);
+
+// 3. Read back values
+let val_u32 = buf.read_u32_le(0);
+let val_f64 = buf.read_f64_be(4);
+
+// 4. Zero-copy sub-slice view
+let view = buf.slice(0, 16);
+println("Slice byte length: " + view.len()); // 16
+\end{lstlisting}
+\end{syntaxbox}
+
+\section{Binary Struct Packing and Unpacking}
+
+For network packet serialization and hardware protocols, \texttt{std:buffer} includes a high-performance struct packing engine:
+
+\begin{center}\vspace{8pt}
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Format Code} & \textbf{C / Native Type} & \textbf{Size in Bytes} \\
+\midrule
+\texttt{b} / \texttt{B} & Signed / Unsigned 8-bit integer & 1 \\
+\texttt{h} / \texttt{H} & Signed / Unsigned 16-bit integer & 2 \\
+\texttt{i} / \texttt{I} & Signed / Unsigned 32-bit integer & 4 \\
+\texttt{q} / \texttt{Q} & Signed / Unsigned 64-bit integer & 8 \\
+\texttt{f} & IEEE-754 32-bit float & 4 \\
+\texttt{d} & IEEE-754 64-bit double & 8 \\
+\texttt{s} & Fixed-width ASCII / UTF-8 string & Length dependent \\
+\bottomrule
+\end{tabular}
+\par\vspace{4pt}\small\textbf{Table: Shae Binary Format Specifiers}
+\end{center}
+
+\begin{lstlisting}[language=shaelang]
+// Packing a network packet header: < = Little Endian, I = u32, 2h = two i16s, 4s = 4-byte string
+let packet = ByteBuffer.pack("<I2h4s", [1001, -50, 250, "PING"]);
+println("Encoded byte size: " + packet.len()); // 12 bytes
+
+// Unpacking back into high-level values
+let unpacked = ByteBuffer.unpack("<I2h4s", packet);
+println("Unpacked packet: " + unpacked); // [1001, -50, 250, "PING"]
+\end{lstlisting}

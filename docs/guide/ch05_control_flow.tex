@@ -1,0 +1,103 @@
+\chapter{Making Decisions: Control Flow and Pattern Matching}
+
+\section{The Fork in the Road: Conditionals}
+
+\begin{kidbox}{Choosing What to Wear}
+Every morning, you look out the bedroom window.
+\begin{itemize}
+    \item \textbf{If} it is raining outside, you put on your yellow raincoat and boots!
+    \item \textbf{Else if} it is freezing cold and snowing, you put on your puffy winter coat and mittens!
+    \item \textbf{Else} (it is sunny!), you put on your favorite dinosaur t-shirt and sunglasses!
+\end{itemize}
+In Shae, computers make choices using \texttt{if}, \texttt{else if}, and \texttt{else}:
+\begin{lstlisting}[language=shaelang]
+let weather = "rainy";
+
+if weather == "rainy" {
+    println("Grab your yellow raincoat!");
+} else if weather == "snowy" {
+    println("Put on your warm mittens!");
+} else {
+    println("Time for dinosaur sunglasses!");
+}
+\end{lstlisting}
+\end{kidbox}
+
+\begin{syntaxbox}{If Expressions in Shae}
+In Shae, \texttt{if} statements are true expressions: they return a value directly!
+\begin{lstlisting}[language=shaelang]
+let age = 10;
+let status = if age >= 18 { "Adult" } else { "Child" };
+println("Status: " + status); // "Child"
+\end{lstlisting}
+Both branches must evaluate to compatible expressions when assigned to a variable.
+\end{syntaxbox}
+
+\section{Loops: The Merry-Go-Round}
+
+\begin{kidbox}{Spinning on the Carousel}
+Have you ever ridden a carousel at the fair?
+You get on a painted wooden horse. The music plays, and the carousel spins around and around!
+You keep spinning \textbf{while} the music is playing!
+When the music stops, you step off the horse.
+And if you want to say hello to every friend in line, you can visit them one by one!
+\begin{lstlisting}[language=shaelang]
+// 1. While Loop (Music is playing!)
+let spins = 0;
+while spins < 3 {
+    println("Wheee! Spin number " + spins);
+    spins = spins + 1;
+}
+
+// 2. For .. in Loop (Visiting friends in line)
+let friends = ["Alice", "Bob", "Charlie"];
+for friend in friends {
+    println("Hello, " + friend + "!");
+}
+\end{lstlisting}
+\end{kidbox}
+
+\begin{deepbox}{Branch Prediction and Loop Compilation}
+At the assembly and bytecode level, loops are compiled into a conditional forward branch (\texttt{OpJumpIfFalse}) and an unconditional backwards jump (\texttt{OpLoop}):
+\begin{enumerate}
+    \item Condition evaluated onto stack.
+    \item \texttt{OpJumpIfFalse exit\_label}: Checks condition. If falsy, jumps past loop body.
+    \item Loop body statements executed.
+    \item \texttt{OpLoop start\_label}: Computes negative relative jump offset and rewinds the instruction pointer \texttt{ip}.
+\end{enumerate}
+CPUs optimize loops via the Branch Target Buffer (BTB). Because backwards jumps almost always evaluate as taken (until the final iteration), hardware branch predictors achieve $>98\%$ branch prediction accuracy.
+\end{deepbox}
+
+\section{Pattern Matching: The Ultimate Shape Sorter}
+
+\begin{kidbox}{The Magical Toy Sorter}
+Imagine a magical sorting machine with special slots.
+You drop a mystery box in. The machine checks:
+"Is it a number between 1 and 10? Is it a secret word? Is it a dinosaur with wings?"
+In Shae, \texttt{match} is the ultimate decision maker:
+\begin{lstlisting}[language=shaelang]
+let dice_roll = 6;
+
+match dice_roll {
+    1 => println("You rolled a 1! Try again!"),
+    2..=5 => println("Nice middle roll!"),
+    6 => println("Critical hit! Maximum score!"),
+    _ => println("Invalid dice!"),
+}
+\end{lstlisting}
+\end{kidbox}
+
+\begin{syntaxbox}{Match Guards and Range Patterns}
+Shae pattern matching supports value matching, wildcard fallbacks, range patterns, and boolean match guards:
+\begin{lstlisting}[language=shaelang]
+let temperature = 28;
+
+match temperature {
+    temp if temp < 0 => println("Freezing ice!"),
+    0..15 => println("Chilly autumn breeze"),
+    15..=25 => println("Perfect room temperature"),
+    temp if temp > 35 => println("Heatwave warning!"),
+    _ => println("Warm and pleasant"),
+}
+\end{lstlisting}
+\end{syntaxbox}
