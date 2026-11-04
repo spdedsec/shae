@@ -24,7 +24,7 @@ Welcome to **Shae**! Whether you are writing your very first program or building
 
 #### Option A: Single-Line Universal Installer (Linux & macOS)
 ```bash
-curl -fsSL https://shae-lang.org/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/spdedsec/shae/main/install.sh | bash
 ```
 
 #### Option B: From Source with Cargo (Any Platform)

@@ -85,9 +85,9 @@ Shae is designed to hit the sweet spot between safety, ergonomics, raw utility, 
 ### 1. Single-Line Universal Installer (macOS, Linux, Windows)
 Install the official pre-built standalone toolchain binary with a single command:
 ```bash
-curl -fsSL https://shae-lang.org/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/spdedsec/shae/main/install.sh | bash
 ```
-*(Or via GitHub: `curl -fsSL https://raw.githubusercontent.com/spdedsec/shae/main/install.sh | bash`)*
+*(Or via Vercel: `curl -fsSL https://shae-site.vercel.app/install.sh | bash`)*
 
 ### 2. Build and Install from Source
 Ensure you have Rust and Cargo installed:
@@ -380,7 +380,7 @@ shae pkg pack -o dist/my_library-0.1.0.shaepkg
 shae pkg verify dist/my_library-0.1.0.shaepkg <sha256>
 
 # Publish to package registry (supports local filesystem or remote API)
-shae pkg publish --registry https://pkg.shae-lang.org/api/v1 --token $SHAE_REGISTRY_TOKEN
+shae pkg publish --registry https://shae-site.vercel.app/api/v1 --token $SHAE_REGISTRY_TOKEN
 ```
 
 ### 12. Expanded Standard Library

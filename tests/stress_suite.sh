@@ -146,7 +146,7 @@ let token = sign_token("user:101:session", "super_secret_key")
 assert(verify_token(token, "super_secret_key"))
 assert(verify_token(token, "wrong_key") == false)
 
-let raw_url = "https://shae-lang.org/search?q=hello world & safe = 100%"
+let raw_url = "https://shae-site.vercel.app/search?q=hello world & safe = 100%"
 let enc_url = url_encode(raw_url)
 let dec_url = url_decode(enc_url)
 assert_eq(dec_url, raw_url)
