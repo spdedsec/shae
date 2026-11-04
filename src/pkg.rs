@@ -818,7 +818,7 @@ pub fn publish_package(
         .map(|s| s.to_string())
         .or_else(|| std::env::var("SHAE_REGISTRY_URL").ok())
         .or_else(|| manifest.package.registry)
-        .unwrap_or_else(|| "https://pkg.shae-lang.org/api/v1/publish".to_string());
+        .unwrap_or_else(|| "https://shae-site.vercel.app/api/v1/publish".to_string());
 
     let token = auth_token
         .map(|s| s.to_string())

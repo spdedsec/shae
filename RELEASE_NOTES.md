@@ -9,9 +9,9 @@ We are thrilled to announce **Shae v0.4.0**, our largest and most ambitious rele
 #### 1. 🚀 Universal Multi-Platform Distribution & Single-Line Installer
 - **Single-Line Universal Installer**: Install Shae instantly across Linux, macOS, and Windows with a single command:
   ```bash
-  curl -fsSL https://shae-lang.org/install.sh | bash
-  # Or via GitHub:
   curl -fsSL https://raw.githubusercontent.com/spdedsec/shae/main/install.sh | bash
+  # Or via Vercel:
+  curl -fsSL https://shae-site.vercel.app/install.sh | bash
   ```
 - **Automated Multi-Platform Release Matrix**:
   - **Linux x86_64**: glibc (`shae-v0.4.0-linux-x86_64.tar.gz`) & musl (`shae-v0.4.0-linux-x86_64-musl.tar.gz`)
@@ -70,7 +70,7 @@ We are thrilled to announce **Shae v0.4.0**, our largest and most ambitious rele
 
 #### Quick Install (macOS / Linux / Windows WSL / MSYS):
 ```bash
-curl -fsSL https://shae-lang.org/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/spdedsec/shae/main/install.sh | bash
 ```
 
 #### Build from Source:

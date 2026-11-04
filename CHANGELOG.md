@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Cryptographic SHA-256 checksum generation (`SHA256SUMS.txt`) for all release packages.
   - Official VS Code extension packaging (`shae-vscode-0.4.0.vsix`).
 - **Single-Line Universal Installer (`install.sh`)**:
-  - Universal one-line installation via `curl -fsSL https://shae-lang.org/install.sh | bash`.
+  - Universal one-line installation via `curl -fsSL https://raw.githubusercontent.com/spdedsec/shae/main/install.sh | bash` (or `https://shae-site.vercel.app/install.sh`).
   - Automatic OS detection (Linux glibc/musl, macOS Darwin, Windows MSYS/MINGW) and CPU architecture detection (`x86_64`, `arm64`/`aarch64`).
   - Automatic download and cryptographic checksum verification against `SHA256SUMS.txt`.
   - Safe archive extraction, executable permission configuration, and interactive PATH setup guidance.

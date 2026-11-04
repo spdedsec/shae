@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
 #  Shae Universal Installer
-#  Usage: curl -fsSL https://shae-lang.org/install.sh | bash
-#         curl -fsSL https://raw.githubusercontent.com/spdedsec/shae/main/install.sh | bash
+#  Usage: curl -fsSL https://raw.githubusercontent.com/spdedsec/shae/main/install.sh | bash
+#         curl -fsSL https://shae-site.vercel.app/install.sh | bash
 #
 #  Environment variables:
 #    SHAE_VERSION          Target version to install (e.g. v0.4.0; defaults to latest)
