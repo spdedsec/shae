@@ -1508,7 +1508,11 @@ impl Evaluator {
                             property.as_str(),
                             "trim"
                                 | "upper"
+                                | "to_upper"
+                                | "to_uppercase"
                                 | "lower"
+                                | "to_lower"
+                                | "to_lowercase"
                                 | "split"
                                 | "replace"
                                 | "starts_with"
@@ -2601,7 +2605,7 @@ impl Evaluator {
                         }
                         Ok(Value::String(s.trim().to_string()))
                     }
-                    (Value::String(s), "upper") => {
+                    (Value::String(s), "upper" | "to_upper" | "to_uppercase") => {
                         if !args.is_empty() {
                             self.depth -= 1;
                             return Err(
@@ -2610,7 +2614,7 @@ impl Evaluator {
                         }
                         Ok(Value::String(s.to_uppercase()))
                     }
-                    (Value::String(s), "lower") => {
+                    (Value::String(s), "lower" | "to_lower" | "to_lowercase") => {
                         if !args.is_empty() {
                             self.depth -= 1;
                             return Err(

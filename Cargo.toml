@@ -35,6 +35,8 @@ unicode-segmentation = "1.12"
 ctrlc = { version = "3.4", features = ["termination"] }
 flate2 = "1.1.10"
 tar = "0.4.46"
+minifb = "0.29"
+fastrand = "2.5"
 
 [dev-dependencies]
 rcgen = "0.13"

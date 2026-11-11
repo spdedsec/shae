@@ -1,0 +1,170 @@
+#!/usr/bin/env shae
+# ==============================================================================
+#  SHAE PARTICLES & FIREWORKS — Interactive 60 FPS Particle Physics Sandbox
+# ==============================================================================
+#  Move mouse or click to generate glowing particle fountains!
+#  Features: Gravity, restitution physics, speed vectors, alpha decay trails
+# ==============================================================================
+
+let gui = use "std:gui"
+let rand = use "std:random"
+let math = use "std:math"
+
+println("=================================================================")
+println(" 🎆 Launching SHAE PARTICLES & FIREWORKS SIMULATOR (60 FPS Native)")
+println(" Click or drag mouse to trigger explosive bursts | [ESC] to exit")
+println("=================================================================")
+
+let win = gui.window("Shae Particle Sandbox (60 FPS)", 800, 600)
+
+let px = []
+let py = []
+let vx = []
+let vy = []
+let life = []
+let max_life = []
+let colors = []
+
+let palette = [
+    "#f38ba8", # Coral Red
+    "#fab387", # Peach Orange
+    "#f9e2af", # Golden Yellow
+    "#a6e3a1", # Emerald Green
+    "#89dceb", # Cyan Glow
+    "#89b4fa", # Electric Blue
+    "#cba6f7", # Mauve Purple
+    "#f5c2e7"  # Flamingo Pink
+]
+
+fn spawn_particle(origin_x, origin_y, burst_speed, p_color) {
+    let angle = rand.float(0.0, 6.28318)
+    let spd = rand.float(1.0, burst_speed)
+    let l = rand.int(40, 100)
+
+    push(px, origin_x)
+    push(py, origin_y)
+    push(vx, math.cos(angle) * spd)
+    push(vy, math.sin(angle) * spd)
+    push(life, l)
+    push(max_life, l)
+    push(colors, p_color)
+}
+
+# Seed with an initial ambient fountain
+let initial_i = 0
+while initial_i < 80 {
+    spawn_particle(400, 300, 5.0, rand.choice(palette))
+    initial_i = initial_i + 1
+}
+
+let frame = 0
+
+while gui.is_open(win) {
+    frame = frame + 1
+
+    # 1. Interactive Mouse & Ambient Spawning
+    let mpos = gui.mouse_pos(win)
+    let is_click = gui.is_mouse_down(win, "left")
+
+    if is_click && mpos != null {
+        let mx = mpos[0]
+        let my = mpos[1]
+        let burst = 0
+        while burst < 8 {
+            spawn_particle(mx, my, 7.5, rand.choice(palette))
+            burst = burst + 1
+        }
+    } else if frame % 4 == 0 {
+        # Continuous gentle fountain from bottom center
+        let col = rand.choice(palette)
+        spawn_particle(400 + rand.int(-20, 20), 550, 6.0, col)
+    }
+
+    # 2. Physics & Particle Life Updates
+    let next_px = []
+    let next_py = []
+    let next_vx = []
+    let next_vy = []
+    let next_life = []
+    let next_max = []
+    let next_col = []
+
+    let i = 0
+    let total = len(px)
+    while i < total {
+        let cur_l = life[i] - 1
+        if cur_l > 0 {
+            let x = px[i] + vx[i]
+            let y = py[i] + vy[i]
+            let v_x = vx[i] * 0.99
+            let v_y = vy[i] + 0.18 # Gravity
+
+            # Floor Bounce with restitution
+            if y >= 580 {
+                y = 580
+                v_y = -v_y * 0.65
+                v_x = v_x * 0.85
+            }
+            # Wall Bounces
+            if x <= 10 {
+                x = 10
+                v_x = -v_x * 0.75
+            }
+            if x >= 790 {
+                x = 790
+                v_x = -v_x * 0.75
+            }
+
+            push(next_px, x)
+            push(next_py, y)
+            push(next_vx, v_x)
+            push(next_vy, v_y)
+            push(next_life, cur_l)
+            push(next_max, max_life[i])
+            push(next_col, colors[i])
+        }
+        i = i + 1
+    }
+
+    px = next_px
+    py = next_py
+    vx = next_vx
+    vy = next_vy
+    life = next_life
+    max_life = next_max
+    colors = next_col
+
+    # 3. Render Canvas
+    gui.clear(win, "#11111b")
+
+    # Draw bottom ground line
+    gui.line(win, 0, 582, 800, 582, "#313244")
+
+    # Draw active particles
+    let count = len(px)
+    let p = 0
+    while p < count {
+        let x = px[p]
+        let y = py[p]
+        let col = colors[p]
+
+        # Draw particle core
+        gui.circle(win, x, y, 3, col)
+        # Draw light vector trail
+        gui.line(win, x - vx[p] * 2.0, y - vy[p] * 2.0, x, y, col)
+        p = p + 1
+    }
+
+    # HUD Overlay
+    gui.rect(win, 0, 0, 800, 36, "#181825")
+    gui.line(win, 0, 36, 800, 36, "#313244")
+    gui.text(win, 16, 10, "SHAE PARTICLE PHYSICS", "#89b4fa", 2)
+    gui.text(win, 330, 10, "PARTICLES: " + str(count), "#a6e3a1", 2)
+    gui.text(win, 570, 12, "[Click & Drag] to spawn", "#cdd6f4", 1)
+
+    gui.render(win)
+    gui.limit_fps(win, 60)
+}
+
+gui.close(win)
+println("Particle sandbox session closed.")

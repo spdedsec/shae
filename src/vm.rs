@@ -1520,6 +1520,8 @@ impl VM {
                                     | "lower"
                                     | "toUpper"
                                     | "toLower"
+                                    | "to_upper"
+                                    | "to_lower"
                                     | "split"
                                     | "replace"
                                     | "starts_with"
