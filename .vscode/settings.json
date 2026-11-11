@@ -1,0 +1,21 @@
+{
+  "files.associations": {
+    "*.shae": "shae"
+  },
+  "code-runner.executorMap": {
+    "shae": "shae"
+  },
+  "code-runner.executorMapByGlob": {
+    "*.shae": "shae"
+  },
+  "code-runner.customCommand": "shae $fullFileName",
+  "code-runner.runInTerminal": true,
+  "code-runner.saveFileBeforeRun": true,
+  "code-runner.clearPreviousOutput": false,
+  "code-runner.preserveFocus": false,
+  "shae.lsp.path": "shae",
+  "[shae]": {
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true
+  }
+}

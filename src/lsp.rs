@@ -324,6 +324,11 @@ impl<R: Read, W: Write> LspServer<R, W> {
                 "println(val) - Print value with newline to stdout",
                 3,
             ),
+            (
+                "input",
+                "input([prompt]) - Prompt and read line from stdin",
+                3,
+            ),
             ("read", "read(path) - Read file contents as string", 3),
             (
                 "write",
@@ -533,6 +538,7 @@ impl<R: Read, W: Write> LspServer<R, W> {
         let doc = match word.as_str() {
             "print" => "**print(val)**\n\nPrints the value to stdout without a trailing newline.",
             "println" => "**println(val)**\n\nPrints the value to stdout with a trailing newline.",
+            "input" => "**input([prompt])**\n\nPrompts the user and reads a line from stdin as a string without trailing newline.",
             "serve" => {
                 "**serve(port, handler_or_router)**\n\nStarts a multi-threaded HTTP server with keep-alive connection pooling."
             }

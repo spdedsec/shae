@@ -43,6 +43,7 @@ pub struct VM {
     pub profiler: Option<crate::profiler::Profiler>,
     pub debug_session: Option<Arc<Mutex<crate::debugger::DebugSession>>>,
     pub jit_enabled: bool,
+    pub jit_threshold: usize,
     pub jit_engine: Option<Arc<Mutex<crate::jit::JitEngine>>>,
 }
 
@@ -83,6 +84,13 @@ impl VM {
                 func: |_ev, _args, _span| Ok(Value::String("enabled".to_string())),
             },
         );
+        globals.insert(
+            "input".to_string(),
+            Value::Builtin {
+                name: "input".to_string(),
+                func: crate::builtins::builtin_input,
+            },
+        );
         let jit_engine = crate::jit::JitEngine::new()
             .ok()
             .map(|e| Arc::new(Mutex::new(e)));
@@ -101,6 +109,7 @@ impl VM {
             profiler: None,
             debug_session: None,
             jit_enabled: true,
+            jit_threshold: crate::jit::JIT_THRESHOLD,
             jit_engine,
         }
     }
@@ -134,7 +143,7 @@ impl VM {
 
         let invocations = func.record_invocation();
         if func.get_jit_fn().is_none()
-            && invocations >= crate::jit::JIT_THRESHOLD
+            && invocations >= self.jit_threshold
             && crate::jit::JitEngine::can_compile(func)
         {
             if let Some(engine) = &self.jit_engine {
@@ -170,6 +179,8 @@ impl VM {
                         return Some(Ok(Value::Int(out_res)));
                     } else if status == 2 {
                         return Some(Err("Division by zero in native JIT execution".into()));
+                    } else if status == 4 {
+                        return Some(Err("Call stack overflow".into()));
                     }
                 }
             } else {
@@ -236,6 +247,8 @@ impl VM {
                         return Some(Ok(Value::Int(out_res)));
                     } else if status == 2 {
                         return Some(Err("Division by zero in native JIT execution".into()));
+                    } else if status == 4 {
+                        return Some(Err("Call stack overflow".into()));
                     }
                 }
             }
@@ -329,6 +342,15 @@ impl VM {
     }
 
     pub fn interpret(&mut self, chunk: Chunk) -> InterpretResult {
+        if self.jit_threshold == 0 && self.jit_enabled {
+            for c in &chunk.constants {
+                if let Value::CompiledFunction(f) = c {
+                    if f.get_jit_fn().is_none() && crate::jit::JitEngine::can_compile(f) {
+                        let _ = self.compile_function_jit(f);
+                    }
+                }
+            }
+        }
         if self.module_globals.is_none() {
             self.module_globals = Some(Arc::new(RwLock::new(HashMap::new())));
         }

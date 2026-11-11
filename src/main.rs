@@ -21,6 +21,9 @@ fn show_help() {
         "  shae run [file.shae]       Run a Shae script (or package entrypoint from shae.toml) (default: VM; use --engine=ast, --disasm)"
     );
     println!(
+        "  shae jit <file.shae>       Run a Shae script with immediate Cranelift JIT compilation (JIT_THRESHOLD = 0)"
+    );
+    println!(
         "  shae compile <file.shae>   Compile a Shae script to bytecode (.shaec) (options: -o, --disasm)"
     );
     println!("  shae disasm <file>         Disassemble a Shae script or .shaec to bytecode");
@@ -32,6 +35,7 @@ fn show_help() {
         "  shae bench [filter]        Run benchmark suite in benchmarks/*.shae (--filter <pat>, --ast, -i <N>)"
     );
     println!("  shae fmt <file.shae>       Format a Shae script");
+    println!("  shae clean                 Clean compiled bytecode (.shaec) artifacts");
     println!(
         "  shae doc [path]            Generate documentation site & reference (-o, --format html|md|json, --serve, --port, --host, --open)"
     );
@@ -240,6 +244,23 @@ fn run_file(filename: &str, use_vm: bool) {
     } else {
         shae::run_file(filename)
     };
+    if let Err(e) = res {
+        if is_bytecode {
+            eprintln!("{}", e);
+        } else {
+            let source = fs::read_to_string(filename).unwrap_or_default();
+            eprintln!("{}", shae::render_error(&e, &source));
+        }
+        process::exit(1);
+    }
+}
+
+fn run_file_jit(filename: &str) {
+    let is_bytecode = filename.ends_with(".shaec")
+        || fs::read(filename)
+            .map(|b| b.starts_with(shae::chunk::BYTECODE_MAGIC))
+            .unwrap_or(false);
+    let res = shae::run_file_jit(filename);
     if let Err(e) = res {
         if is_bytecode {
             eprintln!("{}", e);
@@ -734,6 +755,69 @@ fn main() {
                 );
                 process::exit(1);
             }
+        }
+        "jit" => {
+            if args.iter().skip(2).any(|a| a == "--help" || a == "-h") {
+                println!("Shae Cranelift JIT Engine\n");
+                println!("Usage:");
+                println!("  shae jit <file.shae> [--disasm] [--profile]\n");
+                println!("Forces Cranelift JIT compilation on all functions immediately (JIT_THRESHOLD = 0).");
+                return;
+            }
+            let disasm = args.iter().any(|a| a == "--disasm");
+            let profile = args.iter().any(|a| a == "--profile");
+            let file_target = args[2..].iter().find(|a| !a.starts_with('-'));
+            if let Some(f) = file_target {
+                if profile {
+                    let folded = args.iter().any(|a| a == "--folded");
+                    if let Err(e) = shae::profiler::profile_file(f, folded) {
+                        eprintln!("Profile error: {}", e);
+                        process::exit(1);
+                    }
+                    return;
+                }
+                if disasm {
+                    disasm_file(f);
+                }
+                run_file_jit(f);
+            } else if let Ok(manifest) = shae::pkg::PackageManifest::load_from_dir(Path::new(".")) {
+                let entry = Path::new(".").join(&manifest.package.entry);
+                if entry.exists() {
+                    let entry_str = entry.to_string_lossy().to_string();
+                    if profile {
+                        let folded = args.iter().any(|a| a == "--folded");
+                        if let Err(e) = shae::profiler::profile_file(&entry_str, folded) {
+                            eprintln!("Profile error: {}", e);
+                            process::exit(1);
+                        }
+                        return;
+                    }
+                    if disasm {
+                        disasm_file(&entry_str);
+                    }
+                    run_file_jit(&entry_str);
+                } else {
+                    eprintln!("Error: Package entry '{}' not found.", entry.display());
+                    process::exit(1);
+                }
+            } else {
+                eprintln!("Usage: shae jit <file.shae> [--disasm] [--profile]");
+                process::exit(1);
+            }
+        }
+        "clean" => {
+            let mut count = 0;
+            if let Ok(entries) = fs::read_dir(".") {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().map_or(false, |ext| ext == "shaec") {
+                        if fs::remove_file(&path).is_ok() {
+                            count += 1;
+                        }
+                    }
+                }
+            }
+            println!("✨ Cleaned {} bytecode artifact(s).", count);
         }
         "doc" => {
             let mut input_path = None;
@@ -1384,27 +1468,49 @@ fn main() {
                 }
             }
         }
-        filename => {
-            if filename.starts_with('-') {
+        other => {
+            if other.starts_with('-') {
                 if let Some(actual_file) = args[1..].iter().find(|a| !a.starts_with('-')) {
-                    let disasm = args.iter().any(|a| a == "--disasm");
-                    if disasm {
-                        disasm_file(actual_file);
+                    if actual_file.ends_with(".shae")
+                        || actual_file.ends_with(".shaec")
+                        || Path::new(actual_file).is_file()
+                    {
+                        let disasm = args.iter().any(|a| a == "--disasm");
+                        if disasm {
+                            disasm_file(actual_file);
+                        }
+                        let use_vm = should_use_vm(&args);
+                        run_file(actual_file, use_vm);
+                        return;
                     }
-                    let use_vm = should_use_vm(&args);
-                    run_file(actual_file, use_vm);
-                    return;
                 }
-                eprintln!("Unknown flag: {}", filename);
+                eprintln!("error: unknown flag '{}'", other);
                 show_help();
                 process::exit(1);
             }
-            let disasm = args.iter().any(|a| a == "--disasm");
-            if disasm {
-                disasm_file(filename);
+
+            if other.ends_with(".shae")
+                || other.ends_with(".shaec")
+                || Path::new(other).is_file()
+            {
+                let disasm = args.iter().any(|a| a == "--disasm");
+                if disasm {
+                    disasm_file(other);
+                }
+                let use_vm = should_use_vm(&args);
+                run_file(other, use_vm);
+            } else {
+                eprintln!("error: unknown subcommand '{}'", other);
+                eprintln!();
+                eprintln!("Available subcommands:");
+                eprintln!("  run, jit, repl, compile, check, disasm, fmt, bench, test, doc, clean,");
+                eprintln!("  new, init, add, install, pkg, bundle, link, wasm, llvm, lsp, dap, debug, profile, serve");
+                eprintln!();
+                eprintln!("Did you mean to run a script?");
+                eprintln!("  shae run <file>");
+                eprintln!("  shae <file.shae>");
+                process::exit(1);
             }
-            let use_vm = should_use_vm(&args);
-            run_file(filename, use_vm);
         }
     }
 }

@@ -1197,6 +1197,102 @@ impl Parser {
                     col: cur.col,
                 },
             })
+        } else if self.match_token(Token::StarEquals) {
+            let value = self.parse_expression()?;
+            self.end_statement()?;
+            if !matches!(
+                expr,
+                Expr::Variable { .. } | Expr::Get { .. } | Expr::Index { .. }
+            ) {
+                return Err(ParserError::UnexpectedToken {
+                    message: "Invalid assignment target.".into(),
+                    line: cur.line,
+                    col: cur.col,
+                });
+            }
+            let mul_expr = Expr::Binary {
+                left: Box::new(expr.clone()),
+                op: BinaryOp::Mul,
+                right: Box::new(value),
+                span: Span {
+                    line: cur.line,
+                    col: cur.col,
+                },
+            };
+            Ok(Stmt {
+                kind: StmtKind::Assign {
+                    target: expr,
+                    value: mul_expr,
+                },
+                span: Span {
+                    line: cur.line,
+                    col: cur.col,
+                },
+            })
+        } else if self.match_token(Token::SlashEquals) {
+            let value = self.parse_expression()?;
+            self.end_statement()?;
+            if !matches!(
+                expr,
+                Expr::Variable { .. } | Expr::Get { .. } | Expr::Index { .. }
+            ) {
+                return Err(ParserError::UnexpectedToken {
+                    message: "Invalid assignment target.".into(),
+                    line: cur.line,
+                    col: cur.col,
+                });
+            }
+            let div_expr = Expr::Binary {
+                left: Box::new(expr.clone()),
+                op: BinaryOp::Div,
+                right: Box::new(value),
+                span: Span {
+                    line: cur.line,
+                    col: cur.col,
+                },
+            };
+            Ok(Stmt {
+                kind: StmtKind::Assign {
+                    target: expr,
+                    value: div_expr,
+                },
+                span: Span {
+                    line: cur.line,
+                    col: cur.col,
+                },
+            })
+        } else if self.match_token(Token::PercentEquals) {
+            let value = self.parse_expression()?;
+            self.end_statement()?;
+            if !matches!(
+                expr,
+                Expr::Variable { .. } | Expr::Get { .. } | Expr::Index { .. }
+            ) {
+                return Err(ParserError::UnexpectedToken {
+                    message: "Invalid assignment target.".into(),
+                    line: cur.line,
+                    col: cur.col,
+                });
+            }
+            let mod_expr = Expr::Binary {
+                left: Box::new(expr.clone()),
+                op: BinaryOp::Mod,
+                right: Box::new(value),
+                span: Span {
+                    line: cur.line,
+                    col: cur.col,
+                },
+            };
+            Ok(Stmt {
+                kind: StmtKind::Assign {
+                    target: expr,
+                    value: mod_expr,
+                },
+                span: Span {
+                    line: cur.line,
+                    col: cur.col,
+                },
+            })
         } else {
             self.end_statement()?;
             Ok(Stmt {

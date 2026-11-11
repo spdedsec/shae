@@ -4635,10 +4635,15 @@ fn async_spawn(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value
     let func = args[0].clone();
     let call_args: Vec<Value> = args[1..].to_vec();
     let env = ev.global_env.clone();
-    let handle = std::thread::spawn(move || {
-        let mut spawn_eval = Evaluator::with_env(env);
-        spawn_eval.call_value(&func, call_args, span)
-    });
+    let handle = std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let mut spawn_eval = Evaluator::with_env(env);
+            spawn_eval.call_value(&func, call_args, span)
+        })
+        .map_err(|e| {
+            RuntimeError::new(format!("Failed to spawn async task thread: {}", e)).at(span)
+        })?;
     Ok(Value::Task(Arc::new(std::sync::Mutex::new(
         crate::value::TaskInner::new(handle),
     ))))

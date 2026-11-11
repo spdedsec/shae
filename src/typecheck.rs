@@ -48,6 +48,7 @@ impl TypeChecker {
             ("type", vec![any.clone()], string.clone()),
             ("str", vec![any.clone()], string.clone()),
             ("num", vec![any.clone()], float.clone()),
+            ("input", vec![], string.clone()),
             (
                 "range",
                 vec![int.clone(), int.clone()],
@@ -710,6 +711,22 @@ impl TypeChecker {
                         params,
                         return_type,
                     } => {
+                        if let Expr::Variable { name, .. } = &**callee {
+                            if name == "input" {
+                                if arg_types.len() > 1 {
+                                    self.diagnostics.push(Diagnostic {
+                                        severity: DiagnosticSeverity::Error,
+                                        message: format!(
+                                            "Function 'input' expects at most 1 argument, but got {}",
+                                            arg_types.len()
+                                        ),
+                                        hint: None,
+                                        span: *span,
+                                    });
+                                }
+                                return *return_type;
+                            }
+                        }
                         if params.len() != arg_types.len() {
                             self.diagnostics.push(Diagnostic {
                                 severity: DiagnosticSeverity::Error,

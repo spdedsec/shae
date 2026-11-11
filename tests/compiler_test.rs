@@ -1216,3 +1216,125 @@ fn test_bytecode_error_handling() {
     let res2 = shae::chunk::Chunk::from_bytes(truncated);
     assert!(res2.is_err());
 }
+
+#[test]
+fn test_m1_shebang_and_hash_comments() {
+    let script = r#"#!/usr/bin/env shae
+# Single line comment at top of file
+let a = 10 # trailing comment
+# Another comment line
+let b = 20
+# Final comment
+a + b
+"#;
+    let res_ast = shae::run(script).expect("AST evaluation of shebang script failed");
+    assert_eq!(res_ast, Value::Number(30.0));
+
+    let res_vm = shae::run_vm(script).expect("VM evaluation of shebang script failed");
+    assert_eq!(res_vm, Value::Int(30));
+}
+
+#[test]
+fn test_m1_unary_not_exclamation() {
+    let script = r#"
+let t = true
+let f = false
+let not_t = !t
+let not_f = !f
+let double_not = !!t
+let complex = !f && !(!t)
+[not_t, not_f, double_not, complex]
+"#;
+    let res_ast = shae::run(script).expect("AST evaluation of ! failed");
+    let res_vm = shae::run_vm(script).expect("VM evaluation of ! failed");
+    let expected = Value::Array(std::sync::Arc::new(std::sync::RwLock::new(vec![
+        Value::Bool(false),
+        Value::Bool(true),
+        Value::Bool(true),
+        Value::Bool(true),
+    ])));
+    assert_eq!(res_ast, expected);
+    assert_eq!(res_vm, expected);
+}
+
+#[test]
+fn test_m1_compound_assignments_math() {
+    let script = r#"
+let x = 10
+x *= 6
+x /= 4
+x %= 7
+x
+"#;
+    // 10 * 6 = 60; 60 / 4 = 15; 15 % 7 = 1
+    let res_ast = shae::run(script).expect("AST evaluation of compound assign failed");
+    assert_eq!(res_ast, Value::Number(1.0));
+
+    let res_vm = shae::run_vm(script).expect("VM evaluation of compound assign failed");
+    assert_eq!(res_vm, Value::Int(1));
+}
+
+#[test]
+fn test_m1_compound_assignments_struct_and_array() {
+    let script = r#"
+struct Counter {
+    val: Int
+}
+let c = Counter { val: 20 }
+c.val *= 3
+c.val /= 2
+
+let arr = [10, 20, 30]
+arr[1] *= 5
+arr[1] %= 17
+
+[c.val, arr[1]]
+"#;
+    // c.val: 20 * 3 = 60; 60 / 2 = 30
+    // arr[1]: 20 * 5 = 100; 100 % 17 = 15
+    let res_ast = shae::run(script).expect("AST evaluation failed");
+    assert_eq!(
+        res_ast,
+        Value::Array(std::sync::Arc::new(std::sync::RwLock::new(vec![
+            Value::Number(30.0),
+            Value::Number(15.0),
+        ])))
+    );
+
+    let res_vm = shae::run_vm(script).expect("VM evaluation failed");
+    assert_eq!(
+        res_vm,
+        Value::Array(std::sync::Arc::new(std::sync::RwLock::new(vec![
+            Value::Int(30),
+            Value::Int(15),
+        ])))
+    );
+}
+
+#[test]
+fn test_m1_compound_assignment_invalid_target_rejected() {
+    let script = r#"
+10 *= 5
+"#;
+    let res = shae::run(script);
+    assert!(res.is_err());
+    let err_msg = format!("{:?}", res.err().unwrap());
+    assert!(err_msg.contains("Invalid assignment target"));
+}
+
+#[test]
+fn test_m1_input_builtin_arity_error() {
+    let script = r#"
+input("prompt", "extra")
+"#;
+    let res = shae::run(script);
+    assert!(res.is_err());
+    let err_msg = format!("{:?}", res.err().unwrap());
+    assert!(err_msg.contains("'input' expects at most 1 argument"));
+}
+
+#[test]
+fn test_m1_input_registered_in_vm() {
+    let vm = VM::new();
+    assert!(vm.globals.contains_key("input"));
+}
