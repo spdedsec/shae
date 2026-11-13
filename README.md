@@ -13,11 +13,11 @@
 **A modern, strict, and ergonomic systems scripting language with Cranelift JIT compilation.**  
 *Zero ceremony, native machine code JIT, embedded SQLite, RFC 4180 CSV, coroutines, TLS/mTLS cluster mesh, pure-Shae test runner, live doc server, package registry, and standalone binary bundler.*
 
-[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.5.0-blue.svg)](Cargo.toml)
 [![Tests](https://img.shields.io/badge/tests-290%2B%20passing-brightgreen.svg)]()
 [![Rust](https://img.shields.io/badge/built%20with-Rust%202024-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![VS Code](https://img.shields.io/badge/VS%20Code-v0.4.0-purple.svg)](editors/vscode)
+[![VS Code](https://img.shields.io/badge/VS%20Code-v0.5.0-purple.svg)](editors/vscode)
 
 </div>
 
@@ -522,7 +522,7 @@ Shae provides an official VS Code extension located at [`editors/vscode`](editor
 - **Language Server Protocol Integration**: Real-time compiler diagnostics, completions, and formatting powered by `shae lsp`.
 - **Install**:
   ```bash
-  code --install-extension editors/vscode/shae-vscode-0.4.0.vsix
+  code --install-extension editors/vscode/shae-vscode-0.5.0.vsix
   ```
 
 ---
