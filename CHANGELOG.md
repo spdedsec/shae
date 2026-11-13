@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-11
+
+### Added
+- **Native 2D Game & Creative Graphics Engine (`std:gui`)**:
+  - Embedded software framebuffer supporting Wayland (`wayland-1`) and X11 (`DISPLAY=:0`) on Linux.
+  - Non-blocking real-time keyboard and mouse polling: `gui.is_key_down`, `gui.get_keys`, `gui.mouse_pos`, `gui.is_mouse_down`.
+  - Immediate-mode 2D drawing primitives: `gui.clear`, `gui.pixel`, `gui.rect`, `gui.rect_outline`, `gui.circle`, `gui.circle_outline`, `gui.line`, `gui.text`.
+  - Embedded zero-dependency 8x8 retro bitmap font table (`src/font_8x8.rs`) covering ASCII 32..126.
+  - Microsecond frame-pacing and FPS capping: `gui.limit_fps(win, 60)`, `gui.sleep(ms)`.
+  - Transparent virtual headless canvas fallback for automated CI runners and SSH sessions.
+- **Creative Standard Library Modules**:
+  - `std:random`: Fast seedable PRNG with `int`, `float`, `bool`, `choice`, `shuffle`, `seed`.
+  - `std:math`: Math library with `sqrt`, `abs`, `min`, `max`, `pow`, `floor`, `ceil`, `round`, `sin`, `cos`, `tan`, `atan2`, `clamp`, `PI`, `E`.
+  - `std:io`: Standard I/O streams with `print`, `println`, `input([prompt])`, `flush`.
+- **Runtime & Ergonomic Enhancements**:
+  - Direct script execution: `shae <file.shae>` without requiring `shae run`.
+  - Shebang line skipping (`#!`) and `#` single-line comments.
+  - Boolean negation operator `!` alias for `not`.
+  - Compound assignment operators `+=`, `-=`, `*=`, `/=`, `%=`.
+  - Builtin `input([prompt])` for reading user input from stdin.
+  - String method aliases `.to_upper()`, `.to_lower()`, `.to_uppercase()`, `.to_lowercase()`.
+  - Desktop integration: Freedesktop `.desktop` runner (`shae-runner.desktop`) and MIME type specification (`shae.xml`).
+  - LSP Server completions and rich hover documentation for all standard modules.
+- **Showcase Games & Simulations**:
+  - `examples/snake_gui.shae`: Full playable 60 FPS Snake game with scoring, apple spawning, and restart (`[R]`).
+  - `examples/particles_gui.shae`: 60 FPS interactive particle physics sandbox with gravity and mouse explosions.
+  - `examples/dungeon.shae`: Pure Shae procedural terminal dungeon crawler.
+
 ## [0.4.0] - 2026-10-26
 
 ### Added

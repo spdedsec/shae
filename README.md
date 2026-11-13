@@ -48,6 +48,9 @@ Looking for an end-to-end explanation of the entire language and runtime? Check 
 
 Shae is designed to hit the sweet spot between safety, ergonomics, raw utility, and high execution speed:
 
+- 🎮 **Native 2D Game & Creative Graphics Engine (`std:gui`)**: Embedded 60 FPS software framebuffer with Wayland/X11 support, instant retro 8x8 font rendering, geometric primitives (rectangles, circles, lines), and non-blocking keyboard/mouse input polling.
+- 🎲 **Creative & Math Standard Libraries (`std:random`, `std:math`, `std:io`)**: Fast seedable PRNG, full trigonometry & clamping, and synchronous I/O.
+- 📜 **Direct Script Execution & Shebang Support**: Run any script immediately with `shae script.shae` or `./script.shae` via `#!/usr/bin/env shae` with automatic desktop file-manager association.
 - 🚫 **Zero Ceremony & No Semicolons**: Clean, expressive syntax without unnecessary punctuation or parentheses around conditions.
 - ⚡ **Cranelift JIT SSA Backend**: Native machine code generation (x86_64, aarch64) for hot mathematical loops, recursive functions, `f64` float SSA math, and direct fast-path array indexing with safe deoptimization bailouts.
 - ⏳ **First-Class Coroutines (`async` / `await` & `std:async`)**: Cooperative asynchronous routines, non-blocking evaluation, and concurrent combinators (`async:all`, `async:race`, `async:sleep`).
@@ -427,12 +430,46 @@ env.load_dotenv(".env")
 println("Running on:", sys.platform(), sys.arch())
 ```
 
+### 13. Native 2D Game Development & GUI Engine (`std:gui`)
+Shae includes an embedded immediate-mode 2D graphics engine capable of rendering games at a locked 60 FPS across Linux Wayland and X11:
+
+```shae
+let gui = use "std:gui"
+let rand = use "std:random"
+
+let win = gui.window("Shae Canvas Demo", 640, 480)
+let x = 320
+let y = 240
+
+while gui.is_open(win) {
+    // 1. Non-blocking input polling
+    if gui.is_key_down(win, "Left")  { x = x - 5 }
+    if gui.is_key_down(win, "Right") { x = x + 5 }
+    if gui.is_key_down(win, "Up")    { y = y - 5 }
+    if gui.is_key_down(win, "Down")  { y = y + 5 }
+
+    // 2. Immediate-mode drawing
+    gui.clear(win, "#181825")
+    gui.rect_outline(win, 10, 10, 620, 460, "#45475a", 2)
+    gui.circle(win, x, y, 20, "#a6e3a1")
+    gui.text(win, 20, 20, "Move circle with Arrow Keys", "#cdd6f4", 2)
+
+    // 3. Frame presentation & 60 FPS lock
+    gui.render(win)
+    gui.limit_fps(win, 60)
+}
+gui.close(win)
+```
+
 ---
 
 ## 📂 Standalone Examples & Showcase
 
 Explore ready-to-run examples in the [`examples/`](examples) directory:
 
+- 🐍 [**Shae Retro Snake (60 FPS Native GUI)**](examples/snake_gui.shae): Full playable arcade Snake game with score tracking, apple spawning, collision physics, and instant restart (`[R]`).
+- 🎆 [**Particle Physics & Fireworks Sandbox**](examples/particles_gui.shae): 60 FPS interactive particle simulation with gravity, elastic wall/floor bounces, and mouse-click explosions.
+- 🗡️ [**Dungeon of Shae (Terminal RPG)**](examples/dungeon.shae): Pure Shae procedural dungeon crawler with combat, inventory, and ASCII maps.
 - 🎭 [**Actor Concurrency & Supervision Demo**](examples/actor_demo.shae): Stateful actors, request-reply `ask`, named registry, and `OneForOne` supervisor crash recovery.
 - 🌐 [**Distributed Actor Mesh Demo**](examples/actor_cluster_demo.shae): TCP clustering, cross-node discovery, remote actor `ask`, distributed worker pools, and bully leader election.
 - 🧪 [**Pure-Shae Test Runner Suite**](tests/shae/sample_suite_test.shae): Pure-Shae unit and integration tests using `std:test` assertion primitives.
@@ -455,6 +492,7 @@ Shae ships with an all-in-one developer toolchain:
 
 | Command | Description |
 |---|---|
+| `shae <file.shae>` / `./file.shae` | Directly execute a Shae script (supports shebang `#!/usr/bin/env shae` and desktop double-click) |
 | `shae run <file.shae\|file.shaec>` | Run a script or precompiled bytecode (defaults to Bytecode VM; use `--engine=ast` for AST) |
 | `shae compile <file.shae>` | Compile source script into ahead-of-time bytecode binary (`.shaec`) |
 | `shae disasm <file.shae\|file.shaec>` | Disassemble script or compiled bytecode into human-readable instructions and constant pool |

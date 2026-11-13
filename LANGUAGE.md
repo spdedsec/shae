@@ -273,6 +273,52 @@ Built-in benchmarking runner and reporting framework for performance profiling a
 * **`std:bench` Standard Module**:
   * `bench(name: String, [iterations: Int], callable: Function)`: Registers and runs a benchmark workload with warmup passes and precise latency measurements.
 
+### `std:gui` / `std:graphics` (Native 2D Canvas & 60 FPS Game Engine)
+The `std:gui` module provides an embedded immediate-mode 2D graphics canvas with native Wayland and X11 windowing, shape drawing, font blitting, input polling, and frame-rate capping.
+
+* **Windowing & Lifecycle**:
+  * `window(title: String, width: Int, height: Int) -> Int`: Spawns a native desktop window (returns window handle ID). In headless/test runners, transparently provides a virtual in-memory pixel canvas.
+  * `is_open(win: Int) -> Bool`: Returns true while the window remains open and the `Escape` key has not been pressed.
+  * `render(win: Int)`: Blits the software pixel buffer to the desktop display and updates mouse/keyboard states.
+  * `limit_fps(win: Int, [target_fps: Int])`: Microsecond frame limiter maintaining steady frame pacing (defaults to 60 FPS).
+  * `sleep(ms: Int)`: Pauses execution for `ms` milliseconds.
+  * `close(win: Int)`: Closes and releases window resources.
+* **Drawing Primitives**:
+  * `clear(win: Int, [color: String | Int])`: Fills entire window canvas with solid color.
+  * `pixel(win: Int, x: Int, y: Int, color: String | Int)`: Sets individual pixel color.
+  * `rect(win: Int, x: Int, y: Int, w: Int, h: Int, color: String | Int)`: Renders filled rectangle.
+  * `rect_outline(win: Int, x: Int, y: Int, w: Int, h: Int, color: String | Int, [thickness: Int])`: Draws rectangle perimeter.
+  * `circle(win: Int, cx: Int, cy: Int, r: Int, color: String | Int)`: Renders filled circle.
+  * `circle_outline(win: Int, cx: Int, cy: Int, r: Int, color: String | Int)`: Draws circle outline using Midpoint Circle algorithm.
+  * `line(win: Int, x0: Int, y0: Int, x1: Int, y1: Int, color: String | Int)`: Draws line using Bresenham's algorithm.
+  * `text(win: Int, x: Int, y: Int, text: String, color: String | Int, [scale: Int])`: Draws bitmap text using embedded zero-asset 8x8 font table.
+* **Input Polling**:
+  * `is_key_down(win: Int, key_name: String) -> Bool`: Checks whether specific key is pressed (`"Up"`, `"Down"`, `"Left"`, `"Right"`, `"W"`, `"A"`, `"S"`, `"D"`, `"Space"`, `"Enter"`, `"Escape"`, `"R"`, etc.).
+  * `get_keys(win: Int) -> Array<String>`: Returns array of names of all currently held keys.
+  * `mouse_pos(win: Int) -> Array<Int> | Null`: Returns `[x, y]` mouse cursor coordinates inside window, or null if cursor is outside.
+  * `is_mouse_down(win: Int, button: String) -> Bool`: Checks mouse button state (`"left"`, `"middle"`, `"right"`).
+
+### `std:random` (Fast Seedable PRNG)
+Fast pseudo-random number generation for games, physics simulations, and generative algorithms:
+* `int([max: Int] | [min: Int, max: Int]) -> Int`: Generates integer in range (defaults to full positive range).
+* `float([min: Float, max: Float]) -> Float`: Generates floating-point value in range `[min, max)` (defaults to `[0.0, 1.0)`).
+* `bool([probability: Float]) -> Bool`: Returns boolean with optional truth probability (defaults to `0.5`).
+* `choice(arr: Array) -> Value`: Picks random element from array (or null if empty).
+* `shuffle(arr: Array) -> Array`: Returns shallow copy of array with elements randomly shuffled.
+* `seed(n: Int)`: Seeds PRNG generator deterministically.
+
+### `std:math` (Math Functions & Constants)
+* `sqrt(x) -> Float`, `abs(x) -> Num`, `min(a, b) -> Num`, `max(a, b) -> Num`, `pow(base, exp) -> Num`
+* `floor(x) -> Int`, `ceil(x) -> Int`, `round(x) -> Int`, `clamp(val, min, max) -> Num`
+* `sin(rad) -> Float`, `cos(rad) -> Float`, `tan(rad) -> Float`, `atan2(y, x) -> Float`
+* Constants: `PI` (3.141592653589793), `E` (2.718281828459045)
+
+### `std:io` (Standard I/O Streams)
+* `print(...args)`: Prints arguments without trailing newline.
+* `println(...args)`: Prints arguments with trailing newline.
+* `input([prompt: String]) -> String`: Prompts user and reads line from standard input.
+* `flush()`: Flushes standard output buffer.
+
 ---
 
 ## 9. Modules & Project System

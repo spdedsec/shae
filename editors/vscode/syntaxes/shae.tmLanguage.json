@@ -36,6 +36,10 @@
     "comments": {
       "patterns": [
         {
+          "name": "comment.line.number-sign.shae",
+          "match": "#.*$"
+        },
+        {
           "name": "comment.line.double-slash.shae",
           "match": "//.*$"
         },
@@ -171,7 +175,7 @@
         },
         {
           "name": "keyword.operator.assignment.shae",
-          "match": "="
+          "match": "\\+=|-=|\\*=|/=|%=|="
         },
         {
           "name": "keyword.operator.navigation.shae",

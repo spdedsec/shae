@@ -442,6 +442,46 @@ impl<R: Read, W: Write> LspServer<R, W> {
                 "std:sqlite",
                 "Embedded SQLite database engine (open, execute, query, close)",
             ),
+            (
+                "std:gui",
+                "Native 2D windowing, shape drawing (rect, circle, line), font rendering, input polling, and 60 FPS control",
+            ),
+            (
+                "std:random",
+                "Fast seedable pseudo-random number generator (int, float, bool, choice, shuffle, seed)",
+            ),
+            (
+                "std:math",
+                "Mathematical functions and constants (sqrt, abs, min, max, pow, sin, cos, tan, atan2, clamp, PI, E)",
+            ),
+            (
+                "std:io",
+                "Standard I/O stream operations (print, println, input, flush)",
+            ),
+            (
+                "std:actor",
+                "Isolated actors with FIFO mailboxes, request-response (ask), and fault-tolerant supervision trees",
+            ),
+            (
+                "std:actor:cluster",
+                "Distributed actor clustering with TLS / mutual-TLS encrypted transport",
+            ),
+            (
+                "std:async",
+                "Asynchronous concurrency combinators and coroutines (spawn, all, race, sleep, timeout)",
+            ),
+            (
+                "std:unicode",
+                "UAX #29 Unicode grapheme clustering and rune handling (graphemes, grapheme_len, slice_graphemes)",
+            ),
+            (
+                "std:test",
+                "Pure-Shae assertion and test runner framework (test, assert, assert_eq, assert_ne, assert_throws)",
+            ),
+            (
+                "std:buffer",
+                "Zero-copy typed binary buffers and struct memory packing (alloc, pack, unpack, slice)",
+            ),
         ];
         for (mod_name, doc) in std_modules {
             items.push(json!({
@@ -601,6 +641,36 @@ impl<R: Read, W: Write> LspServer<R, W> {
             }
             "std:sqlite" => {
                 "**std:sqlite**\n\nSQLite database bindings for fast, embedded relational storage and querying (open, execute, query, close)."
+            }
+            "std:gui" | "std:graphics" => {
+                "**std:gui**\n\nNative 2D immediate-mode canvas & windowing engine.\n\nFunctions:\n- `window(title, width, height) -> win_id`\n- `is_open(win_id) -> bool`\n- `clear(win_id, [color])`\n- `rect(win_id, x, y, w, h, color)`\n- `rect_outline(win_id, x, y, w, h, color, [thick])`\n- `circle(win_id, cx, cy, r, color)`\n- `circle_outline(win_id, cx, cy, r, color)`\n- `line(win_id, x0, y0, x1, y1, color)`\n- `text(win_id, x, y, text, color, [scale])`\n- `is_key_down(win_id, key_name) -> bool`\n- `get_keys(win_id) -> array`\n- `mouse_pos(win_id) -> [x, y] | null`\n- `is_mouse_down(win_id, btn) -> bool`\n- `limit_fps(win_id, [target_fps])`\n- `render(win_id)`\n- `close(win_id)`"
+            }
+            "std:random" | "std:rand" => {
+                "**std:random**\n\nFast seedable pseudo-random number generator.\n\nFunctions:\n- `int([max] | [min, max]) -> int`\n- `float([min, max]) -> float`\n- `bool([prob]) -> bool`\n- `choice(array) -> value`\n- `shuffle(array) -> array`\n- `seed(int_seed)`"
+            }
+            "std:math" => {
+                "**std:math**\n\nMathematical functions and constants.\n\nFunctions:\n- `sqrt(n)`, `abs(n)`, `min(a, b)`, `max(a, b)`, `pow(base, exp)`\n- `floor(n)`, `ceil(n)`, `round(n)`, `clamp(val, min, max)`\n- Trigonometry: `sin(rad)`, `cos(rad)`, `tan(rad)`, `atan2(y, x)`\n\nConstants:\n- `PI` (3.14159...)\n- `E` (2.71828...)"
+            }
+            "std:io" => {
+                "**std:io**\n\nStandard I/O stream utilities.\n\nFunctions:\n- `print(...args)`\n- `println(...args)`\n- `input([prompt]) -> string`\n- `flush()`"
+            }
+            "std:actor" => {
+                "**std:actor**\n\nActor-based concurrency & fault-tolerant supervision.\n\nFunctions:\n- `spawn(handler)`, `spawn(initial_state, handler)`, `spawn_named(name, ...)`\n- `send(pid, msg)`, `ask(pid, msg, [timeout_ms])`\n- `register(name, pid)`, `whereis(name)`, `supervisor(config)`"
+            }
+            "std:actor:cluster" => {
+                "**std:actor:cluster**\n\nDistributed actor mesh clustering with TLS & mutual-TLS encrypted transport."
+            }
+            "std:async" => {
+                "**std:async**\n\nAsynchronous concurrency combinators and coroutines.\n\nFunctions:\n- `spawn(fn, ...args)`\n- `all(tasks) -> array`\n- `race(tasks) -> first_result`\n- `sleep(ms)`\n- `timeout(ms, task)`"
+            }
+            "std:unicode" => {
+                "**std:unicode**\n\nUAX #29 Unicode grapheme clustering and rune safety.\n\nFunctions:\n- `graphemes(str) -> array`\n- `grapheme_len(str) -> int`\n- `slice_graphemes(str, start, end) -> str`\n- `runes(str) -> array`"
+            }
+            "std:test" => {
+                "**std:test**\n\nPure-Shae assertion and testing framework.\n\nFunctions:\n- `test(name, fn)`\n- `assert(cond, [msg])`\n- `assert_eq(a, b, [msg])`\n- `assert_ne(a, b, [msg])`\n- `assert_throws(fn, [msg])`"
+            }
+            "std:buffer" => {
+                "**std:buffer**\n\nZero-copy typed binary memory buffers and struct packing.\n\nFunctions:\n- `alloc(size)`, `from(bytes)`, `from_hex(str)`, `from_utf8(str)`\n- `calcsize(format)`, `pack(format, ...values)`, `unpack(format, buffer)`"
             }
             "fn" => "**fn keyword**\n\nDeclares a named function or lambda.",
             "let" => "**let keyword**\n\nBinds variables with optional destructuring.",
