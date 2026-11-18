@@ -71,6 +71,8 @@ fn show_help() {
     println!("  shae dap                   Start Debug Adapter Protocol (DAP) server");
     println!("  shae debug <file.shae>     Start interactive step debugger");
     println!("  shae profile <file.shae>   Profile CPU execution time and opcodes (--folded)");
+    println!("  shae ide [dir]             Start interactive Shae Studio Web IDE (--port, --host, --no-open)");
+    println!("  shae studio [dir]          Start interactive Shae Studio Web IDE (--port, --host, --no-open)");
     println!("  shae serve [dir]           Start instant static HTTP dev server (--port, --host)");
     println!("  shae --joke                Print a programming joke");
     println!("  shae --tip                 Print a Shae tip");
@@ -468,6 +470,50 @@ fn main() {
         "repl" => {
             let use_vm = should_use_vm(&args);
             run_repl(use_vm);
+        }
+        "ide" | "studio" => {
+            let mut port: u16 = 8080;
+            let mut host = "127.0.0.1".to_string();
+            let mut path = ".".to_string();
+            let mut open = true;
+
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--port" | "-p" => {
+                        if i + 1 < args.len() {
+                            port = args[i + 1].parse().unwrap_or(8080);
+                            i += 2;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    "--host" => {
+                        if i + 1 < args.len() {
+                            host = args[i + 1].clone();
+                            i += 2;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    "--no-open" => {
+                        open = false;
+                        i += 1;
+                    }
+                    arg if !arg.starts_with('-') => {
+                        path = arg.to_string();
+                        i += 1;
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+
+            if let Err(e) = shae::ide::start_ide_server(Path::new(&path), &host, port, open) {
+                eprintln!("Error starting Shae Studio: {}", e);
+                process::exit(1);
+            }
         }
         "serve" => {
             run_serve_command(&args[2..]);

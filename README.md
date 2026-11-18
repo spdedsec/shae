@@ -48,7 +48,10 @@ Looking for an end-to-end explanation of the entire language and runtime? Check 
 
 Shae is designed to hit the sweet spot between safety, ergonomics, raw utility, and high execution speed:
 
-- 🎮 **Native 2D Game & Creative Graphics Engine (`std:gui`)**: Embedded 60 FPS software framebuffer with Wayland/X11 support, instant retro 8x8 font rendering, geometric primitives (rectangles, circles, lines), and non-blocking keyboard/mouse input polling.
+- 🎮 **Native 2D Game & Creative Graphics Engine (`std:gui`)**: Embedded 60 FPS software framebuffer with Wayland/X11 support, instant retro 8x8 font rendering, PNG/BMP image loading, alpha-channel sprite blitting, geometric primitives (rectangles, circles, lines), and non-blocking keyboard/mouse input polling.
+- 🎹 **Hardware Audio Synthesizer & Sound FX Engine (`std:audio`)**: Real-time waveform generation (`audio.beep`, `audio.tone`), asynchronous WAV/FLAC audio playback, and background music looping.
+- 🎛️ **Immediate-Mode Desktop UI Toolkit (`std:ui`)**: Interactive GUI widgets (`ui.button`, `ui.slider`, `ui.checkbox`, `ui.progress_bar`, `ui.panel`) for game menus and desktop utilities.
+- 🖥️ **Shae Studio Web IDE (`shae ide`)**: Embedded browser-based development environment with interactive code editor, real-time code execution, file explorer, code formatting, linter checks, interactive REPL console, and live API documentation.
 - 🎲 **Creative & Math Standard Libraries (`std:random`, `std:math`, `std:io`)**: Fast seedable PRNG, full trigonometry & clamping, and synchronous I/O.
 - 📜 **Direct Script Execution & Shebang Support**: Run any script immediately with `shae script.shae` or `./script.shae` via `#!/usr/bin/env shae` with automatic desktop file-manager association.
 - 🚫 **Zero Ceremony & No Semicolons**: Clean, expressive syntax without unnecessary punctuation or parentheses around conditions.
@@ -468,6 +471,8 @@ gui.close(win)
 Explore ready-to-run examples in the [`examples/`](examples) directory:
 
 - 🐍 [**Shae Retro Snake (60 FPS Native GUI)**](examples/snake_gui.shae): Full playable arcade Snake game with score tracking, apple spawning, collision physics, and instant restart (`[R]`).
+- 🎹 [**Interactive Audio Synthesizer & Piano**](examples/sound_synth.shae): 8-key piano keyboard with waveform selection (sine, square, triangle, saw), volume slider, and real-time audio playback (`std:audio`).
+- 🧮 [**Desktop Graphical Calculator**](examples/calculator_gui.shae): Clean desktop calculator with interactive UI buttons, arithmetic operations, and clear functionality built with `std:ui`.
 - 🎆 [**Particle Physics & Fireworks Sandbox**](examples/particles_gui.shae): 60 FPS interactive particle simulation with gravity, elastic wall/floor bounces, and mouse-click explosions.
 - 🗡️ [**Dungeon of Shae (Terminal RPG)**](examples/dungeon.shae): Pure Shae procedural dungeon crawler with combat, inventory, and ASCII maps.
 - 🎭 [**Actor Concurrency & Supervision Demo**](examples/actor_demo.shae): Stateful actors, request-reply `ask`, named registry, and `OneForOne` supervisor crash recovery.
@@ -511,6 +516,7 @@ Shae ships with an all-in-one developer toolchain:
 | `shae link <file.shae> [-o <bin>]` | Link script into a standalone 64-bit ELF or PE native executable |
 | `shae wasm <file.shae> [-o <out.wasm>] [--run]` | Compile script into WebAssembly binary bytecode (.wasm) and optionally execute via built-in runner |
 | `shae lsp` | Run the Language Server Protocol daemon for editor integration |
+| `shae ide [dir] [--port <p>] [--host <h>] [--no-open]` | Start interactive Shae Studio Web IDE in your browser with live code runner, REPL, and file explorer |
 | `shae repl` | Start interactive REPL (defaults to Bytecode VM; use `--engine=ast` for AST) |
 
 ---

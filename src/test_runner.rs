@@ -135,6 +135,32 @@ pub fn capture_print(text: &str) {
     }
 }
 
+pub fn start_stdout_capture() {
+    let tid = std::thread::current().id();
+    let mut lock = SESSIONS.lock().unwrap();
+    lock.insert(
+        tid,
+        ActiveTestSession {
+            filter: None,
+            nocapture: false,
+            is_running_test: true,
+            current_file: None,
+            current_captured_stdout: String::new(),
+            cases: Vec::new(),
+        },
+    );
+}
+
+pub fn stop_stdout_capture() -> String {
+    let tid = std::thread::current().id();
+    let mut lock = SESSIONS.lock().unwrap();
+    if let Some(session) = lock.remove(&tid) {
+        session.current_captured_stdout
+    } else {
+        String::new()
+    }
+}
+
 /// Discovers test files in the workspace or the given path.
 pub fn discover_test_files(target: Option<&str>) -> Result<Vec<PathBuf>, String> {
     if let Some(path_str) = target {

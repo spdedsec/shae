@@ -37,6 +37,8 @@ flate2 = "1.1.10"
 tar = "0.4.46"
 minifb = "0.29"
 fastrand = "2.5"
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "jpeg"] }
+rodio = { version = "0.20", default-features = false, features = ["wav", "vorbis", "flac"] }
 
 [dev-dependencies]
 rcgen = "0.13"

@@ -444,7 +444,15 @@ impl<R: Read, W: Write> LspServer<R, W> {
             ),
             (
                 "std:gui",
-                "Native 2D windowing, shape drawing (rect, circle, line), font rendering, input polling, and 60 FPS control",
+                "Native 2D windowing, shape drawing (rect, circle, line), font rendering, image & sprite blitting, input polling, and 60 FPS control",
+            ),
+            (
+                "std:ui",
+                "Immediate-mode desktop UI toolkit (button, slider, checkbox, panel, label, progress_bar)",
+            ),
+            (
+                "std:audio",
+                "Cross-platform audio output & synthesis engine (beep, tone, play, loop, stop, set_volume, is_playing)",
             ),
             (
                 "std:random",
@@ -643,7 +651,13 @@ impl<R: Read, W: Write> LspServer<R, W> {
                 "**std:sqlite**\n\nSQLite database bindings for fast, embedded relational storage and querying (open, execute, query, close)."
             }
             "std:gui" | "std:graphics" => {
-                "**std:gui**\n\nNative 2D immediate-mode canvas & windowing engine.\n\nFunctions:\n- `window(title, width, height) -> win_id`\n- `is_open(win_id) -> bool`\n- `clear(win_id, [color])`\n- `rect(win_id, x, y, w, h, color)`\n- `rect_outline(win_id, x, y, w, h, color, [thick])`\n- `circle(win_id, cx, cy, r, color)`\n- `circle_outline(win_id, cx, cy, r, color)`\n- `line(win_id, x0, y0, x1, y1, color)`\n- `text(win_id, x, y, text, color, [scale])`\n- `is_key_down(win_id, key_name) -> bool`\n- `get_keys(win_id) -> array`\n- `mouse_pos(win_id) -> [x, y] | null`\n- `is_mouse_down(win_id, btn) -> bool`\n- `limit_fps(win_id, [target_fps])`\n- `render(win_id)`\n- `close(win_id)`"
+                "**std:gui**\n\nNative 2D immediate-mode canvas & windowing engine.\n\nFunctions:\n- `window(title, width, height) -> win_id`\n- `is_open(win_id) -> bool`\n- `clear(win_id, [color])`\n- `rect(win_id, x, y, w, h, color)`\n- `rect_outline(win_id, x, y, w, h, color, [thick])`\n- `circle(win_id, cx, cy, r, color)`\n- `circle_outline(win_id, cx, cy, r, color)`\n- `line(win_id, x0, y0, x1, y1, color)`\n- `text(win_id, x, y, text, color, [scale])`\n- `load_image(path) -> map`\n- `create_image(w, h, [fill_color]) -> map`\n- `draw_image(win_id, img, x, y)`\n- `draw_image_scaled(win_id, img, x, y, tw, th)`\n- `draw_sprite(win_id, img, sx, sy, sw, sh, dx, dy, dw, dh)`\n- `image_size(img) -> [w, h]`\n- `is_key_down(win_id, key_name) -> bool`\n- `get_keys(win_id) -> array`\n- `mouse_pos(win_id) -> [x, y] | null`\n- `is_mouse_down(win_id, btn) -> bool`\n- `limit_fps(win_id, [target_fps])`\n- `render(win_id)`\n- `close(win_id)`"
+            }
+            "std:ui" => {
+                "**std:ui**\n\nImmediate-mode graphical user interface toolkit.\n\nFunctions:\n- `button(win, text, [x, y, w, h, bg_color, text_color]) -> bool`\n- `slider(win, label, x, y, w, min, max, current) -> float`\n- `checkbox(win, label, x, y, [checked]) -> bool`\n- `panel(win, title, x, y, w, h, [bg_color], [border_color])`\n- `label(win, text, x, y, [color], [scale])`\n- `progress_bar(win, x, y, w, h, progress, [fill_color], [bg_color])`"
+            }
+            "std:audio" | "std:sound" => {
+                "**std:audio**\n\nCross-platform hardware audio playback and synthesis engine.\n\nFunctions:\n- `beep([freq_hz], [duration_ms]) -> sound_id`\n- `tone(freq_hz, [waveform], [duration_ms], [volume]) -> sound_id`\n- `play(file_path) -> sound_id`\n- `loop(file_path) -> sound_id`\n- `stop()`\n- `stop_sound(sound_id) -> bool`\n- `set_volume(0.0..1.0)`\n- `get_volume() -> float`\n- `is_playing() -> bool`\n- `is_available() -> bool`"
             }
             "std:random" | "std:rand" => {
                 "**std:random**\n\nFast seedable pseudo-random number generator.\n\nFunctions:\n- `int([max] | [min, max]) -> int`\n- `float([min, max]) -> float`\n- `bool([prob]) -> bool`\n- `choice(array) -> value`\n- `shuffle(array) -> array`\n- `seed(int_seed)`"

@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-11-18
+
+### Added
+- **Shae Studio Web IDE (`shae ide` / `shae studio`)**:
+  - Embedded zero-dependency browser-based development environment served directly by Shae.
+  - Interactive dark-theme code editor with line numbers, tab indentation, and keyboard shortcuts (`Ctrl+S` to save, `Ctrl+Enter` to run).
+  - Workspace File Explorer with live file reading, writing, and new file creation.
+  - Real-time code execution engine (`/api/run`) with thread-local stdout/stderr capture and sub-millisecond execution timing.
+  - Built-in AST code formatter (`/api/fmt`) and static linter diagnostics (`/api/check`).
+  - Interactive REPL console in the lower pane (`/api/repl`).
+  - Searchable Standard Library API Reference browser.
+  - One-click template loader: Snake Game, Particle Sandbox, Audio Synthesizer, Calculator, Actor Service.
+- **Hardware Audio Playback & Sound Synthesis (`std:audio`)**:
+  - Real-time sound synthesis: `audio.beep(freq, duration_ms)` and `audio.tone(freq, waveform, duration_ms, volume)` supporting sine, square, triangle, and sawtooth waves with ADSR anti-click envelopes.
+  - Asynchronous background audio playback: `audio.play(path)` and looping background game music `audio.loop(path)` (WAV, FLAC, Vorbis/OGG).
+  - Audio lifecycle controls: `audio.stop()`, `audio.stop_sound(id)`, `audio.set_volume(0.0..1.0)`, `audio.get_volume()`, `audio.is_playing()`.
+  - Graceful virtual fallback for headless servers and CI environments.
+- **Immediate-Mode Desktop UI Toolkit (`std:ui`)**:
+  - `ui.button`: Interactive buttons with hover, active/pressed, and click detection.
+  - `ui.slider`: Draggable horizontal value sliders with real-time feedback.
+  - `ui.checkbox`: Clickable toggle boxes with labels.
+  - `ui.panel`: Structured container frames with title bars and styling.
+  - `ui.label`: Scaled text labels.
+  - `ui.progress_bar`: Progress bars with custom fill and background colors.
+- **Image & Sprite Texture Engine (`std:gui`)**:
+  - `gui.load_image(path)`: Decodes PNG, BMP, and JPEG images into 32-bit ARGB buffers.
+  - `gui.create_image(w, h, [color])`: Procedural in-memory image creation.
+  - `gui.draw_image(win, img, x, y)`: Blits images with alpha-channel transparency.
+  - `gui.draw_image_scaled(win, img, x, y, tw, th)`: Scaled blitting.
+  - `gui.draw_sprite(win, img, sx, sy, sw, sh, dx, dy, dw, dh)`: Sprite sheet cutting and scaled rendering.
+  - `gui.image_size(img)`, `gui.get_image_pixel(img, x, y)`, `gui.set_image_pixel(img, x, y, color)`.
+- **New Playable Examples**:
+  - `examples/sound_synth.shae`: Full interactive 8-key piano synthesizer with waveform controls and volume slider.
+  - `examples/calculator_gui.shae`: Desktop graphical calculator built with `std:ui`.
+
 ## [0.5.0] - 2026-11-11
 
 ### Added

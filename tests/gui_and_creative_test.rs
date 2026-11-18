@@ -95,3 +95,95 @@ fn test_std_gui_module_headless_primitives() {
     let res = run(code);
     assert!(res.is_ok(), "gui test failed: {:?}", res.err());
 }
+
+#[test]
+fn test_std_audio_module() {
+    let code = r#"
+        let audio = use "std:audio"
+        
+        let beep_id = audio.beep(440, 50)
+        assert(beep_id > 0)
+        
+        let tone_id = audio.tone(523.25, "sine", 50, 0.5)
+        assert(tone_id > 0)
+        
+        let sq_id = audio.tone(300, "square", 50, 0.3)
+        assert(sq_id > 0)
+        
+        audio.set_volume(0.8)
+        let vol = audio.get_volume()
+        assert(vol >= 0.79 and vol <= 0.81)
+        
+        let stopped = audio.stop_sound(beep_id)
+        assert(stopped == true or stopped == false)
+        
+        audio.stop()
+        let avail = audio.is_available()
+        assert(avail == true or avail == false)
+    "#;
+    let res = run(code);
+    assert!(res.is_ok(), "audio test failed: {:?}", res.err());
+}
+
+#[test]
+fn test_std_ui_module() {
+    let code = r#"
+        let gui = use "std:gui"
+        let ui = use "std:ui"
+        
+        let win = gui.window("UI Test Window", 400, 300)
+        assert(win > 0)
+        
+        // Render UI widgets
+        let clicked = ui.button(win, "Submit", 20, 20, 100, 30)
+        assert(clicked == false)
+        
+        let slider_val = ui.slider(win, "Volume", 20, 60, 200, 0.0, 100.0, 50.0)
+        assert(slider_val >= 49.0 and slider_val <= 51.0)
+        
+        let checked = ui.checkbox(win, "Mute", 20, 100, false)
+        assert(checked == false)
+        
+        ui.panel(win, "Settings", 10, 140, 300, 100)
+        ui.label(win, "Label Test", 20, 170)
+        ui.progress_bar(win, 20, 200, 200, 15, 0.75)
+        
+        gui.render(win)
+        gui.close(win)
+    "#;
+    let res = run(code);
+    assert!(res.is_ok(), "ui test failed: {:?}", res.err());
+}
+
+#[test]
+fn test_gui_image_and_sprite() {
+    let code = r#"
+        let gui = use "std:gui"
+        
+        let win = gui.window("Image Test Window", 320, 240)
+        assert(win > 0)
+        
+        // Create procedural image
+        let img = gui.create_image(16, 16, 0x00FF0000)
+        assert(img.id > 0)
+        assert_eq(img.width, 16)
+        assert_eq(img.height, 16)
+        
+        gui.set_image_pixel(img, 5, 5, 0xFF00FF00)
+        let p = gui.get_image_pixel(img, 5, 5)
+        assert_eq(p, 0xFF00FF00)
+        
+        let dims = gui.image_size(img)
+        assert_eq(dims[0], 16)
+        assert_eq(dims[1], 16)
+        
+        gui.draw_image(win, img, 10, 10)
+        gui.draw_image_scaled(win, img, 50, 50, 32, 32)
+        gui.draw_sprite(win, img, 0, 0, 8, 8, 100, 100, 16, 16)
+        
+        gui.render(win)
+        gui.close(win)
+    "#;
+    let res = run(code);
+    assert!(res.is_ok(), "gui image test failed: {:?}", res.err());
+}

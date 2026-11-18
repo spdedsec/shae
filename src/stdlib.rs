@@ -43,13 +43,15 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "async" => Ok(build_async_module()),
         "buffer" => Ok(build_buffer_module()),
         "gui" | "graphics" => Ok(crate::gui::build_gui_module()),
+        "ui" => Ok(crate::ui_mod::build_ui_module()),
+        "audio" | "sound" => Ok(crate::audio::build_audio_module()),
         "random" | "rand" => Ok(crate::random::build_random_module()),
         "math" => Ok(crate::math::build_math_module()),
         "io" => Ok(crate::io_mod::build_io_module()),
         "test" => Ok(build_test_module()),
         "bench" | "benchmark" => Ok(build_bench_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:async, std:buffer, std:gui, std:random, std:math, std:io, std:test, std:bench",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:async, std:buffer, std:gui, std:ui, std:audio, std:random, std:math, std:io, std:test, std:bench",
             clean_name
         ))
         .at(span)),

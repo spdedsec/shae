@@ -36,8 +36,26 @@ pub struct ShaeWindow {
 static WINDOW_REGISTRY: OnceLock<Mutex<HashMap<usize, ShaeWindow>>> = OnceLock::new();
 static NEXT_WINDOW_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
 
-fn get_registry() -> &'static Mutex<HashMap<usize, ShaeWindow>> {
+pub fn get_window_registry() -> &'static Mutex<HashMap<usize, ShaeWindow>> {
     WINDOW_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn get_registry() -> &'static Mutex<HashMap<usize, ShaeWindow>> {
+    get_window_registry()
+}
+
+#[derive(Clone)]
+pub struct ShaeImage {
+    pub width: usize,
+    pub height: usize,
+    pub pixels: Vec<u32>, // 0xAARRGGBB format
+}
+
+static IMAGE_REGISTRY: OnceLock<Mutex<HashMap<usize, Arc<ShaeImage>>>> = OnceLock::new();
+static NEXT_IMAGE_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+
+pub fn get_image_registry() -> &'static Mutex<HashMap<usize, Arc<ShaeImage>>> {
+    IMAGE_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 pub fn build_gui_module() -> Value {
@@ -69,6 +87,22 @@ pub fn build_gui_module() -> Value {
         ("limit_fps", gui_limit_fps),
         ("limitFps", gui_limit_fps),
         ("sleep", gui_sleep),
+        ("load_image", gui_load_image),
+        ("loadImage", gui_load_image),
+        ("create_image", gui_create_image),
+        ("createImage", gui_create_image),
+        ("draw_image", gui_draw_image),
+        ("drawImage", gui_draw_image),
+        ("draw_image_scaled", gui_draw_image_scaled),
+        ("drawImageScaled", gui_draw_image_scaled),
+        ("draw_sprite", gui_draw_sprite),
+        ("drawSprite", gui_draw_sprite),
+        ("image_size", gui_image_size),
+        ("imageSize", gui_image_size),
+        ("get_image_pixel", gui_get_image_pixel),
+        ("getImagePixel", gui_get_image_pixel),
+        ("set_image_pixel", gui_set_image_pixel),
+        ("setImagePixel", gui_set_image_pixel),
     ];
     for (name, func) in entries {
         map.insert(
@@ -102,6 +136,14 @@ fn to_usize(val: &Value) -> Option<usize> {
     match val {
         Value::Int(i) if *i >= 0 => Some(*i as usize),
         Value::Float(f) | Value::Number(f) if *f >= 0.0 => Some(*f as usize),
+        _ => None,
+    }
+}
+
+fn to_u32_color(val: &Value) -> Option<u32> {
+    match val {
+        Value::Int(i) => Some(*i as u32),
+        Value::Float(f) | Value::Number(f) => Some(*f as u32),
         _ => None,
     }
 }
@@ -839,6 +881,358 @@ fn gui_sleep(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value,
     let ms = to_usize(&args[0]).unwrap_or(0) as u64;
     if ms > 0 {
         std::thread::sleep(Duration::from_millis(ms));
+    }
+    Ok(Value::Null)
+}
+
+// ---------------------------------------------------------------------------
+// Image & Sprite Engine Functions
+// ---------------------------------------------------------------------------
+
+fn to_image_id(val: &Value) -> Option<usize> {
+    match val {
+        Value::Int(i) if *i >= 0 => Some(*i as usize),
+        Value::Float(f) | Value::Number(f) if *f >= 0.0 => Some(*f as usize),
+        Value::Map(m) => {
+            let map = m.read().unwrap();
+            map.get("id").and_then(|v| match v {
+                Value::Int(i) if *i >= 0 => Some(*i as usize),
+                Value::Float(f) | Value::Number(f) if *f >= 0.0 => Some(*f as usize),
+                _ => None,
+            })
+        }
+        _ => None,
+    }
+}
+
+#[inline(always)]
+fn blend_pixel(bg: u32, fg: u32) -> u32 {
+    let alpha = (fg >> 24) & 0xFF;
+    if alpha == 255 {
+        fg
+    } else if alpha == 0 {
+        bg
+    } else {
+        let inv_alpha = 255 - alpha;
+        let r = (((fg >> 16) & 0xFF) * alpha + ((bg >> 16) & 0xFF) * inv_alpha) / 255;
+        let g = (((fg >> 8) & 0xFF) * alpha + ((bg >> 8) & 0xFF) * inv_alpha) / 255;
+        let b = ((fg & 0xFF) * alpha + (bg & 0xFF) * inv_alpha) / 255;
+        (255 << 24) | (r << 16) | (g << 8) | b
+    }
+}
+
+fn gui_load_image(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("gui.load_image", 1, &args, span)?;
+    let path = match &args[0] {
+        Value::String(s) => s.clone(),
+        _ => return Err(RuntimeError::new("gui.load_image: expected file path string".into()).at(span)),
+    };
+
+    let img = match image::open(&path) {
+        Ok(img) => img,
+        Err(e) => {
+            return Err(RuntimeError::new(format!(
+                "gui.load_image: failed to load image '{}': {}",
+                path, e
+            ))
+            .at(span));
+        }
+    };
+
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    let rgba = img.to_rgba8();
+    let mut pixels = Vec::with_capacity(w * h);
+    for pixel in rgba.pixels() {
+        let [r, g, b, a] = pixel.0;
+        let argb = ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+        pixels.push(argb);
+    }
+
+    let id = NEXT_IMAGE_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let shae_img = Arc::new(ShaeImage {
+        width: w,
+        height: h,
+        pixels,
+    });
+    get_image_registry().lock().unwrap().insert(id, shae_img);
+
+    let mut map = IndexMap::new();
+    map.insert("id".to_string(), Value::Int(id as i64));
+    map.insert("width".to_string(), Value::Int(w as i64));
+    map.insert("height".to_string(), Value::Int(h as i64));
+    Ok(Value::Map(Arc::new(RwLock::new(map))))
+}
+
+fn gui_create_image(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() < 2 {
+        return Err(RuntimeError::new("gui.create_image expects (width, height, [fill_color])".into()).at(span));
+    }
+    let w = to_usize(&args[0]).unwrap_or(32).max(1);
+    let h = to_usize(&args[1]).unwrap_or(32).max(1);
+    let fill = if args.len() > 2 {
+        to_u32_color(&args[2]).unwrap_or(0x00000000)
+    } else {
+        0x00000000
+    };
+
+    let pixels = vec![fill; w * h];
+    let id = NEXT_IMAGE_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let shae_img = Arc::new(ShaeImage {
+        width: w,
+        height: h,
+        pixels,
+    });
+    get_image_registry().lock().unwrap().insert(id, shae_img);
+
+    let mut map = IndexMap::new();
+    map.insert("id".to_string(), Value::Int(id as i64));
+    map.insert("width".to_string(), Value::Int(w as i64));
+    map.insert("height".to_string(), Value::Int(h as i64));
+    Ok(Value::Map(Arc::new(RwLock::new(map))))
+}
+
+fn gui_draw_image(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() < 4 {
+        return Err(RuntimeError::new("gui.draw_image expects (window, image, x, y)".into()).at(span));
+    }
+    let win_id = match to_win_id(&args[0]) {
+        Some(id) => id,
+        None => return Ok(Value::Null),
+    };
+    let img_id = match to_image_id(&args[1]) {
+        Some(id) => id,
+        None => return Ok(Value::Null),
+    };
+    let x = to_i64(&args[2]).unwrap_or(0);
+    let y = to_i64(&args[3]).unwrap_or(0);
+
+    let img_arc = {
+        let img_reg = get_image_registry().lock().unwrap();
+        match img_reg.get(&img_id) {
+            Some(arc) => Arc::clone(arc),
+            None => return Ok(Value::Null),
+        }
+    };
+
+    let mut reg = get_registry().lock().unwrap();
+    if let Some(win) = reg.get_mut(&win_id) {
+        let win_w = win.width as i64;
+        let win_h = win.height as i64;
+        let img_w = img_arc.width as i64;
+        let img_h = img_arc.height as i64;
+
+        let x0 = x.max(0);
+        let y0 = y.max(0);
+        let x1 = (x + img_w).min(win_w);
+        let y1 = (y + img_h).min(win_h);
+
+        for py in y0..y1 {
+            let win_row = (py * win_w) as usize;
+            let img_row = ((py - y) * img_w) as usize;
+            for px in x0..x1 {
+                let win_idx = win_row + px as usize;
+                let img_idx = img_row + (px - x) as usize;
+                if win_idx < win.buffer.len() && img_idx < img_arc.pixels.len() {
+                    let fg = img_arc.pixels[img_idx];
+                    let bg = win.buffer[win_idx];
+                    win.buffer[win_idx] = blend_pixel(bg, fg);
+                }
+            }
+        }
+    }
+    Ok(Value::Null)
+}
+
+fn gui_draw_image_scaled(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() < 6 {
+        return Err(RuntimeError::new("gui.draw_image_scaled expects (window, image, x, y, target_w, target_h)".into()).at(span));
+    }
+    let win_id = match to_win_id(&args[0]) {
+        Some(id) => id,
+        None => return Ok(Value::Null),
+    };
+    let img_id = match to_image_id(&args[1]) {
+        Some(id) => id,
+        None => return Ok(Value::Null),
+    };
+    let x = to_i64(&args[2]).unwrap_or(0);
+    let y = to_i64(&args[3]).unwrap_or(0);
+    let tw = to_i64(&args[4]).unwrap_or(1).max(1);
+    let th = to_i64(&args[5]).unwrap_or(1).max(1);
+
+    let img_arc = {
+        let img_reg = get_image_registry().lock().unwrap();
+        match img_reg.get(&img_id) {
+            Some(arc) => Arc::clone(arc),
+            None => return Ok(Value::Null),
+        }
+    };
+
+    let mut reg = get_registry().lock().unwrap();
+    if let Some(win) = reg.get_mut(&win_id) {
+        let win_w = win.width as i64;
+        let win_h = win.height as i64;
+        let img_w = img_arc.width as i64;
+        let img_h = img_arc.height as i64;
+
+        let x0 = x.max(0);
+        let y0 = y.max(0);
+        let x1 = (x + tw).min(win_w);
+        let y1 = (y + th).min(win_h);
+
+        for py in y0..y1 {
+            let win_row = (py * win_w) as usize;
+            let src_y = (((py - y) * img_h) / th).min(img_h - 1);
+            let img_row = (src_y * img_w) as usize;
+
+            for px in x0..x1 {
+                let win_idx = win_row + px as usize;
+                let src_x = (((px - x) * img_w) / tw).min(img_w - 1);
+                let img_idx = img_row + src_x as usize;
+
+                if win_idx < win.buffer.len() && img_idx < img_arc.pixels.len() {
+                    let fg = img_arc.pixels[img_idx];
+                    let bg = win.buffer[win_idx];
+                    win.buffer[win_idx] = blend_pixel(bg, fg);
+                }
+            }
+        }
+    }
+    Ok(Value::Null)
+}
+
+fn gui_draw_sprite(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() < 10 {
+        return Err(RuntimeError::new(
+            "gui.draw_sprite expects (window, image, sx, sy, sw, sh, dx, dy, dw, dh)".into(),
+        )
+        .at(span));
+    }
+    let win_id = match to_win_id(&args[0]) {
+        Some(id) => id,
+        None => return Ok(Value::Null),
+    };
+    let img_id = match to_image_id(&args[1]) {
+        Some(id) => id,
+        None => return Ok(Value::Null),
+    };
+    let sx = to_i64(&args[2]).unwrap_or(0).max(0);
+    let sy = to_i64(&args[3]).unwrap_or(0).max(0);
+    let sw = to_i64(&args[4]).unwrap_or(0).max(1);
+    let sh = to_i64(&args[5]).unwrap_or(0).max(1);
+    let dx = to_i64(&args[6]).unwrap_or(0);
+    let dy = to_i64(&args[7]).unwrap_or(0);
+    let dw = to_i64(&args[8]).unwrap_or(sw).max(1);
+    let dh = to_i64(&args[9]).unwrap_or(sh).max(1);
+
+    let img_arc = {
+        let img_reg = get_image_registry().lock().unwrap();
+        match img_reg.get(&img_id) {
+            Some(arc) => Arc::clone(arc),
+            None => return Ok(Value::Null),
+        }
+    };
+
+    let mut reg = get_registry().lock().unwrap();
+    if let Some(win) = reg.get_mut(&win_id) {
+        let win_w = win.width as i64;
+        let win_h = win.height as i64;
+        let img_w = img_arc.width as i64;
+        let img_h = img_arc.height as i64;
+
+        let x0 = dx.max(0);
+        let y0 = dy.max(0);
+        let x1 = (dx + dw).min(win_w);
+        let y1 = (dy + dh).min(win_h);
+
+        for py in y0..y1 {
+            let win_row = (py * win_w) as usize;
+            let src_y = (sy + ((py - dy) * sh) / dh).min(img_h - 1);
+            let img_row = (src_y * img_w) as usize;
+
+            for px in x0..x1 {
+                let win_idx = win_row + px as usize;
+                let src_x = (sx + ((px - dx) * sw) / dw).min(img_w - 1);
+                let img_idx = img_row + src_x as usize;
+
+                if win_idx < win.buffer.len() && img_idx < img_arc.pixels.len() {
+                    let fg = img_arc.pixels[img_idx];
+                    let bg = win.buffer[win_idx];
+                    win.buffer[win_idx] = blend_pixel(bg, fg);
+                }
+            }
+        }
+    }
+    Ok(Value::Null)
+}
+
+fn gui_image_size(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("gui.image_size", 1, &args, span)?;
+    let img_id = match to_image_id(&args[0]) {
+        Some(id) => id,
+        None => return Ok(Value::Array(Arc::new(RwLock::new(vec![Value::Int(0), Value::Int(0)])))),
+    };
+
+    let img_reg = get_image_registry().lock().unwrap();
+    if let Some(img) = img_reg.get(&img_id) {
+        Ok(Value::Array(Arc::new(RwLock::new(vec![
+            Value::Int(img.width as i64),
+            Value::Int(img.height as i64),
+        ]))))
+    } else {
+        Ok(Value::Array(Arc::new(RwLock::new(vec![Value::Int(0), Value::Int(0)]))))
+    }
+}
+
+fn gui_get_image_pixel(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() < 3 {
+        return Err(RuntimeError::new("gui.get_image_pixel expects (image, x, y)".into()).at(span));
+    }
+    let img_id = match to_image_id(&args[0]) {
+        Some(id) => id,
+        None => return Ok(Value::Int(0)),
+    };
+    let x = to_usize(&args[1]).unwrap_or(0);
+    let y = to_usize(&args[2]).unwrap_or(0);
+
+    let img_reg = get_image_registry().lock().unwrap();
+    if let Some(img) = img_reg.get(&img_id) {
+        if x < img.width && y < img.height {
+            let idx = y * img.width + x;
+            return Ok(Value::Int(img.pixels[idx] as i64));
+        }
+    }
+    Ok(Value::Int(0))
+}
+
+fn gui_set_image_pixel(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() < 4 {
+        return Err(RuntimeError::new("gui.set_image_pixel expects (image, x, y, color)".into()).at(span));
+    }
+    let img_id = match to_image_id(&args[0]) {
+        Some(id) => id,
+        None => return Ok(Value::Null),
+    };
+    let x = to_usize(&args[1]).unwrap_or(0);
+    let y = to_usize(&args[2]).unwrap_or(0);
+    let color = to_u32_color(&args[3]).unwrap_or(0);
+
+    let mut img_reg = get_image_registry().lock().unwrap();
+    if let Some(img_arc) = img_reg.get_mut(&img_id) {
+        if let Some(img) = Arc::get_mut(img_arc) {
+            if x < img.width && y < img.height {
+                let idx = y * img.width + x;
+                img.pixels[idx] = color;
+            }
+        } else {
+            // Need to clone-on-write if shared
+            let mut new_img = (**img_arc).clone();
+            if x < new_img.width && y < new_img.height {
+                let idx = y * new_img.width + x;
+                new_img.pixels[idx] = color;
+            }
+            *img_arc = Arc::new(new_img);
+        }
     }
     Ok(Value::Null)
 }
