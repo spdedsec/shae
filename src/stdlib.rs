@@ -4898,7 +4898,6 @@ fn test_test(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, 
     crate::test_runner::execute_test(&desc, callable, ev, span)
 }
 
-
 pub fn build_bench_module() -> Value {
     make_map(vec![
         ("bench", bench_bench),
@@ -4947,8 +4946,6 @@ fn bench_bench(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value
     crate::bench::execute_bench(&name, iters, callable, ev, span)
 }
 
-
-
 // =============================================================
 // std:buffer
 // -------------------------------------------------------------
@@ -4995,10 +4992,9 @@ pub(crate) fn buffer_byte_buffer_ctor(
         }
         Value::Float(f) | Value::Number(f) => {
             if *f < 0.0 || f.fract() != 0.0 {
-                return Err(RuntimeError::new(
-                    "Buffer size must be a non-negative integer".into(),
-                )
-                .at(span));
+                return Err(
+                    RuntimeError::new("Buffer size must be a non-negative integer".into()).at(span),
+                );
             }
             Ok(Value::ByteBuffer(Arc::new(RwLock::new(
                 crate::buffer::ByteBuffer::alloc(*f as usize),
@@ -5115,8 +5111,8 @@ pub(crate) fn buffer_from_hex(
 ) -> Result<Value, RuntimeError> {
     expect_args("buffer.from_hex", 1, &args, span)?;
     if let Value::String(s) = &args[0] {
-        let buf = crate::buffer::ByteBuffer::from_hex(s)
-            .map_err(|e| RuntimeError::new(e).at(span))?;
+        let buf =
+            crate::buffer::ByteBuffer::from_hex(s).map_err(|e| RuntimeError::new(e).at(span))?;
         Ok(Value::ByteBuffer(Arc::new(RwLock::new(buf))))
     } else {
         Err(RuntimeError::new("buffer.from_hex expects a hex string argument".into()).at(span))
@@ -5273,9 +5269,8 @@ pub(crate) fn buffer_pack_into(
     match &args[1] {
         Value::ByteBuffer(b) => {
             let mut buf = b.write().unwrap();
-            let written =
-                crate::buffer::StructEngine::pack_into(fmt, &mut buf, offset, &values)
-                    .map_err(|e| RuntimeError::new(e).at(span))?;
+            let written = crate::buffer::StructEngine::pack_into(fmt, &mut buf, offset, &values)
+                .map_err(|e| RuntimeError::new(e).at(span))?;
             Ok(Value::Int(written as i64))
         }
         other => Err(RuntimeError::new(format!(
@@ -5292,10 +5287,9 @@ pub(crate) fn buffer_unpack(
     span: Span,
 ) -> Result<Value, RuntimeError> {
     if args.len() < 2 || args.len() > 3 {
-        return Err(RuntimeError::new(
-            "buffer.unpack expects (format, buffer, [offset])".into(),
-        )
-        .at(span));
+        return Err(
+            RuntimeError::new("buffer.unpack expects (format, buffer, [offset])".into()).at(span),
+        );
     }
     let fmt = match &args[0] {
         Value::String(s) => s.as_str(),
@@ -5375,8 +5369,8 @@ pub(crate) fn buffer_calcsize(
 ) -> Result<Value, RuntimeError> {
     expect_args("buffer.calcsize", 1, &args, span)?;
     if let Value::String(s) = &args[0] {
-        let size = crate::buffer::StructEngine::calcsize(s)
-            .map_err(|e| RuntimeError::new(e).at(span))?;
+        let size =
+            crate::buffer::StructEngine::calcsize(s).map_err(|e| RuntimeError::new(e).at(span))?;
         Ok(Value::Int(size as i64))
     } else {
         Err(RuntimeError::new("buffer.calcsize expects format string".into()).at(span))
@@ -5393,7 +5387,9 @@ fn actor_reload(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
     let (migration, timeout) = match args.len() {
         2 => (None, None),
         3 => match &args[2] {
-            Value::Int(ms) if *ms >= 0 => (None, Some(std::time::Duration::from_millis(*ms as u64))),
+            Value::Int(ms) if *ms >= 0 => {
+                (None, Some(std::time::Duration::from_millis(*ms as u64)))
+            }
             Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => {
                 (None, Some(std::time::Duration::from_millis(*ms as u64)))
             }
@@ -5474,23 +5470,42 @@ fn cluster_reload_actor(
         }
         let actor_name = match &args[1] {
             Value::String(s) => s.clone(),
-            other => return Err(RuntimeError::new(format!("Expected string actor_name, got {}", other.type_name())).at(span)),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "Expected string actor_name, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
         };
         let h = args[2].clone();
         let (mig, to) = match args.len() {
             3 => (None, None),
             4 => match &args[3] {
-                Value::Int(ms) if *ms >= 0 => (None, Some(std::time::Duration::from_millis(*ms as u64))),
-                Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => (None, Some(std::time::Duration::from_millis(*ms as u64))),
+                Value::Int(ms) if *ms >= 0 => {
+                    (None, Some(std::time::Duration::from_millis(*ms as u64)))
+                }
+                Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => {
+                    (None, Some(std::time::Duration::from_millis(*ms as u64)))
+                }
                 Value::Null => (None, None),
                 _ => (Some(args[3].clone()), None),
             },
             5 => {
                 let to = match &args[4] {
-                    Value::Int(ms) if *ms >= 0 => Some(std::time::Duration::from_millis(*ms as u64)),
-                    Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => Some(std::time::Duration::from_millis(*ms as u64)),
+                    Value::Int(ms) if *ms >= 0 => {
+                        Some(std::time::Duration::from_millis(*ms as u64))
+                    }
+                    Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => {
+                        Some(std::time::Duration::from_millis(*ms as u64))
+                    }
                     Value::Null => None,
-                    _ => return Err(RuntimeError::new("timeout must be non-negative number".into()).at(span)),
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "timeout must be non-negative number".into(),
+                        )
+                        .at(span));
+                    }
                 };
                 let mig = match &args[3] {
                     Value::Null => None,
@@ -5503,28 +5518,49 @@ fn cluster_reload_actor(
         (Arc::clone(n), actor_name, h, mig, to)
     } else {
         let global = crate::actor_cluster::get_global_cluster().ok_or_else(|| {
-            RuntimeError::new("No active cluster node found (pass node explicitly or call cluster.start)".into())
-                .at(span)
+            RuntimeError::new(
+                "No active cluster node found (pass node explicitly or call cluster.start)".into(),
+            )
+            .at(span)
         })?;
         let actor_name = match &args[0] {
             Value::String(s) => s.clone(),
-            other => return Err(RuntimeError::new(format!("Expected string actor_name, got {}", other.type_name())).at(span)),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "Expected string actor_name, got {}",
+                    other.type_name()
+                ))
+                .at(span));
+            }
         };
         let h = args[1].clone();
         let (mig, to) = match args.len() {
             2 => (None, None),
             3 => match &args[2] {
-                Value::Int(ms) if *ms >= 0 => (None, Some(std::time::Duration::from_millis(*ms as u64))),
-                Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => (None, Some(std::time::Duration::from_millis(*ms as u64))),
+                Value::Int(ms) if *ms >= 0 => {
+                    (None, Some(std::time::Duration::from_millis(*ms as u64)))
+                }
+                Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => {
+                    (None, Some(std::time::Duration::from_millis(*ms as u64)))
+                }
                 Value::Null => (None, None),
                 _ => (Some(args[2].clone()), None),
             },
             4 => {
                 let to = match &args[3] {
-                    Value::Int(ms) if *ms >= 0 => Some(std::time::Duration::from_millis(*ms as u64)),
-                    Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => Some(std::time::Duration::from_millis(*ms as u64)),
+                    Value::Int(ms) if *ms >= 0 => {
+                        Some(std::time::Duration::from_millis(*ms as u64))
+                    }
+                    Value::Float(ms) | Value::Number(ms) if *ms >= 0.0 => {
+                        Some(std::time::Duration::from_millis(*ms as u64))
+                    }
                     Value::Null => None,
-                    _ => return Err(RuntimeError::new("timeout must be non-negative number".into()).at(span)),
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "timeout must be non-negative number".into(),
+                        )
+                        .at(span));
+                    }
                 };
                 let mig = match &args[2] {
                     Value::Null => None,

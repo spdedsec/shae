@@ -1,7 +1,7 @@
 use serde_json::json;
 use shae::pkg::{
-    self, compute_sha256, resolve_package_file, resolve_registry_url, Lockfile, PkgError,
-    ShaepkgArchive, ShaepkgFiles, SHAEPKG_MAGIC,
+    self, Lockfile, PkgError, SHAEPKG_MAGIC, ShaepkgArchive, ShaepkgFiles, compute_sha256,
+    resolve_package_file, resolve_registry_url,
 };
 use shae::run_file;
 use std::collections::BTreeMap;
@@ -20,8 +20,8 @@ struct TempDir {
 
 impl TempDir {
     fn new(name: &str) -> Self {
-        let path = std::env::temp_dir()
-            .join(format!("shae_test_reg_{}_{}", name, std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("shae_test_reg_{}_{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).unwrap();
         Self { path }
@@ -110,7 +110,11 @@ impl MockRegistry {
     fn register_json(&self, path: &str, json_content: &str) {
         self.routes.lock().unwrap().insert(
             path.to_string(),
-            (200, "application/json".to_string(), json_content.as_bytes().to_vec()),
+            (
+                200,
+                "application/json".to_string(),
+                json_content.as_bytes().to_vec(),
+            ),
         );
     }
 
@@ -187,26 +191,30 @@ fn square(x) {
 
     // 4. Init consumer application and add dependency from registry
     let _ = pkg::init_project(&app_dir, Some("consumer_app")).unwrap();
-    let lockfile = pkg::add_dependency_from_registry(
-        &app_dir,
-        "math",
-        Some("1.0.0"),
-        &mock.url,
-    )
-    .expect("add_dependency_from_registry succeeded");
+    let lockfile = pkg::add_dependency_from_registry(&app_dir, "math", Some("1.0.0"), &mock.url)
+        .expect("add_dependency_from_registry succeeded");
 
     // 5. Verify .packages/math/ was created and populated
     let installed_main = app_dir.join(".packages/math/main.shae");
     let installed_utils = app_dir.join(".packages/math/src/utils.shae");
-    assert!(installed_main.exists(), ".packages/math/main.shae should exist");
-    assert!(installed_utils.exists(), ".packages/math/src/utils.shae should exist");
+    assert!(
+        installed_main.exists(),
+        ".packages/math/main.shae should exist"
+    );
+    assert!(
+        installed_utils.exists(),
+        ".packages/math/src/utils.shae should exist"
+    );
 
     // 6. Verify shae.lock was updated with checksum and registry source
     assert!(lockfile.packages.contains_key("math"));
     let locked_math = &lockfile.packages["math"];
     assert_eq!(locked_math.version.as_deref(), Some("1.0.0"));
     assert_eq!(locked_math.source, format!("registry+{}", mock.url));
-    assert_eq!(locked_math.checksum.as_deref(), Some(expected_checksum.as_str()));
+    assert_eq!(
+        locked_math.checksum.as_deref(),
+        Some(expected_checksum.as_str())
+    );
 
     // Verify lockfile on disk
     let disk_lock = Lockfile::load_from_dir(&app_dir)
@@ -299,7 +307,10 @@ fn test_archive_path_traversal_defense() {
 
     // Construct a malicious .shaepkg archive with path traversal
     let mut files = BTreeMap::new();
-    files.insert("../../outside_evil.txt".to_string(), "malicious code".to_string());
+    files.insert(
+        "../../outside_evil.txt".to_string(),
+        "malicious code".to_string(),
+    );
     files.insert("main.shae".to_string(), "print(1)".to_string());
 
     let bad_archive = ShaepkgArchive {
@@ -328,7 +339,11 @@ fn test_archive_path_traversal_defense() {
     .to_string();
 
     mock.register_json("/packages/evil_pkg.json", &index_json);
-    mock.register_bytes("/downloads/evil.shaepkg", "application/octet-stream", bad_payload);
+    mock.register_bytes(
+        "/downloads/evil.shaepkg",
+        "application/octet-stream",
+        bad_payload,
+    );
 
     let res = pkg::add_dependency_from_registry(&app_dir, "evil_pkg", None, &mock.url);
 
@@ -341,7 +356,10 @@ fn test_archive_path_traversal_defense() {
                 msg
             );
         }
-        other => panic!("Expected PkgError::Archive for traversal attack, got {:?}", other),
+        other => panic!(
+            "Expected PkgError::Archive for traversal attack, got {:?}",
+            other
+        ),
     }
 
     // Verify escaped file does not exist
@@ -406,8 +424,16 @@ fn test_resolve_package_file_precedence_and_fallback() {
     fs::create_dir_all(&pkg_new_dir).unwrap();
     fs::create_dir_all(&pkg_old_dir).unwrap();
 
-    fs::write(pkg_new_dir.join("main.shae"), "fn get_version() { \"new\" }").unwrap();
-    fs::write(pkg_old_dir.join("main.shae"), "fn get_version() { \"old\" }").unwrap();
+    fs::write(
+        pkg_new_dir.join("main.shae"),
+        "fn get_version() { \"new\" }",
+    )
+    .unwrap();
+    fs::write(
+        pkg_old_dir.join("main.shae"),
+        "fn get_version() { \"old\" }",
+    )
+    .unwrap();
 
     // 2. resolve_package_file should prioritize .packages
     let resolved = resolve_package_file(&app_dir, "mylib").expect("must resolve mylib");
@@ -427,7 +453,11 @@ fn test_reinstall_from_lockfile() {
     let lib_dir = temp_root.path.join("lib");
 
     let _ = pkg::init_project(&lib_dir, Some("greeter")).unwrap();
-    fs::write(lib_dir.join("main.shae"), "fn greet(name) {\n    \"Hello, \" + name\n}").unwrap();
+    fs::write(
+        lib_dir.join("main.shae"),
+        "fn greet(name) {\n    \"Hello, \" + name\n}",
+    )
+    .unwrap();
 
     let archive_bytes = pkg::create_shaepkg(&lib_dir).unwrap();
     let checksum = compute_sha256(&archive_bytes);
@@ -447,7 +477,11 @@ fn test_reinstall_from_lockfile() {
     .to_string();
 
     mock.register_json("/packages/greeter.json", &index_json);
-    mock.register_bytes("/downloads/greeter.shaepkg", "application/octet-stream", archive_bytes);
+    mock.register_bytes(
+        "/downloads/greeter.shaepkg",
+        "application/octet-stream",
+        archive_bytes,
+    );
 
     let _ = pkg::init_project(&app_dir, Some("app")).unwrap();
     pkg::add_dependency_from_registry(&app_dir, "greeter", Some("1.0.0"), &mock.url).unwrap();
@@ -500,7 +534,11 @@ fn test_cli_add_syntax_variations() {
     .to_string();
 
     mock.register_json("/packages/calc.json", &index_json);
-    mock.register_bytes("/downloads/calc-2.0.0.shaepkg", "application/octet-stream", archive_bytes);
+    mock.register_bytes(
+        "/downloads/calc-2.0.0.shaepkg",
+        "application/octet-stream",
+        archive_bytes,
+    );
 
     let _ = pkg::init_project(&app_dir, Some("app")).unwrap();
 

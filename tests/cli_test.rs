@@ -41,7 +41,9 @@ fn test_cli_unknown_subcommand_error() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("error: unknown subcommand 'unknown_bogus_subcommand'"));
     assert!(stderr.contains("Available subcommands:"));
-    assert!(stderr.contains("run, jit, repl, compile, check, disasm, fmt, bench, test, doc, clean"));
+    assert!(
+        stderr.contains("run, jit, repl, compile, check, disasm, fmt, bench, test, doc, clean")
+    );
     assert!(stderr.contains("Did you mean to run a script?"));
     assert!(stderr.contains("shae run <file>"));
     assert!(stderr.contains("shae <file.shae>"));

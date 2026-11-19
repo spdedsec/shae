@@ -741,7 +741,12 @@ fn handle_ide_client(
 
     match (method, path) {
         ("GET", "/") => {
-            send_response(&mut stream, 200, "text/html; charset=utf-8", IDE_HTML.as_bytes())?;
+            send_response(
+                &mut stream,
+                200,
+                "text/html; charset=utf-8",
+                IDE_HTML.as_bytes(),
+            )?;
         }
         ("GET", "/api/files") => {
             let files = list_files(root);
@@ -771,7 +776,9 @@ fn handle_ide_client(
                     let _ = fs::create_dir_all(parent);
                 }
                 match fs::write(&full_file, req.content) {
-                    Ok(_) => send_response(&mut stream, 200, "application/json", b"{\"status\":\"ok\"}")?,
+                    Ok(_) => {
+                        send_response(&mut stream, 200, "application/json", b"{\"status\":\"ok\"}")?
+                    }
                     Err(e) => send_response(
                         &mut stream,
                         500,
@@ -801,17 +808,15 @@ fn handle_ide_client(
                     Ok(tokens) => {
                         let mut parser = crate::parser::Parser::new(tokens);
                         match parser.parse() {
-                            Ok(stmts) => {
-                                match ev.eval_program(&stmts) {
-                                    Ok(val) => {
-                                        result_str = Some(val.to_display());
-                                    }
-                                    Err(e) => {
-                                        captured_stderr = format!("Runtime Error: {}", e.message);
-                                        exit_code = 1;
-                                    }
+                            Ok(stmts) => match ev.eval_program(&stmts) {
+                                Ok(val) => {
+                                    result_str = Some(val.to_display());
                                 }
-                            }
+                                Err(e) => {
+                                    captured_stderr = format!("Runtime Error: {}", e.message);
+                                    exit_code = 1;
+                                }
+                            },
                             Err(e) => {
                                 captured_stderr = format!("Parser Error: {}", e);
                                 exit_code = 1;
@@ -878,7 +883,10 @@ fn handle_ide_client(
                                 let mut linter = Linter::new();
                                 let diagnostics = linter.lint_program(&stmts);
                                 for diag in diagnostics {
-                                    let msg = format!("{}:{}: {}", diag.span.line, diag.span.col, diag.message);
+                                    let msg = format!(
+                                        "{}:{}: {}",
+                                        diag.span.line, diag.span.col, diag.message
+                                    );
                                     if diag.severity == crate::linter::DiagnosticSeverity::Error {
                                         errors.push(msg);
                                     } else {
@@ -923,7 +931,12 @@ fn handle_ide_client(
                                         is_error: false,
                                     };
                                     let json = serde_json::to_string(&res).unwrap();
-                                    send_response(&mut stream, 200, "application/json", json.as_bytes())?;
+                                    send_response(
+                                        &mut stream,
+                                        200,
+                                        "application/json",
+                                        json.as_bytes(),
+                                    )?;
                                 }
                                 Err(e) => {
                                     let res = ReplResponse {
@@ -931,7 +944,12 @@ fn handle_ide_client(
                                         is_error: true,
                                     };
                                     let json = serde_json::to_string(&res).unwrap();
-                                    send_response(&mut stream, 200, "application/json", json.as_bytes())?;
+                                    send_response(
+                                        &mut stream,
+                                        200,
+                                        "application/json",
+                                        json.as_bytes(),
+                                    )?;
                                 }
                             },
                             Err(e) => {
@@ -940,7 +958,12 @@ fn handle_ide_client(
                                     is_error: true,
                                 };
                                 let json = serde_json::to_string(&res).unwrap();
-                                send_response(&mut stream, 200, "application/json", json.as_bytes())?;
+                                send_response(
+                                    &mut stream,
+                                    200,
+                                    "application/json",
+                                    json.as_bytes(),
+                                )?;
                             }
                         }
                     }
@@ -977,11 +1000,19 @@ fn list_files(root: &Path) -> Vec<FileEntry> {
             }
 
             let is_dir = path.is_dir();
-            let size = if is_dir { 0 } else { entry.metadata().map(|m| m.len()).unwrap_or(0) };
+            let size = if is_dir {
+                0
+            } else {
+                entry.metadata().map(|m| m.len()).unwrap_or(0)
+            };
 
             result.push(FileEntry {
                 name,
-                path: path.strip_prefix(root).unwrap_or(&path).to_string_lossy().to_string(),
+                path: path
+                    .strip_prefix(root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .to_string(),
                 is_dir,
                 size,
             });

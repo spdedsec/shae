@@ -71,8 +71,12 @@ fn show_help() {
     println!("  shae dap                   Start Debug Adapter Protocol (DAP) server");
     println!("  shae debug <file.shae>     Start interactive step debugger");
     println!("  shae profile <file.shae>   Profile CPU execution time and opcodes (--folded)");
-    println!("  shae ide [dir]             Start interactive Shae Studio Web IDE (--port, --host, --no-open)");
-    println!("  shae studio [dir]          Start interactive Shae Studio Web IDE (--port, --host, --no-open)");
+    println!(
+        "  shae ide [dir]             Start interactive Shae Studio Web IDE (--port, --host, --no-open)"
+    );
+    println!(
+        "  shae studio [dir]          Start interactive Shae Studio Web IDE (--port, --host, --no-open)"
+    );
     println!("  shae serve [dir]           Start instant static HTTP dev server (--port, --host)");
     println!("  shae --joke                Print a programming joke");
     println!("  shae --tip                 Print a Shae tip");
@@ -546,7 +550,9 @@ fn main() {
         }
         "add" => {
             if args.len() < 3 {
-                eprintln!("Usage: shae add <package_name> [source] [--version <v>] [--registry <url>] [--branch <b/t/r>]");
+                eprintln!(
+                    "Usage: shae add <package_name> [source] [--version <v>] [--registry <url>] [--branch <b/t/r>]"
+                );
                 process::exit(1);
             }
             let raw_pkg = &args[2];
@@ -597,14 +603,18 @@ fn main() {
                     }
                 }
             } else {
-                let reg_url = shae::pkg::resolve_registry_url(Some(Path::new(".")), registry.as_deref());
+                let reg_url =
+                    shae::pkg::resolve_registry_url(Some(Path::new(".")), registry.as_deref());
                 match shae::pkg::add_dependency_from_registry(
                     Path::new("."),
                     &pkg_name,
                     version.as_deref(),
                     &reg_url,
                 ) {
-                    Ok(_) => println!("✅ Added and resolved dependency '{}' from registry", pkg_name),
+                    Ok(_) => println!(
+                        "✅ Added and resolved dependency '{}' from registry",
+                        pkg_name
+                    ),
                     Err(e) => {
                         eprintln!("Error adding dependency: {}", e);
                         process::exit(1);
@@ -643,7 +653,9 @@ fn main() {
                 }
                 "add" => {
                     if args.len() < 4 {
-                        eprintln!("Usage: shae pkg add <package_name> [source] [--version <v>] [--registry <url>]");
+                        eprintln!(
+                            "Usage: shae pkg add <package_name> [source] [--version <v>] [--registry <url>]"
+                        );
                         process::exit(1);
                     }
                     let raw_pkg = &args[3];
@@ -686,7 +698,14 @@ fn main() {
                     }
 
                     if let Some(src) = source {
-                        match shae::pkg::add_dependency(Path::new("."), &pkg_name, &src, branch, tag, rev) {
+                        match shae::pkg::add_dependency(
+                            Path::new("."),
+                            &pkg_name,
+                            &src,
+                            branch,
+                            tag,
+                            rev,
+                        ) {
                             Ok(_) => println!("✅ Added and resolved dependency '{}'", pkg_name),
                             Err(e) => {
                                 eprintln!("Error adding dependency: {}", e);
@@ -694,14 +713,20 @@ fn main() {
                             }
                         }
                     } else {
-                        let reg_url = shae::pkg::resolve_registry_url(Some(Path::new(".")), registry.as_deref());
+                        let reg_url = shae::pkg::resolve_registry_url(
+                            Some(Path::new(".")),
+                            registry.as_deref(),
+                        );
                         match shae::pkg::add_dependency_from_registry(
                             Path::new("."),
                             &pkg_name,
                             version.as_deref(),
                             &reg_url,
                         ) {
-                            Ok(_) => println!("✅ Added and resolved dependency '{}' from registry", pkg_name),
+                            Ok(_) => println!(
+                                "✅ Added and resolved dependency '{}' from registry",
+                                pkg_name
+                            ),
                             Err(e) => {
                                 eprintln!("Error adding dependency: {}", e);
                                 process::exit(1);
@@ -888,7 +913,9 @@ fn main() {
                 println!("Shae Cranelift JIT Engine\n");
                 println!("Usage:");
                 println!("  shae jit <file.shae> [--disasm] [--profile]\n");
-                println!("Forces Cranelift JIT compilation on all functions immediately (JIT_THRESHOLD = 0).");
+                println!(
+                    "Forces Cranelift JIT compilation on all functions immediately (JIT_THRESHOLD = 0)."
+                );
                 return;
             }
             let disasm = args.iter().any(|a| a == "--disasm");
@@ -1616,10 +1643,7 @@ fn main() {
                 process::exit(1);
             }
 
-            if other.ends_with(".shae")
-                || other.ends_with(".shaec")
-                || Path::new(other).is_file()
-            {
+            if other.ends_with(".shae") || other.ends_with(".shaec") || Path::new(other).is_file() {
                 let disasm = args.iter().any(|a| a == "--disasm");
                 if disasm {
                     disasm_file(other);
@@ -1630,8 +1654,12 @@ fn main() {
                 eprintln!("error: unknown subcommand '{}'", other);
                 eprintln!();
                 eprintln!("Available subcommands:");
-                eprintln!("  run, jit, repl, compile, check, disasm, fmt, bench, test, doc, clean,");
-                eprintln!("  new, init, add, install, pkg, bundle, link, wasm, llvm, lsp, dap, debug, profile, serve");
+                eprintln!(
+                    "  run, jit, repl, compile, check, disasm, fmt, bench, test, doc, clean,"
+                );
+                eprintln!(
+                    "  new, init, add, install, pkg, bundle, link, wasm, llvm, lsp, dap, debug, profile, serve"
+                );
                 eprintln!();
                 eprintln!("Did you mean to run a script?");
                 eprintln!("  shae run <file>");
@@ -1743,7 +1771,6 @@ fn format_target(target: &str, check_only: bool, force: bool) {
     }
 }
 
-
 fn run_bench_command(args: &[String]) {
     let mut filter = None;
     let mut target = None;
@@ -1758,9 +1785,13 @@ fn run_bench_command(args: &[String]) {
                 println!("Usage: shae bench [filter] [options]\n");
                 println!("Options:");
                 println!("  -f, --filter <PATTERN>        Filter benchmarks by name pattern");
-                println!("  --ast, --engine=ast           Use AST Tree-Walking Evaluator (default: VM)");
+                println!(
+                    "  --ast, --engine=ast           Use AST Tree-Walking Evaluator (default: VM)"
+                );
                 println!("  --vm, --engine=vm             Use Bytecode VM (default)");
-                println!("  -i, --iter, --iterations <N>   Override number of benchmark iterations");
+                println!(
+                    "  -i, --iter, --iterations <N>   Override number of benchmark iterations"
+                );
                 println!("  -h, --help                    Show this help message");
                 return;
             }

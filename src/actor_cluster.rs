@@ -1167,14 +1167,15 @@ impl ClusterNode {
 
         if let Some(act) = local_act {
             let handler_val = match &new_handler {
-                Value::String(code) => unpack_handler_code(code)
-                    .map_err(ActorError::EvaluationError)?,
+                Value::String(code) => {
+                    unpack_handler_code(code).map_err(ActorError::EvaluationError)?
+                }
                 other => other.clone(),
             };
             let mig_val = match migration_fn {
-                Some(Value::String(ref code)) => Some(
-                    unpack_handler_code(code).map_err(ActorError::EvaluationError)?,
-                ),
+                Some(Value::String(ref code)) => {
+                    Some(unpack_handler_code(code).map_err(ActorError::EvaluationError)?)
+                }
                 other => other,
             };
             return act.reload(handler_val, mig_val, timeout);
@@ -1640,7 +1641,10 @@ impl ClusterNode {
                                         request_id,
                                         status: "err".into(),
                                         payload: None,
-                                        error: Some(format!("Failed to compile migration code: {}", e)),
+                                        error: Some(format!(
+                                            "Failed to compile migration code: {}",
+                                            e
+                                        )),
                                     };
                                     let _ = peer_reply.send_msg(&reply);
                                     return;
@@ -1649,7 +1653,11 @@ impl ClusterNode {
                             None => None,
                         };
 
-                        match act.reload(handler_val, migration_val, Some(Duration::from_millis(timeout_ms))) {
+                        match act.reload(
+                            handler_val,
+                            migration_val,
+                            Some(Duration::from_millis(timeout_ms)),
+                        ) {
                             Ok(ok) => {
                                 let reply = ClusterWireMsg::Reply {
                                     request_id,

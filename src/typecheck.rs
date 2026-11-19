@@ -127,7 +127,13 @@ impl TypeChecker {
             ),
             ("get", vec![any.clone(), any.clone()], any.clone(), 2, false),
             ("json_parse", vec![string.clone()], any.clone(), 1, false),
-            ("json_stringify", vec![any.clone()], string.clone(), 1, false),
+            (
+                "json_stringify",
+                vec![any.clone()],
+                string.clone(),
+                1,
+                false,
+            ),
             (
                 "serve",
                 vec![
@@ -158,7 +164,13 @@ impl TypeChecker {
                 1,
                 false,
             ),
-            ("assert", vec![bool_t.clone(), any.clone()], void.clone(), 1, false),
+            (
+                "assert",
+                vec![bool_t.clone(), any.clone()],
+                void.clone(),
+                1,
+                false,
+            ),
             (
                 "assert_eq",
                 vec![any.clone(), any.clone(), any.clone()],
@@ -166,7 +178,13 @@ impl TypeChecker {
                 2,
                 false,
             ),
-            ("send", vec![any.clone(), any.clone()], any.clone(), 2, false),
+            (
+                "send",
+                vec![any.clone(), any.clone()],
+                any.clone(),
+                2,
+                false,
+            ),
             ("recv", vec![any.clone()], any.clone(), 1, false),
             ("try_recv", vec![any.clone()], any.clone(), 1, false),
             ("close", vec![any.clone()], void.clone(), 1, false),

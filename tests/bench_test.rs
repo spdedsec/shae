@@ -5,8 +5,8 @@ use shae::bench::{self, BenchOptions};
 use shae::doc;
 use std::fs;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 #[test]
@@ -41,7 +41,11 @@ fn test_bench_execution_ast() {
             };
 
             let summary = bench::run_benchmarks(&options).expect("AST benchmark should run");
-            assert_eq!(summary.results.len(), 1, "Filter should select only 1 benchmark");
+            assert_eq!(
+                summary.results.len(),
+                1,
+                "Filter should select only 1 benchmark"
+            );
             assert!(summary.results[0].name.contains("Iterative"));
             assert_eq!(summary.results[0].iterations, 5);
         })

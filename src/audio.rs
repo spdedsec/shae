@@ -228,10 +228,10 @@ fn audio_beep(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value
 
 fn audio_tone(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     if args.is_empty() {
-        return Err(
-            RuntimeError::new("audio.tone expects (freq, [waveform], [duration_ms], [volume])".into())
-                .at(span),
-        );
+        return Err(RuntimeError::new(
+            "audio.tone expects (freq, [waveform], [duration_ms], [volume])".into(),
+        )
+        .at(span));
     }
     let freq = to_f32(&args[0]).unwrap_or(440.0);
     let waveform = if args.len() > 1 {
@@ -264,7 +264,9 @@ fn audio_play(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value
     expect_args("audio.play", 1, &args, span)?;
     let path = match &args[0] {
         Value::String(s) => s.clone(),
-        _ => return Err(RuntimeError::new("audio.play: expected file path string".into()).at(span)),
+        _ => {
+            return Err(RuntimeError::new("audio.play: expected file path string".into()).at(span));
+        }
     };
 
     let sound_id = NEXT_SOUND_ID.fetch_add(1, Ordering::SeqCst);
@@ -300,7 +302,9 @@ fn audio_play(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value
     let sink = match Sink::try_new(handle) {
         Ok(s) => Arc::new(s),
         Err(e) => {
-            return Err(RuntimeError::new(format!("audio.play: failed to create sink: {}", e)).at(span));
+            return Err(
+                RuntimeError::new(format!("audio.play: failed to create sink: {}", e)).at(span),
+            );
         }
     };
 
@@ -317,7 +321,9 @@ fn audio_loop(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value
     expect_args("audio.loop", 1, &args, span)?;
     let path = match &args[0] {
         Value::String(s) => s.clone(),
-        _ => return Err(RuntimeError::new("audio.loop: expected file path string".into()).at(span)),
+        _ => {
+            return Err(RuntimeError::new("audio.loop: expected file path string".into()).at(span));
+        }
     };
 
     let sound_id = NEXT_SOUND_ID.fetch_add(1, Ordering::SeqCst);
@@ -353,7 +359,9 @@ fn audio_loop(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value
     let sink = match Sink::try_new(handle) {
         Ok(s) => Arc::new(s),
         Err(e) => {
-            return Err(RuntimeError::new(format!("audio.loop: failed to create sink: {}", e)).at(span));
+            return Err(
+                RuntimeError::new(format!("audio.loop: failed to create sink: {}", e)).at(span),
+            );
         }
     };
 
@@ -374,7 +382,11 @@ fn audio_stop(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Val
     Ok(Value::Null)
 }
 
-fn audio_stop_sound(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn audio_stop_sound(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("audio.stop_sound", 1, &args, span)?;
     let sound_id = match to_u64(&args[0]) {
         Some(id) => id as usize,
@@ -390,7 +402,11 @@ fn audio_stop_sound(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result
     }
 }
 
-fn audio_set_volume(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn audio_set_volume(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if !args.is_empty() {
         let f = match &args[0] {
             Value::Float(f) => *f,
@@ -405,7 +421,9 @@ fn audio_set_volume(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result
     let vol = match to_f32(&args[0]) {
         Some(v) => v.max(0.0).min(1.0),
         None => {
-            return Err(RuntimeError::new("audio.set_volume expects float (0.0 to 1.0)".into()).at(span))
+            return Err(
+                RuntimeError::new("audio.set_volume expects float (0.0 to 1.0)".into()).at(span),
+            );
         }
     };
 
@@ -417,22 +435,35 @@ fn audio_set_volume(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result
     Ok(Value::Null)
 }
 
-fn audio_get_volume(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+fn audio_get_volume(
+    _ev: &mut Evaluator,
+    _args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
     let vol = get_audio_engine().read().unwrap().volume;
     Ok(Value::Float(vol))
 }
 
-fn audio_is_playing(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+fn audio_is_playing(
+    _ev: &mut Evaluator,
+    _args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
     let mut state = get_audio_state().lock().unwrap();
     state.active_sinks.retain(|_, s| !s.empty());
     Ok(Value::Bool(!state.active_sinks.is_empty()))
 }
 
-fn audio_is_available(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+fn audio_is_available(
+    _ev: &mut Evaluator,
+    _args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
     let state = get_audio_state().lock().unwrap();
-    Ok(Value::Bool(!state.is_headless && state.stream_handle.is_some()))
+    Ok(Value::Bool(
+        !state.is_headless && state.stream_handle.is_some(),
+    ))
 }
-
 
 // ----------------------------------------------------------------------------
 // Retro Arcade Sound & Audio Event Engine (Milestone 3 Integration)
@@ -610,29 +641,49 @@ pub fn clear_log_internal() {
     engine.log.clear();
 }
 
-fn audio_play_laser(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+fn audio_play_laser(
+    _ev: &mut Evaluator,
+    _args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
     play_laser_internal();
     Ok(Value::Null)
 }
 
-fn audio_play_explosion(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+fn audio_play_explosion(
+    _ev: &mut Evaluator,
+    _args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
     play_explosion_internal();
     Ok(Value::Null)
 }
 
-fn audio_play_hit(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+fn audio_play_hit(
+    _ev: &mut Evaluator,
+    _args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
     play_hit_internal();
     Ok(Value::Null)
 }
 
-fn audio_play_jingle(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn audio_play_jingle(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("audio.play_jingle", 1, &args, span)?;
     let jingle = args[0].to_display();
     play_jingle_internal(&jingle);
     Ok(Value::Null)
 }
 
-fn audio_play_tone_retro(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn audio_play_tone_retro(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.is_empty() {
         return Err(RuntimeError::new("audio.play_tone: expected frequency".into()).at(span));
     }
@@ -664,25 +715,40 @@ fn audio_mute(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Val
     Ok(Value::Null)
 }
 
-fn audio_unmute(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+fn audio_unmute(
+    _ev: &mut Evaluator,
+    _args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
     let mut engine = get_audio_engine().write().unwrap();
     engine.muted = false;
     Ok(Value::Null)
 }
 
-fn audio_is_muted(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+fn audio_is_muted(
+    _ev: &mut Evaluator,
+    _args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
     let muted = get_audio_engine().read().unwrap().muted;
     Ok(Value::Bool(muted))
 }
 
-fn audio_get_audio_log(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+fn audio_get_audio_log(
+    _ev: &mut Evaluator,
+    _args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
     let engine = get_audio_engine().read().unwrap();
     let mut list = Vec::with_capacity(engine.log.len());
     for item in &engine.log {
         let mut map = IndexMap::new();
         map.insert("sound".to_string(), Value::String(item.sound.clone()));
         map.insert("time".to_string(), Value::Float(item.time_secs));
-        map.insert("duration_ms".to_string(), Value::Int(item.duration_ms as i64));
+        map.insert(
+            "duration_ms".to_string(),
+            Value::Int(item.duration_ms as i64),
+        );
         map.insert("volume".to_string(), Value::Float(item.volume));
         if let Some(f) = item.freq {
             map.insert("freq".to_string(), Value::Float(f));
@@ -692,7 +758,11 @@ fn audio_get_audio_log(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> R
     Ok(Value::Array(Arc::new(RwLock::new(list))))
 }
 
-fn audio_last_sound(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+fn audio_last_sound(
+    _ev: &mut Evaluator,
+    _args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
     let engine = get_audio_engine().read().unwrap();
     if let Some(last) = engine.log.last() {
         Ok(Value::String(last.sound.clone()))
@@ -701,7 +771,11 @@ fn audio_last_sound(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Resu
     }
 }
 
-fn audio_clear_log(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+fn audio_clear_log(
+    _ev: &mut Evaluator,
+    _args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
     clear_log_internal();
     Ok(Value::Null)
 }

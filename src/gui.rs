@@ -1,4 +1,3 @@
-use std::io::Write;
 use crate::ast::Span;
 use crate::builtins::expect_args;
 use crate::eval::{Evaluator, RuntimeError};
@@ -6,6 +5,7 @@ use crate::value::Value;
 use indexmap::IndexMap;
 use minifb::{Key, MouseButton, MouseMode, Scale, Window, WindowOptions};
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
@@ -122,7 +122,6 @@ pub fn build_gui_module() -> Value {
         ("frame_delay", gui_frame_delay),
         ("poll_events", gui_poll_events),
         ("simulate_key", gui_simulate_key),
-
     ];
     for (name, func) in entries {
         map.insert(
@@ -444,7 +443,9 @@ fn gui_rect_outline(
 
 fn gui_circle(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     if args.len() < 5 {
-        return Err(RuntimeError::new("gui.circle expects (window, cx, cy, r, color)".into()).at(span));
+        return Err(
+            RuntimeError::new("gui.circle expects (window, cx, cy, r, color)".into()).at(span),
+        );
     }
     let win_id = match to_win_id(&args[0]) {
         Some(id) => id,
@@ -615,10 +616,10 @@ fn gui_line(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, 
 
 fn gui_text(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     if args.len() < 5 {
-        return Err(
-            RuntimeError::new("gui.text expects (window, x, y, text, color, [scale])".into())
-                .at(span),
-        );
+        return Err(RuntimeError::new(
+            "gui.text expects (window, x, y, text, color, [scale])".into(),
+        )
+        .at(span));
     }
     let win_id = match to_win_id(&args[0]) {
         Some(id) => id,
@@ -666,7 +667,11 @@ fn gui_text(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, 
                             for sx_i in 0..scale {
                                 let px = cur_x + (col * scale + sx_i) as i64;
                                 let py = cur_y + (row * scale + sy_i) as i64;
-                                if px >= 0 && (px as usize) < width && py >= 0 && (py as usize) < height {
+                                if px >= 0
+                                    && (px as usize) < width
+                                    && py >= 0
+                                    && (py as usize) < height
+                                {
                                     win.buffer[(py as usize) * width + (px as usize)] = color;
                                 }
                             }
@@ -791,10 +796,7 @@ fn gui_is_key_down(
 
     let reg = get_registry().lock().unwrap();
     if let Some(win) = reg.get(&win_id) {
-        let is_down = win
-            .keys_down
-            .iter()
-            .any(|k| k.to_lowercase() == target_key);
+        let is_down = win.keys_down.iter().any(|k| k.to_lowercase() == target_key);
         Ok(Value::Bool(is_down))
     } else {
         Ok(Value::Bool(false))
@@ -947,11 +949,19 @@ fn blend_pixel(bg: u32, fg: u32) -> u32 {
     }
 }
 
-fn gui_load_image(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn gui_load_image(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("gui.load_image", 1, &args, span)?;
     let path = match &args[0] {
         Value::String(s) => s.clone(),
-        _ => return Err(RuntimeError::new("gui.load_image: expected file path string".into()).at(span)),
+        _ => {
+            return Err(
+                RuntimeError::new("gui.load_image: expected file path string".into()).at(span),
+            );
+        }
     };
 
     let img = match image::open(&path) {
@@ -989,9 +999,16 @@ fn gui_load_image(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<V
     Ok(Value::Map(Arc::new(RwLock::new(map))))
 }
 
-fn gui_create_image(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn gui_create_image(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.len() < 2 {
-        return Err(RuntimeError::new("gui.create_image expects (width, height, [fill_color])".into()).at(span));
+        return Err(RuntimeError::new(
+            "gui.create_image expects (width, height, [fill_color])".into(),
+        )
+        .at(span));
     }
     let w = to_usize(&args[0]).unwrap_or(32).max(1);
     let h = to_usize(&args[1]).unwrap_or(32).max(1);
@@ -1017,9 +1034,15 @@ fn gui_create_image(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result
     Ok(Value::Map(Arc::new(RwLock::new(map))))
 }
 
-fn gui_draw_image(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn gui_draw_image(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.len() < 4 {
-        return Err(RuntimeError::new("gui.draw_image expects (window, image, x, y)".into()).at(span));
+        return Err(
+            RuntimeError::new("gui.draw_image expects (window, image, x, y)".into()).at(span),
+        );
     }
     let win_id = match to_win_id(&args[0]) {
         Some(id) => id,
@@ -1069,9 +1092,16 @@ fn gui_draw_image(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<V
     Ok(Value::Null)
 }
 
-fn gui_draw_image_scaled(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn gui_draw_image_scaled(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.len() < 6 {
-        return Err(RuntimeError::new("gui.draw_image_scaled expects (window, image, x, y, target_w, target_h)".into()).at(span));
+        return Err(RuntimeError::new(
+            "gui.draw_image_scaled expects (window, image, x, y, target_w, target_h)".into(),
+        )
+        .at(span));
     }
     let win_id = match to_win_id(&args[0]) {
         Some(id) => id,
@@ -1127,7 +1157,11 @@ fn gui_draw_image_scaled(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> R
     Ok(Value::Null)
 }
 
-fn gui_draw_sprite(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn gui_draw_sprite(
+    ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.len() == 4 {
         return gui_draw_sprite_retro(ev, args, span);
     }
@@ -1195,11 +1229,20 @@ fn gui_draw_sprite(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<V
     Ok(Value::Null)
 }
 
-fn gui_image_size(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn gui_image_size(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("gui.image_size", 1, &args, span)?;
     let img_id = match to_image_id(&args[0]) {
         Some(id) => id,
-        None => return Ok(Value::Array(Arc::new(RwLock::new(vec![Value::Int(0), Value::Int(0)])))),
+        None => {
+            return Ok(Value::Array(Arc::new(RwLock::new(vec![
+                Value::Int(0),
+                Value::Int(0),
+            ]))));
+        }
     };
 
     let img_reg = get_image_registry().lock().unwrap();
@@ -1209,11 +1252,18 @@ fn gui_image_size(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<V
             Value::Int(img.height as i64),
         ]))))
     } else {
-        Ok(Value::Array(Arc::new(RwLock::new(vec![Value::Int(0), Value::Int(0)]))))
+        Ok(Value::Array(Arc::new(RwLock::new(vec![
+            Value::Int(0),
+            Value::Int(0),
+        ]))))
     }
 }
 
-fn gui_get_image_pixel(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn gui_get_image_pixel(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.len() < 3 {
         return Err(RuntimeError::new("gui.get_image_pixel expects (image, x, y)".into()).at(span));
     }
@@ -1234,9 +1284,15 @@ fn gui_get_image_pixel(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Res
     Ok(Value::Int(0))
 }
 
-fn gui_set_image_pixel(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn gui_set_image_pixel(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.len() < 4 {
-        return Err(RuntimeError::new("gui.set_image_pixel expects (image, x, y, color)".into()).at(span));
+        return Err(
+            RuntimeError::new("gui.set_image_pixel expects (image, x, y, color)".into()).at(span),
+        );
     }
     let img_id = match to_image_id(&args[0]) {
         Some(id) => id,
@@ -1265,7 +1321,6 @@ fn gui_set_image_pixel(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Res
     }
     Ok(Value::Null)
 }
-
 
 // ============================================================================
 // Retro Canvas & Graphics Engine (Milestone 3 Integration)
@@ -1732,7 +1787,10 @@ pub fn parse_color_str(s: &str) -> u32 {
     let trimmed = s.trim();
     if let Some(hex) = trimmed.strip_prefix('#') {
         u32::from_str_radix(hex, 16).unwrap_or(0xFFFFFF) & 0x00FFFFFF
-    } else if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+    } else if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
         u32::from_str_radix(hex, 16).unwrap_or(0xFFFFFF) & 0x00FFFFFF
     } else {
         match trimmed.to_lowercase().as_str() {
@@ -1853,7 +1911,11 @@ fn gui_get_dimensions(
     Ok(Value::Array(Arc::new(RwLock::new(dims))))
 }
 
-fn gui_clear_retro(_ev: &mut Evaluator, args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+fn gui_clear_retro(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
     let color = if !args.is_empty() {
         parse_color_value(&args[0])
     } else {

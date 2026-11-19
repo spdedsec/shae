@@ -1,5 +1,5 @@
-use std::sync::{Arc, RwLock};
 use crate::value::Value;
+use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone)]
 pub struct ByteBuffer {
@@ -32,7 +32,10 @@ impl ByteBuffer {
 
     pub fn from_hex(hex: &str) -> Result<Self, String> {
         let clean = hex.trim();
-        let clean = clean.strip_prefix("0x").or_else(|| clean.strip_prefix("0X")).unwrap_or(clean);
+        let clean = clean
+            .strip_prefix("0x")
+            .or_else(|| clean.strip_prefix("0X"))
+            .unwrap_or(clean);
         if clean.len() % 2 != 0 {
             return Err("Hex string must have an even number of digits".to_string());
         }
@@ -217,28 +220,48 @@ impl ByteBuffer {
         self.check_bounds(pos, 4)?;
         let guard = self.storage.read().unwrap();
         let idx = self.offset + pos;
-        Ok(u32::from_le_bytes([guard[idx], guard[idx + 1], guard[idx + 2], guard[idx + 3]]))
+        Ok(u32::from_le_bytes([
+            guard[idx],
+            guard[idx + 1],
+            guard[idx + 2],
+            guard[idx + 3],
+        ]))
     }
 
     pub fn read_u32_be(&self, pos: usize) -> Result<u32, String> {
         self.check_bounds(pos, 4)?;
         let guard = self.storage.read().unwrap();
         let idx = self.offset + pos;
-        Ok(u32::from_be_bytes([guard[idx], guard[idx + 1], guard[idx + 2], guard[idx + 3]]))
+        Ok(u32::from_be_bytes([
+            guard[idx],
+            guard[idx + 1],
+            guard[idx + 2],
+            guard[idx + 3],
+        ]))
     }
 
     pub fn read_i32_le(&self, pos: usize) -> Result<i32, String> {
         self.check_bounds(pos, 4)?;
         let guard = self.storage.read().unwrap();
         let idx = self.offset + pos;
-        Ok(i32::from_le_bytes([guard[idx], guard[idx + 1], guard[idx + 2], guard[idx + 3]]))
+        Ok(i32::from_le_bytes([
+            guard[idx],
+            guard[idx + 1],
+            guard[idx + 2],
+            guard[idx + 3],
+        ]))
     }
 
     pub fn read_i32_be(&self, pos: usize) -> Result<i32, String> {
         self.check_bounds(pos, 4)?;
         let guard = self.storage.read().unwrap();
         let idx = self.offset + pos;
-        Ok(i32::from_be_bytes([guard[idx], guard[idx + 1], guard[idx + 2], guard[idx + 3]]))
+        Ok(i32::from_be_bytes([
+            guard[idx],
+            guard[idx + 1],
+            guard[idx + 2],
+            guard[idx + 3],
+        ]))
     }
 
     pub fn read_u64_le(&self, pos: usize) -> Result<u64, String> {
@@ -281,14 +304,24 @@ impl ByteBuffer {
         self.check_bounds(pos, 4)?;
         let guard = self.storage.read().unwrap();
         let idx = self.offset + pos;
-        Ok(f32::from_le_bytes([guard[idx], guard[idx + 1], guard[idx + 2], guard[idx + 3]]))
+        Ok(f32::from_le_bytes([
+            guard[idx],
+            guard[idx + 1],
+            guard[idx + 2],
+            guard[idx + 3],
+        ]))
     }
 
     pub fn read_f32_be(&self, pos: usize) -> Result<f32, String> {
         self.check_bounds(pos, 4)?;
         let guard = self.storage.read().unwrap();
         let idx = self.offset + pos;
-        Ok(f32::from_be_bytes([guard[idx], guard[idx + 1], guard[idx + 2], guard[idx + 3]]))
+        Ok(f32::from_be_bytes([
+            guard[idx],
+            guard[idx + 1],
+            guard[idx + 2],
+            guard[idx + 3],
+        ]))
     }
 
     pub fn read_f64_le(&self, pos: usize) -> Result<f64, String> {
@@ -620,7 +653,11 @@ pub enum FieldType {
 impl FieldType {
     pub fn size(&self) -> usize {
         match self {
-            FieldType::Pad | FieldType::Char | FieldType::Int8 | FieldType::UInt8 | FieldType::Bool => 1,
+            FieldType::Pad
+            | FieldType::Char
+            | FieldType::Int8
+            | FieldType::UInt8
+            | FieldType::Bool => 1,
             FieldType::Int16 | FieldType::UInt16 => 2,
             FieldType::Int32 | FieldType::UInt32 | FieldType::Float32 => 4,
             FieldType::Int64 | FieldType::UInt64 | FieldType::Float64 => 8,
@@ -697,7 +734,9 @@ impl StructEngine {
                 match chars.next() {
                     Some(c) => c,
                     None => {
-                        return Err("Format string ended prematurely after repeat count".to_string());
+                        return Err(
+                            "Format string ended prematurely after repeat count".to_string()
+                        );
                     }
                 }
             } else {
@@ -778,7 +817,10 @@ impl StructEngine {
                         Value::String(s) => s.as_bytes().first().copied().unwrap_or(0),
                         Value::Int(i) => *i as u8,
                         other => {
-                            return Err(format!("Expected char/string for 'c', got {}", other.type_name()));
+                            return Err(format!(
+                                "Expected char/string for 'c', got {}",
+                                other.type_name()
+                            ));
                         }
                     };
                     out[byte_pos] = byte;
@@ -925,7 +967,12 @@ impl StructEngine {
         Ok(ByteBuffer::from_vec(out))
     }
 
-    pub fn pack_into(fmt: &str, buf: &mut ByteBuffer, offset: usize, values: &[Value]) -> Result<usize, String> {
+    pub fn pack_into(
+        fmt: &str,
+        buf: &mut ByteBuffer,
+        offset: usize,
+        values: &[Value],
+    ) -> Result<usize, String> {
         let packed = Self::pack(fmt, values)?;
         let packed_len = packed.len();
         buf.check_bounds(offset, packed_len)?;
@@ -940,10 +987,15 @@ impl StructEngine {
     pub fn unpack(fmt: &str, data: &[u8], offset: usize) -> Result<Vec<Value>, String> {
         let (endianness, fields) = Self::parse_format(fmt)?;
         let total_size: usize = fields.iter().map(|f| f.size()).sum();
-        if offset.checked_add(total_size).map_or(true, |end| end > data.len()) {
+        if offset
+            .checked_add(total_size)
+            .map_or(true, |end| end > data.len())
+        {
             return Err(format!(
                 "unpack requires a buffer of at least {} bytes at offset {}, but buffer length is {}",
-                total_size, offset, data.len()
+                total_size,
+                offset,
+                data.len()
             ));
         }
 

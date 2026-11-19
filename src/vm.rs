@@ -1266,7 +1266,10 @@ impl VM {
                                     } else {
                                         runtime_error!(
                                             self,
-                                            format!("Buffer element must be in range 0..255, got {}", n)
+                                            format!(
+                                                "Buffer element must be in range 0..255, got {}",
+                                                n
+                                            )
                                         );
                                     }
                                 }
@@ -1276,31 +1279,33 @@ impl VM {
                                     } else {
                                         runtime_error!(
                                             self,
-                                            format!("Buffer element must be an integer in range 0..255, got {}", f)
+                                            format!(
+                                                "Buffer element must be an integer in range 0..255, got {}",
+                                                f
+                                            )
                                         );
                                     }
                                 }
                                 _ => {
-                                    runtime_error!(self, "Buffer element must be a byte number (0..255)");
+                                    runtime_error!(
+                                        self,
+                                        "Buffer element must be a byte number (0..255)"
+                                    );
                                 }
                             };
                             let len = b.read().unwrap().len();
                             let idx_res = match index {
                                 Value::Int(i) => resolve_int_index(i, len),
-                                Value::Float(f) | Value::Number(f) => {
-                                    resolve_index(f, len)
-                                }
+                                Value::Float(f) | Value::Number(f) => resolve_index(f, len),
                                 _ => {
                                     runtime_error!(self, "Buffer index must be a number.");
                                 }
                             };
                             match idx_res {
-                                Ok(idx) => {
-                                    match b.write().unwrap().set_byte(idx, byte_val) {
-                                        Ok(()) => self.stack.push(value),
-                                        Err(e) => runtime_error!(self, e),
-                                    }
-                                }
+                                Ok(idx) => match b.write().unwrap().set_byte(idx, byte_val) {
+                                    Ok(()) => self.stack.push(value),
+                                    Err(e) => runtime_error!(self, e),
+                                },
                                 Err(IndexError::NotWhole) => {
                                     runtime_error!(self, "Buffer index must be a whole number.");
                                 }
@@ -1632,7 +1637,13 @@ impl VM {
                         Value::RemoteActor(ref _rem) => {
                             if matches!(
                                 property.as_str(),
-                                "send" | "ask" | "reload" | "is_alive" | "isAlive" | "node" | "name"
+                                "send"
+                                    | "ask"
+                                    | "reload"
+                                    | "is_alive"
+                                    | "isAlive"
+                                    | "node"
+                                    | "name"
                             ) {
                                 self.stack.push(Value::BoundMethod {
                                     object: Box::new(target.clone()),
@@ -1748,7 +1759,8 @@ impl VM {
                             if property == "len" {
                                 self.stack.push(Value::Int(b.read().unwrap().len() as i64));
                             } else if property == "offset" {
-                                self.stack.push(Value::Int(b.read().unwrap().offset() as i64));
+                                self.stack
+                                    .push(Value::Int(b.read().unwrap().offset() as i64));
                             } else if crate::buffer::is_buffer_method(&property) {
                                 self.stack.push(Value::BoundMethod {
                                     object: Box::new(target.clone()),

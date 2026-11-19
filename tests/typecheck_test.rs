@@ -347,9 +347,9 @@ fn test_implicit_return_type_validation() {
     "#;
     let diags2 = check_source(invalid_fn_src);
     assert!(
-        diags2
-            .iter()
-            .any(|d| d.message.contains("Return type mismatch: expected 'int', found 'string'")),
+        diags2.iter().any(|d| d
+            .message
+            .contains("Return type mismatch: expected 'int', found 'string'")),
         "Expected return type mismatch for invalid implicit return, got: {:?}",
         diags2
     );
@@ -362,9 +362,9 @@ fn test_implicit_return_type_validation() {
     "#;
     let diags3 = check_source(invalid_lambda_src);
     assert!(
-        diags3
-            .iter()
-            .any(|d| d.message.contains("Return type mismatch: expected 'int', found 'string'")),
+        diags3.iter().any(|d| d
+            .message
+            .contains("Return type mismatch: expected 'int', found 'string'")),
         "Expected return type mismatch in lambda, got: {:?}",
         diags3
     );

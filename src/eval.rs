@@ -796,7 +796,8 @@ impl Evaluator {
                                     return Err(RuntimeError::new(format!(
                                         "Buffer element must be in range 0..255, got {}",
                                         n
-                                    )).at(*span));
+                                    ))
+                                    .at(*span));
                                 }
                             }
                             Value::Float(f) | Value::Number(f) => {
@@ -806,13 +807,15 @@ impl Evaluator {
                                     return Err(RuntimeError::new(format!(
                                         "Buffer element must be an integer in range 0..255, got {}",
                                         f
-                                    )).at(*span));
+                                    ))
+                                    .at(*span));
                                 }
                             }
                             _ => {
                                 return Err(RuntimeError::new(
                                     "Buffer element must be a byte number (0..255)".into(),
-                                ).at(*span));
+                                )
+                                .at(*span));
                             }
                         };
                         let len = b.read().unwrap().len();
@@ -820,24 +823,27 @@ impl Evaluator {
                             Value::Int(i) => resolve_int_index(i, len),
                             Value::Float(n) | Value::Number(n) => resolve_index(n, len),
                             _ => {
-                                return Err(RuntimeError::new("Buffer index must be a number".into()).at(*span));
+                                return Err(RuntimeError::new(
+                                    "Buffer index must be a number".into(),
+                                )
+                                .at(*span));
                             }
                         };
                         match res {
-                            Ok(i) => {
-                                match b.write().unwrap().set_byte(i, byte_val) {
-                                    Ok(()) => Ok(()),
-                                    Err(e) => Err(RuntimeError::new(e).at(*span)),
-                                }
-                            }
+                            Ok(i) => match b.write().unwrap().set_byte(i, byte_val) {
+                                Ok(()) => Ok(()),
+                                Err(e) => Err(RuntimeError::new(e).at(*span)),
+                            },
                             Err(IndexError::NotWhole) => Err(RuntimeError::new(
                                 "Buffer index must be a whole number".into(),
-                            ).at(*span)),
+                            )
+                            .at(*span)),
                             Err(IndexError::OutOfRange(_)) => Err(RuntimeError::new(format!(
                                 "Index {} out of bounds for buffer of length {}",
                                 idx_val.to_display(),
                                 len
-                            )).at(*span)),
+                            ))
+                            .at(*span)),
                         }
                     }
                     other => Err(RuntimeError::new(format!(
@@ -4354,9 +4360,7 @@ impl Evaluator {
                             Ok(Value::Bool(sup.is_alive()))
                         }
                     }
-                    (Value::ByteBuffer(b), _) => {
-                        eval_buffer_bound_method(&b, &method, args, span)
-                    }
+                    (Value::ByteBuffer(b), _) => eval_buffer_bound_method(&b, &method, args, span),
                     _ => Err(RuntimeError::new(format!("Method {} not found", method)).at(span)),
                 }
             }
@@ -4604,7 +4608,6 @@ impl Evaluator {
         }
     }
 }
-
 
 fn eval_buffer_bound_method(
     b: &std::sync::Arc<std::sync::RwLock<crate::buffer::ByteBuffer>>,
@@ -5002,11 +5005,7 @@ fn eval_buffer_bound_method(
                 .map_err(|e| RuntimeError::new(e).at(span))?;
             Ok(Value::Int(8))
         }
-        _ => Err(RuntimeError::new(format!(
-            "Method {} not found on ByteBuffer",
-            method
-        ))
-        .at(span)),
+        _ => Err(RuntimeError::new(format!("Method {} not found on ByteBuffer", method)).at(span)),
     }
 }
 
@@ -5016,25 +5015,19 @@ fn get_read_pos(
     span: crate::ast::Span,
 ) -> Result<usize, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::new(format!(
-            "{}() expects 1 argument (offset)",
-            method
-        ))
-        .at(span));
+        return Err(
+            RuntimeError::new(format!("{}() expects 1 argument (offset)", method)).at(span),
+        );
     }
     match &args[0] {
         Value::Int(n) if *n >= 0 => Ok(*n as usize),
         Value::Float(f) | Value::Number(f) if *f >= 0.0 && f.fract() == 0.0 => Ok(*f as usize),
-        Value::Int(n) if *n < 0 => Err(RuntimeError::new(format!(
-            "Offset cannot be negative, got {}",
-            n
-        ))
-        .at(span)),
-        Value::Float(f) | Value::Number(f) if *f < 0.0 => Err(RuntimeError::new(format!(
-            "Offset cannot be negative, got {}",
-            f
-        ))
-        .at(span)),
+        Value::Int(n) if *n < 0 => {
+            Err(RuntimeError::new(format!("Offset cannot be negative, got {}", n)).at(span))
+        }
+        Value::Float(f) | Value::Number(f) if *f < 0.0 => {
+            Err(RuntimeError::new(format!("Offset cannot be negative, got {}", f)).at(span))
+        }
         other => Err(RuntimeError::new(format!(
             "{}() offset must be an integer, got {}",
             method,
@@ -5050,20 +5043,22 @@ fn get_write_pos_int(
     span: crate::ast::Span,
 ) -> Result<(usize, i64), RuntimeError> {
     if args.len() != 2 {
-        return Err(RuntimeError::new(format!(
-            "{}() expects 2 arguments (offset, value)",
-            method
-        ))
-        .at(span));
+        return Err(
+            RuntimeError::new(format!("{}() expects 2 arguments (offset, value)", method)).at(span),
+        );
     }
     let pos = match &args[0] {
         Value::Int(n) if *n >= 0 => *n as usize,
         Value::Float(f) | Value::Number(f) if *f >= 0.0 && f.fract() == 0.0 => *f as usize,
         Value::Int(n) if *n < 0 => {
-            return Err(RuntimeError::new(format!("Offset cannot be negative, got {}", n)).at(span));
+            return Err(
+                RuntimeError::new(format!("Offset cannot be negative, got {}", n)).at(span),
+            );
         }
         Value::Float(f) | Value::Number(f) if *f < 0.0 => {
-            return Err(RuntimeError::new(format!("Offset cannot be negative, got {}", f)).at(span));
+            return Err(
+                RuntimeError::new(format!("Offset cannot be negative, got {}", f)).at(span),
+            );
         }
         other => {
             return Err(RuntimeError::new(format!(
@@ -5095,20 +5090,22 @@ fn get_write_pos_float(
     span: crate::ast::Span,
 ) -> Result<(usize, f64), RuntimeError> {
     if args.len() != 2 {
-        return Err(RuntimeError::new(format!(
-            "{}() expects 2 arguments (offset, value)",
-            method
-        ))
-        .at(span));
+        return Err(
+            RuntimeError::new(format!("{}() expects 2 arguments (offset, value)", method)).at(span),
+        );
     }
     let pos = match &args[0] {
         Value::Int(n) if *n >= 0 => *n as usize,
         Value::Float(f) | Value::Number(f) if *f >= 0.0 && f.fract() == 0.0 => *f as usize,
         Value::Int(n) if *n < 0 => {
-            return Err(RuntimeError::new(format!("Offset cannot be negative, got {}", n)).at(span));
+            return Err(
+                RuntimeError::new(format!("Offset cannot be negative, got {}", n)).at(span),
+            );
         }
         Value::Float(f) | Value::Number(f) if *f < 0.0 => {
-            return Err(RuntimeError::new(format!("Offset cannot be negative, got {}", f)).at(span));
+            return Err(
+                RuntimeError::new(format!("Offset cannot be negative, got {}", f)).at(span),
+            );
         }
         other => {
             return Err(RuntimeError::new(format!(

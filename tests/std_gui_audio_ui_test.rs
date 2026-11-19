@@ -168,7 +168,11 @@ fn test_ui_module_rust_api() {
 
     // Draw components without panic
     shae::ui::draw_panel_internal(5, 5, 40, 30, 0x00FF00, 0x000000);
-    let options = vec!["PLAY".to_string(), "OPTIONS".to_string(), "EXIT".to_string()];
+    let options = vec![
+        "PLAY".to_string(),
+        "OPTIONS".to_string(),
+        "EXIT".to_string(),
+    ];
     shae::ui::draw_menu_internal("SPACE INVADERS", &options, 0, 5, 5, 40, 30);
     shae::ui::draw_score_board_internal(1200, 5000, 2, 2, 45);
     shae::ui::draw_lives_internal(3, 3, 2, 35);

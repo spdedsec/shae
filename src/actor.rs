@@ -698,16 +698,18 @@ impl ActorRef {
                                     _ => Evaluator::new(),
                                 };
                                 let trimmed = code.trim();
-                                let runnable = if trimmed.starts_with("fn(") || trimmed.starts_with("fn (") {
-                                    format!("let _h = {}; _h", trimmed)
-                                } else {
-                                    code.to_string()
-                                };
+                                let runnable =
+                                    if trimmed.starts_with("fn(") || trimmed.starts_with("fn (") {
+                                        format!("let _h = {}; _h", trimmed)
+                                    } else {
+                                        code.to_string()
+                                    };
                                 match crate::run_in_evaluator(&runnable, &mut ev) {
                                     Ok(v) => v,
                                     Err(e) => {
                                         reload_ok = false;
-                                        reload_err = Some(format!("Failed to compile handler code: {}", e));
+                                        reload_err =
+                                            Some(format!("Failed to compile handler code: {}", e));
                                         Value::Null
                                     }
                                 }
@@ -733,7 +735,9 @@ impl ActorRef {
                                                 _ => Evaluator::new(),
                                             };
                                             let trimmed = code.trim();
-                                            let runnable = if trimmed.starts_with("fn(") || trimmed.starts_with("fn (") {
+                                            let runnable = if trimmed.starts_with("fn(")
+                                                || trimmed.starts_with("fn (")
+                                            {
                                                 format!("let _m = {}; _m", trimmed)
                                             } else {
                                                 code.to_string()
@@ -806,7 +810,9 @@ impl ActorRef {
                             } else {
                                 Value::Array(Arc::new(RwLock::new(vec![
                                     Value::String("err".into()),
-                                    Value::String(reload_err.unwrap_or_else(|| "Reload failed".into())),
+                                    Value::String(
+                                        reload_err.unwrap_or_else(|| "Reload failed".into()),
+                                    ),
                                 ])))
                             };
                             let _ = reply_tx.send(envelope, span);

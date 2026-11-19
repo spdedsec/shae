@@ -593,7 +593,9 @@ impl Value {
             Value::RemoteActor(r) => Value::RemoteActor(Arc::clone(r)),
             Value::ClusterNode(c) => Value::ClusterNode(Arc::clone(c)),
             Value::Supervisor(s) => Value::Supervisor(Arc::clone(s)),
-            Value::ByteBuffer(b) => Value::ByteBuffer(Arc::new(RwLock::new(b.read().unwrap().copy()))),
+            Value::ByteBuffer(b) => {
+                Value::ByteBuffer(Arc::new(RwLock::new(b.read().unwrap().copy())))
+            }
             Value::FfiLibrary(l) => Value::FfiLibrary(Arc::clone(l)),
             Value::FfiFunction(f) => Value::FfiFunction(Arc::clone(f)),
             Value::CompiledFunction(f) => Value::CompiledFunction(Arc::clone(f)),
@@ -767,7 +769,9 @@ impl Value {
             Value::RemoteActor(r) => Value::RemoteActor(Arc::clone(r)),
             Value::ClusterNode(c) => Value::ClusterNode(Arc::clone(c)),
             Value::Supervisor(s) => Value::Supervisor(Arc::clone(s)),
-            Value::ByteBuffer(b) => Value::ByteBuffer(Arc::new(RwLock::new(b.read().unwrap().copy()))),
+            Value::ByteBuffer(b) => {
+                Value::ByteBuffer(Arc::new(RwLock::new(b.read().unwrap().copy())))
+            }
             Value::FfiLibrary(l) => Value::FfiLibrary(Arc::clone(l)),
             Value::FfiFunction(f) => Value::FfiFunction(Arc::clone(f)),
             Value::CompiledFunction(f) => Value::CompiledFunction(Arc::clone(f)),
@@ -878,13 +882,16 @@ impl PartialEq for Value {
                 if a_bytes.len() != b_guard.len() {
                     false
                 } else {
-                    a_bytes.iter().zip(b_guard.iter()).all(|(&ab, bv)| match bv {
-                        Value::Int(i) => ab as i64 == *i,
-                        Value::Float(f) | Value::Number(f) => ab as f64 == *f,
-                        _ => false,
-                    })
+                    a_bytes
+                        .iter()
+                        .zip(b_guard.iter())
+                        .all(|(&ab, bv)| match bv {
+                            Value::Int(i) => ab as i64 == *i,
+                            Value::Float(f) | Value::Number(f) => ab as f64 == *f,
+                            _ => false,
+                        })
                 }
-            },
+            }
             (Value::CompiledFunction(a), Value::CompiledFunction(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::Closure(a), Value::Closure(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::GcArray(a), Value::GcArray(b)) => a == b,

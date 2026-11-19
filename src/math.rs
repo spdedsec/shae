@@ -98,14 +98,22 @@ pub fn math_pow(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
     expect_args("math.pow", 2, &args, span)?;
     let base = to_f64(&args[0], "math.pow", span)?;
     let exp = to_f64(&args[1], "math.pow", span)?;
-    if matches!(&args[0], Value::Int(_)) && matches!(&args[1], Value::Int(_)) && exp >= 0.0 && exp <= 30.0 {
+    if matches!(&args[0], Value::Int(_))
+        && matches!(&args[1], Value::Int(_))
+        && exp >= 0.0
+        && exp <= 30.0
+    {
         Ok(Value::Int((base as i64).pow(exp as u32)))
     } else {
         Ok(Value::Float(base.powf(exp)))
     }
 }
 
-pub fn math_floor(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+pub fn math_floor(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("math.floor", 1, &args, span)?;
     let val = to_f64(&args[0], "math.floor", span)?;
     Ok(Value::Int(val.floor() as i64))
@@ -117,7 +125,11 @@ pub fn math_ceil(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
     Ok(Value::Int(val.ceil() as i64))
 }
 
-pub fn math_round(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+pub fn math_round(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("math.round", 1, &args, span)?;
     let val = to_f64(&args[0], "math.round", span)?;
     Ok(Value::Int(val.round() as i64))
@@ -141,19 +153,30 @@ pub fn math_tan(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Val
     Ok(Value::Float(val.tan()))
 }
 
-pub fn math_atan2(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+pub fn math_atan2(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("math.atan2", 2, &args, span)?;
     let y = to_f64(&args[0], "math.atan2", span)?;
     let x = to_f64(&args[1], "math.atan2", span)?;
     Ok(Value::Float(y.atan2(x)))
 }
 
-pub fn math_clamp(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+pub fn math_clamp(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("math.clamp", 3, &args, span)?;
     let val = to_f64(&args[0], "math.clamp", span)?;
     let min = to_f64(&args[1], "math.clamp", span)?;
     let max = to_f64(&args[2], "math.clamp", span)?;
-    if matches!(&args[0], Value::Int(_)) && matches!(&args[1], Value::Int(_)) && matches!(&args[2], Value::Int(_)) {
+    if matches!(&args[0], Value::Int(_))
+        && matches!(&args[1], Value::Int(_))
+        && matches!(&args[2], Value::Int(_))
+    {
         Ok(Value::Int((val as i64).clamp(min as i64, max as i64)))
     } else {
         Ok(Value::Float(val.clamp(min, max)))

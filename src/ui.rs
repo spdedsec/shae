@@ -25,11 +25,7 @@ pub fn menu_select_internal(current: i64, dir: i64, count: i64) -> i64 {
         return 0;
     }
     let res = (current + dir) % count;
-    if res < 0 {
-        res + count
-    } else {
-        res
-    }
+    if res < 0 { res + count } else { res }
 }
 
 // -------------------------------------------------------------
@@ -97,10 +93,7 @@ pub fn draw_score_board_internal(score: i64, high_score: i64, x: i64, y: i64, w:
 pub fn draw_lives_internal(lives: i64, _max_lives: i64, x: i64, y: i64) {
     draw_text_internal(x, y, "LIVES:", 0xFFFFFF);
 
-    let mini_ship = [
-        " █ ".to_string(),
-        "███".to_string(),
-    ];
+    let mini_ship = [" █ ".to_string(), "███".to_string()];
 
     let ship_x_start = x + 42;
     let count = lives.clamp(0, 10);
@@ -201,11 +194,7 @@ fn ui_draw_score_board(
     Ok(Value::Null)
 }
 
-fn ui_draw_lives(
-    _ev: &mut Evaluator,
-    args: Vec<Value>,
-    span: Span,
-) -> Result<Value, RuntimeError> {
+fn ui_draw_lives(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     expect_args("ui.draw_lives", 4, &args, span)?;
     let lives = val_to_i64(&args[0]);
     let max_lives = val_to_i64(&args[1]);

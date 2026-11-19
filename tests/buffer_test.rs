@@ -1,3 +1,4 @@
+#![allow(clippy::approx_constant)]
 use shae::run;
 use shae::run_vm;
 use shae::value::Value;
@@ -269,7 +270,10 @@ fn test_struct_packing_unpacking_calcsize_dual_engine() {
     let res_vm = run_vm(script).expect("VM struct packing should succeed");
     let res_ast = run(script).expect("AST struct packing should succeed");
 
-    assert_eq!(res_vm, res_ast, "VM and AST struct pack/unpack results must match");
+    assert_eq!(
+        res_vm, res_ast,
+        "VM and AST struct pack/unpack results must match"
+    );
 
     match res_vm {
         Value::Array(arr) => {

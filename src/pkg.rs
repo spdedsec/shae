@@ -1,16 +1,16 @@
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
+use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use flate2::Compression;
-use tar::{Archive, Builder};
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
-use ring::digest::{digest, SHA256};
+use ring::digest::{SHA256, digest};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tar::{Archive, Builder};
 
 pub const SHAEPKG_MAGIC: &[u8] = b"SHAEPKG1";
 
@@ -408,15 +408,17 @@ impl PackageIndexEntry {
                     return Ok(v);
                 }
             }
-            self.versions
-                .values()
-                .last()
-                .ok_or_else(|| PkgError::NotFound(self.name.clone(), "No versions available".into()))
+            self.versions.values().last().ok_or_else(|| {
+                PkgError::NotFound(self.name.clone(), "No versions available".into())
+            })
         }
     }
 }
 
-pub fn fetch_package_index(registry_url: &str, pkg_name: &str) -> Result<PackageIndexEntry, PkgError> {
+pub fn fetch_package_index(
+    registry_url: &str,
+    pkg_name: &str,
+) -> Result<PackageIndexEntry, PkgError> {
     validate_package_name(pkg_name)?;
     let base = registry_url.trim().trim_end_matches('/');
     let client = reqwest::blocking::Client::builder()
@@ -427,9 +429,7 @@ pub fn fetch_package_index(registry_url: &str, pkg_name: &str) -> Result<Package
     let url1 = format!("{}/packages/{}.json", base, pkg_name);
     let resp1 = client.get(&url1).send();
     let body = match resp1 {
-        Ok(r) if r.status().is_success() => {
-            r.text().map_err(|e| PkgError::Http(e.to_string()))?
-        }
+        Ok(r) if r.status().is_success() => r.text().map_err(|e| PkgError::Http(e.to_string()))?,
         _ => {
             let url2 = format!("{}/index/{}.json", base, pkg_name);
             let r2 = client
@@ -446,11 +446,18 @@ pub fn fetch_package_index(registry_url: &str, pkg_name: &str) -> Result<Package
         }
     };
 
-    serde_json::from_str(&body)
-        .map_err(|e| PkgError::Registry(format!("Failed to parse index JSON for '{}': {}", pkg_name, e)))
+    serde_json::from_str(&body).map_err(|e| {
+        PkgError::Registry(format!(
+            "Failed to parse index JSON for '{}': {}",
+            pkg_name, e
+        ))
+    })
 }
 
-pub fn download_package_archive(download_url: &str, registry_url: &str) -> Result<Vec<u8>, PkgError> {
+pub fn download_package_archive(
+    download_url: &str,
+    registry_url: &str,
+) -> Result<Vec<u8>, PkgError> {
     let url = if download_url.starts_with("http://") || download_url.starts_with("https://") {
         download_url.to_string()
     } else {
@@ -477,7 +484,10 @@ pub fn download_package_archive(download_url: &str, registry_url: &str) -> Resul
         )));
     }
 
-    let bytes = resp.bytes().map_err(|e| PkgError::Http(e.to_string()))?.to_vec();
+    let bytes = resp
+        .bytes()
+        .map_err(|e| PkgError::Http(e.to_string()))?
+        .to_vec();
     Ok(bytes)
 }
 
@@ -568,7 +578,8 @@ pub fn extract_shaepkg(bytes: &[u8], target_dir: &Path) -> Result<(), PkgError> 
         extract_tar(bytes, target_dir)
     } else {
         Err(PkgError::Archive(
-            "Unrecognized package archive format (expected SHAEPKG1 magic, JSON envelope, or tar)".into(),
+            "Unrecognized package archive format (expected SHAEPKG1 magic, JSON envelope, or tar)"
+                .into(),
         ))
     }
 }
@@ -596,9 +607,9 @@ fn extract_json_archive(payload: &[u8], target_dir: &Path) -> Result<(), PkgErro
                     fs::create_dir_all(parent)?;
                 }
                 if item.is_binary {
-                    let decoded = BASE64_STANDARD
-                        .decode(item.content.trim())
-                        .map_err(|e| PkgError::Archive(format!("Base64 decode error for '{}': {}", item.path, e)))?;
+                    let decoded = BASE64_STANDARD.decode(item.content.trim()).map_err(|e| {
+                        PkgError::Archive(format!("Base64 decode error for '{}': {}", item.path, e))
+                    })?;
                     fs::write(&dest, decoded)?;
                 } else {
                     fs::write(&dest, item.content)?;
@@ -631,15 +642,21 @@ pub fn extract_tar(bytes: &[u8], target_dir: &Path) -> Result<(), PkgError> {
         }
 
         let raw_name = &block[0..100];
-        let name_end = raw_name.iter().position(|&b| b == 0).unwrap_or(raw_name.len());
-        let name = String::from_utf8_lossy(&raw_name[..name_end]).trim().to_string();
+        let name_end = raw_name
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(raw_name.len());
+        let name = String::from_utf8_lossy(&raw_name[..name_end])
+            .trim()
+            .to_string();
         if name.is_empty() {
             continue;
         }
 
         let raw_size = &block[124..136];
         let size_str = String::from_utf8_lossy(raw_size);
-        let size = u64::from_str_radix(size_str.trim().trim_matches('\0').trim(), 8).unwrap_or(0) as usize;
+        let size =
+            u64::from_str_radix(size_str.trim().trim_matches('\0').trim(), 8).unwrap_or(0) as usize;
 
         let typeflag = block[156];
 
@@ -758,7 +775,10 @@ pub fn pack_package(dir: &Path, output_file: Option<&Path>) -> Result<PackResult
 
     let target_path = match output_file {
         Some(p) => p.to_path_buf(),
-        None => dir.join(format!("{}-{}.shaepkg", manifest.package.name, manifest.package.version)),
+        None => dir.join(format!(
+            "{}-{}.shaepkg",
+            manifest.package.name, manifest.package.version
+        )),
     };
 
     if let Some(parent) = target_path.parent() {
@@ -818,9 +838,13 @@ pub fn unpack_package(archive_path: &Path, dest_dir: &Path) -> Result<PathBuf, P
         if let Some(parent) = target_file.parent() {
             fs::create_dir_all(parent).map_err(PkgError::Io)?;
         }
-        entry
-            .unpack(&target_file)
-            .map_err(|e| PkgError::UnpackError(format!("Failed to unpack entry {}: {}", entry_path.display(), e)))?;
+        entry.unpack(&target_file).map_err(|e| {
+            PkgError::UnpackError(format!(
+                "Failed to unpack entry {}: {}",
+                entry_path.display(),
+                e
+            ))
+        })?;
     }
 
     root_dir.ok_or_else(|| PkgError::UnpackError("Empty package archive".into()))
@@ -862,7 +886,10 @@ pub fn create_shaepkg(src_dir: &Path) -> Result<Vec<u8>, PkgError> {
 pub fn pack_to_file(src_dir: &Path, out_dir: &Path) -> Result<PathBuf, PkgError> {
     let manifest = PackageManifest::load_from_dir(src_dir)?;
     let bytes = create_shaepkg(src_dir)?;
-    let filename = format!("{}-{}.shaepkg", manifest.package.name, manifest.package.version);
+    let filename = format!(
+        "{}-{}.shaepkg",
+        manifest.package.name, manifest.package.version
+    );
     let out_file = out_dir.join(filename);
     fs::create_dir_all(out_dir)?;
     fs::write(&out_file, bytes)?;
@@ -897,8 +924,9 @@ fn collect_package_files(
                 .map_err(|e| PkgError::Archive(e.to_string()))?
                 .to_string_lossy()
                 .replace('\\', "/");
-            let content = fs::read_to_string(&path)
-                .map_err(|e| PkgError::Archive(format!("File '{}' is not valid UTF-8: {}", rel, e)))?;
+            let content = fs::read_to_string(&path).map_err(|e| {
+                PkgError::Archive(format!("File '{}' is not valid UTF-8: {}", rel, e))
+            })?;
             files.insert(rel, content);
         }
     }
@@ -1098,15 +1126,14 @@ pub fn install_dependencies(dir: &Path) -> Result<Lockfile, PkgError> {
         } else {
             // Registry dependency: install into .packages/<dep_name>
             let target_pkg_dir = dir.join(".packages").join(dep_name);
-            let registry_url = spec
-                .get_registry_url()
-                .or_else(|| {
-                    lockfile
-                        .packages
-                        .get(dep_name)
-                        .and_then(|lp| lp.source.strip_prefix("registry+").map(|s| s.to_string()))
-                })
-                .unwrap_or_else(|| resolve_registry_url(Some(dir), None));
+            let registry_url =
+                spec.get_registry_url()
+                    .or_else(|| {
+                        lockfile.packages.get(dep_name).and_then(|lp| {
+                            lp.source.strip_prefix("registry+").map(|s| s.to_string())
+                        })
+                    })
+                    .unwrap_or_else(|| resolve_registry_url(Some(dir), None));
 
             let ver_req = spec.get_version();
             let index = fetch_package_index(&registry_url, dep_name)?;
@@ -1155,7 +1182,11 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), std::io::Error> {
         let dst_path = dst.join(entry.file_name());
         let file_name = entry.file_name().to_string_lossy().to_string();
 
-        if file_name == ".git" || file_name == "target" || file_name == ".shae" || file_name == ".packages" {
+        if file_name == ".git"
+            || file_name == "target"
+            || file_name == ".shae"
+            || file_name == ".packages"
+        {
             continue;
         }
 
@@ -1306,7 +1337,6 @@ pub fn resolve_package_file(search_dir: &Path, import_path: &str) -> Option<Path
 
     None
 }
-
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct PackResult {

@@ -184,11 +184,31 @@ impl JitEngine {
         // (args: *const i64, num_args: usize, out_val: *mut i64, depth: usize) -> i32
         self.ctx.func.signature.params.clear();
         self.ctx.func.signature.returns.clear();
-        self.ctx.func.signature.params.push(AbiParam::new(pointer_type));
-        self.ctx.func.signature.params.push(AbiParam::new(pointer_type));
-        self.ctx.func.signature.params.push(AbiParam::new(pointer_type));
-        self.ctx.func.signature.params.push(AbiParam::new(pointer_type)); // depth
-        self.ctx.func.signature.returns.push(AbiParam::new(types::I32));
+        self.ctx
+            .func
+            .signature
+            .params
+            .push(AbiParam::new(pointer_type));
+        self.ctx
+            .func
+            .signature
+            .params
+            .push(AbiParam::new(pointer_type));
+        self.ctx
+            .func
+            .signature
+            .params
+            .push(AbiParam::new(pointer_type));
+        self.ctx
+            .func
+            .signature
+            .params
+            .push(AbiParam::new(pointer_type)); // depth
+        self.ctx
+            .func
+            .signature
+            .returns
+            .push(AbiParam::new(types::I32));
 
         let inner_func_id = self
             .module
@@ -209,7 +229,9 @@ impl JitEngine {
             .map_err(|e| format!("Entry declaration error: {}", e))?;
 
         let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
-        let self_callee = self.module.declare_func_in_func(inner_func_id, &mut builder.func);
+        let self_callee = self
+            .module
+            .declare_func_in_func(inner_func_id, &mut builder.func);
 
         // Pre-scan block starts
         let mut block_starts = BTreeSet::new();
@@ -313,14 +335,20 @@ impl JitEngine {
         let normal_entry_block = builder.create_block();
 
         // Call depth guard check
-        let max_depth = builder.ins().iconst(pointer_type, MAX_JIT_CALL_DEPTH as i64);
+        let max_depth = builder
+            .ins()
+            .iconst(pointer_type, MAX_JIT_CALL_DEPTH as i64);
         let depth_exceeded =
             builder
                 .ins()
                 .icmp(IntCC::UnsignedGreaterThanOrEqual, depth_val, max_depth);
-        builder
-            .ins()
-            .brif(depth_exceeded, stack_overflow_block, &[], normal_entry_block, &[]);
+        builder.ins().brif(
+            depth_exceeded,
+            stack_overflow_block,
+            &[],
+            normal_entry_block,
+            &[],
+        );
 
         // Stack overflow block immediately returns 4
         builder.switch_to_block(stack_overflow_block);
@@ -809,9 +837,10 @@ impl JitEngine {
                     let arg_count_val = builder.ins().iconst(pointer_type, arg_count as i64);
                     let one_val = builder.ins().iconst(pointer_type, 1);
                     let next_depth = builder.ins().iadd(depth_val, one_val);
-                    let call_inst = builder
-                        .ins()
-                        .call(self_callee, &[call_args_addr, arg_count_val, call_out_addr, next_depth]);
+                    let call_inst = builder.ins().call(
+                        self_callee,
+                        &[call_args_addr, arg_count_val, call_out_addr, next_depth],
+                    );
                     let status = builder.inst_results(call_inst)[0];
 
                     let expected_status = if is_float { 3 } else { 0 };
@@ -941,8 +970,7 @@ impl JitEngine {
         // 2. Build entry trampoline function:
         // extern "C" fn(args: *const i64, num_args: usize, out_val: *mut i64) -> i32
         self.ctx.func.signature = entry_sig;
-        let mut tramp_builder =
-            FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
+        let mut tramp_builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
         let tramp_entry = tramp_builder.create_block();
         tramp_builder.append_block_params_for_function_params(tramp_entry);
         tramp_builder.switch_to_block(tramp_entry);

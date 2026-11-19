@@ -684,7 +684,11 @@ recurse_forever(0)
     let args = [0i64];
     let mut out: i64 = 0;
     let status = unsafe { jit_fn(args.as_ptr(), args.len(), &mut out) };
-    assert_eq!(status, 4, "Expected status code 4 for recursion stack overflow, got {}", status);
+    assert_eq!(
+        status, 4,
+        "Expected status code 4 for recursion stack overflow, got {}",
+        status
+    );
 
     // Verify VM maps status 4 to RuntimeError: Call stack overflow
     let mut vm = VM::new();

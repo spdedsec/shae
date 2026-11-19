@@ -217,7 +217,10 @@ fn test_distributed_cluster_hot_reload_across_mesh() {
 
     // Send ask to remote actor
     let r1 = remote_daemon
-        .ask(Value::String("status".into()), Some(Duration::from_millis(5000)))
+        .ask(
+            Value::String("status".into()),
+            Some(Duration::from_millis(5000)),
+        )
         .expect("Failed ask v1");
     assert_eq!(r1.to_json(), json!("v1_online:100"));
 
@@ -252,7 +255,10 @@ fn test_distributed_cluster_hot_reload_across_mesh() {
 
     // Verify V2 behavior preserving accumulated state (101)
     let r2 = remote_daemon
-        .ask(Value::String("status".into()), Some(Duration::from_millis(5000)))
+        .ask(
+            Value::String("status".into()),
+            Some(Duration::from_millis(5000)),
+        )
         .expect("Failed ask v2 status");
     assert_eq!(r2.to_json(), json!("v2_upgraded:101"));
 
@@ -262,7 +268,10 @@ fn test_distributed_cluster_hot_reload_across_mesh() {
         .expect("Failed send double");
 
     let r3 = remote_daemon
-        .ask(Value::String("status".into()), Some(Duration::from_millis(5000)))
+        .ask(
+            Value::String("status".into()),
+            Some(Duration::from_millis(5000)),
+        )
         .expect("Failed ask v2 doubled");
     assert_eq!(r3.to_json(), json!("v2_upgraded:202"));
 
@@ -278,10 +287,10 @@ fn test_distributed_cluster_hot_reload_across_mesh() {
 
 #[test]
 fn test_cluster_node_reload_actor_api() {
-    let node_a = ClusterNode::start("node_alpha", "127.0.0.1:0", None)
-        .expect("Failed to start node alpha");
-    let node_b = ClusterNode::start("node_beta", "127.0.0.1:0", None)
-        .expect("Failed to start node beta");
+    let node_a =
+        ClusterNode::start("node_alpha", "127.0.0.1:0", None).expect("Failed to start node alpha");
+    let node_b =
+        ClusterNode::start("node_beta", "127.0.0.1:0", None).expect("Failed to start node beta");
 
     let handler_v1 = run("let h = fn(state, msg) {
         return { \"state\": state, \"reply\": \"alpha_v1:\" + str(state) }
@@ -292,10 +301,13 @@ fn test_cluster_node_reload_actor_api() {
         .spawn_actor("service_a", Some(Value::Int(5)), handler_v1)
         .expect("Failed to spawn service_a");
 
-    node_b.connect(&node_a.address()).expect("Failed to connect");
+    node_b
+        .connect(&node_a.address())
+        .expect("Failed to connect");
 
     // Hot-reload service_a from node_b via reload_actor with migration
-    let new_handler = "fn(state, msg) { return { \"state\": state, \"reply\": \"alpha_v2:\" + str(state) } }";
+    let new_handler =
+        "fn(state, msg) { return { \"state\": state, \"reply\": \"alpha_v2:\" + str(state) } }";
     let migration = "fn(old_state) { return old_state + 100 }";
 
     let ok = node_b
@@ -309,7 +321,10 @@ fn test_cluster_node_reload_actor_api() {
     assert!(ok);
 
     let reply = act
-        .ask(Value::String("test".into()), Some(Duration::from_millis(5000)))
+        .ask(
+            Value::String("test".into()),
+            Some(Duration::from_millis(5000)),
+        )
         .expect("Ask failed");
     assert_eq!(reply.to_json(), json!("alpha_v2:105"));
 

@@ -146,7 +146,9 @@ pub fn execute_bench(
 
     let result = BenchmarkResult {
         name: name.to_string(),
-        file: current_file.clone().unwrap_or_else(|| "<standalone>".to_string()),
+        file: current_file
+            .clone()
+            .unwrap_or_else(|| "<standalone>".to_string()),
         iterations: iters,
         total_duration,
         avg_latency,
@@ -303,11 +305,7 @@ pub fn run_benchmarks(options: &BenchOptions) -> Result<BenchSummary, String> {
             .filter(|p| p.to_string_lossy().to_lowercase().contains(&pat_lower))
             .cloned()
             .collect();
-        if !matched.is_empty() {
-            matched
-        } else {
-            files
-        }
+        if !matched.is_empty() { matched } else { files }
     } else {
         files
     };

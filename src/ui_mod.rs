@@ -143,10 +143,10 @@ fn raw_text(win: &mut ShaeWindow, x: i64, y: i64, text: &str, color: u32, scale:
 
 fn ui_button(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     if args.len() < 2 {
-        return Err(
-            RuntimeError::new("ui.button expects (window, text, [x, y, w, h, bg_color, text_color])".into())
-                .at(span),
-        );
+        return Err(RuntimeError::new(
+            "ui.button expects (window, text, [x, y, w, h, bg_color, text_color])".into(),
+        )
+        .at(span));
     }
     let win_id = match to_win_id(&args[0]) {
         Some(id) => id,
@@ -157,14 +157,38 @@ fn ui_button(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value,
         _ => return Err(RuntimeError::new("ui.button text must be string".into()).at(span)),
     };
 
-    let x = if args.len() > 2 { to_i64(&args[2]).unwrap_or(0) } else { 10 };
-    let y = if args.len() > 3 { to_i64(&args[3]).unwrap_or(0) } else { 10 };
+    let x = if args.len() > 2 {
+        to_i64(&args[2]).unwrap_or(0)
+    } else {
+        10
+    };
+    let y = if args.len() > 3 {
+        to_i64(&args[3]).unwrap_or(0)
+    } else {
+        10
+    };
     let text_len = text.len() as i64;
     let default_w = (text_len * 8 + 20).max(60);
-    let w = if args.len() > 4 { to_i64(&args[4]).unwrap_or(default_w) } else { default_w };
-    let h = if args.len() > 5 { to_i64(&args[5]).unwrap_or(28) } else { 28 };
-    let base_bg = if args.len() > 6 { to_color(&args[6]).unwrap_or(0x313244) } else { 0x313244 };
-    let text_color = if args.len() > 7 { to_color(&args[7]).unwrap_or(0xCDD6F4) } else { 0xCDD6F4 };
+    let w = if args.len() > 4 {
+        to_i64(&args[4]).unwrap_or(default_w)
+    } else {
+        default_w
+    };
+    let h = if args.len() > 5 {
+        to_i64(&args[5]).unwrap_or(28)
+    } else {
+        28
+    };
+    let base_bg = if args.len() > 6 {
+        to_color(&args[6]).unwrap_or(0x313244)
+    } else {
+        0x313244
+    };
+    let text_color = if args.len() > 7 {
+        to_color(&args[7]).unwrap_or(0xCDD6F4)
+    } else {
+        0xCDD6F4
+    };
 
     let mut reg = crate::gui::get_window_registry().lock().unwrap();
     let win = match reg.get_mut(&win_id) {
@@ -172,7 +196,10 @@ fn ui_button(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value,
         None => return Ok(Value::Bool(false)),
     };
 
-    let (mouse_x, mouse_y) = win.mouse_pos.map(|(mx, my)| (mx as i64, my as i64)).unwrap_or((-1, -1));
+    let (mouse_x, mouse_y) = win
+        .mouse_pos
+        .map(|(mx, my)| (mx as i64, my as i64))
+        .unwrap_or((-1, -1));
     let mouse_left_down = win.mouse_down.0;
 
     let is_hover = mouse_x >= x && mouse_x < x + w && mouse_y >= y && mouse_y < y + h;
@@ -204,10 +231,10 @@ fn ui_button(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value,
 
 fn ui_slider(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     if args.len() < 7 {
-        return Err(
-            RuntimeError::new("ui.slider expects (window, label, x, y, w, min, max, current_value)".into())
-                .at(span),
-        );
+        return Err(RuntimeError::new(
+            "ui.slider expects (window, label, x, y, w, min, max, current_value)".into(),
+        )
+        .at(span));
     }
     let win_id = match to_win_id(&args[0]) {
         Some(id) => id,
@@ -222,7 +249,10 @@ fn ui_slider(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value,
     let w = to_i64(&args[4]).unwrap_or(150).max(40);
     let min_val = to_f64(&args[5]).unwrap_or(0.0);
     let max_val = to_f64(&args[6]).unwrap_or(100.0);
-    let mut current = to_f64(&args[7]).unwrap_or(min_val).max(min_val).min(max_val);
+    let mut current = to_f64(&args[7])
+        .unwrap_or(min_val)
+        .max(min_val)
+        .min(max_val);
 
     let mut reg = crate::gui::get_window_registry().lock().unwrap();
     let win = match reg.get_mut(&win_id) {
@@ -230,7 +260,10 @@ fn ui_slider(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value,
         None => return Ok(Value::Float(current)),
     };
 
-    let (mouse_x, mouse_y) = win.mouse_pos.map(|(mx, my)| (mx as i64, my as i64)).unwrap_or((-1, -1));
+    let (mouse_x, mouse_y) = win
+        .mouse_pos
+        .map(|(mx, my)| (mx as i64, my as i64))
+        .unwrap_or((-1, -1));
     let mouse_left_down = win.mouse_down.0;
 
     let track_y = y + 14;
@@ -239,7 +272,11 @@ fn ui_slider(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value,
     let knob_h = 16;
 
     // Check interaction
-    let is_interacting = mouse_left_down && mouse_x >= x - 5 && mouse_x <= x + w + 5 && mouse_y >= y && mouse_y <= y + 24;
+    let is_interacting = mouse_left_down
+        && mouse_x >= x - 5
+        && mouse_x <= x + w + 5
+        && mouse_y >= y
+        && mouse_y <= y + 24;
     if is_interacting {
         let t = ((mouse_x - x) as f64 / w as f64).max(0.0).min(1.0);
         current = min_val + t * (max_val - min_val);
@@ -254,7 +291,13 @@ fn ui_slider(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value,
     raw_rect_outline(win, x, track_y, w, track_h, 0x585B70, 1);
 
     // Draw filled portion
-    let progress = if max_val > min_val { ((current - min_val) / (max_val - min_val)).max(0.0).min(1.0) } else { 0.0 };
+    let progress = if max_val > min_val {
+        ((current - min_val) / (max_val - min_val))
+            .max(0.0)
+            .min(1.0)
+    } else {
+        0.0
+    };
     let fill_w = (progress * w as f64) as i64;
     if fill_w > 0 {
         raw_rect(win, x, track_y, fill_w, track_h, 0x89B4FA);
@@ -271,10 +314,10 @@ fn ui_slider(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value,
 
 fn ui_checkbox(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     if args.len() < 4 {
-        return Err(
-            RuntimeError::new("ui.checkbox expects (window, label, x, y, [checked])".into())
-                .at(span),
-        );
+        return Err(RuntimeError::new(
+            "ui.checkbox expects (window, label, x, y, [checked])".into(),
+        )
+        .at(span));
     }
     let win_id = match to_win_id(&args[0]) {
         Some(id) => id,
@@ -302,17 +345,31 @@ fn ui_checkbox(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Valu
         None => return Ok(Value::Bool(checked)),
     };
 
-    let (mouse_x, mouse_y) = win.mouse_pos.map(|(mx, my)| (mx as i64, my as i64)).unwrap_or((-1, -1));
+    let (mouse_x, mouse_y) = win
+        .mouse_pos
+        .map(|(mx, my)| (mx as i64, my as i64))
+        .unwrap_or((-1, -1));
     let mouse_left_down = win.mouse_down.0;
 
-    let is_hover = mouse_x >= x && mouse_x <= x + box_size + 8 * label.len() as i64 + 10 && mouse_y >= y && mouse_y <= y + box_size;
+    let is_hover = mouse_x >= x
+        && mouse_x <= x + box_size + 8 * label.len() as i64 + 10
+        && mouse_y >= y
+        && mouse_y <= y + box_size;
     if is_hover && mouse_left_down {
         checked = !checked;
     }
 
     // Draw box
     raw_rect(win, x, y, box_size, box_size, 0x313244);
-    raw_rect_outline(win, x, y, box_size, box_size, if is_hover { 0x89B4FA } else { 0x585B70 }, 1);
+    raw_rect_outline(
+        win,
+        x,
+        y,
+        box_size,
+        box_size,
+        if is_hover { 0x89B4FA } else { 0x585B70 },
+        1,
+    );
 
     // Draw check mark
     if checked {
@@ -327,10 +384,10 @@ fn ui_checkbox(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Valu
 
 fn ui_panel(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     if args.len() < 5 {
-        return Err(
-            RuntimeError::new("ui.panel expects (window, title, x, y, w, h, [bg_color], [border_color])".into())
-                .at(span),
-        );
+        return Err(RuntimeError::new(
+            "ui.panel expects (window, title, x, y, w, h, [bg_color], [border_color])".into(),
+        )
+        .at(span));
     }
     let win_id = match to_win_id(&args[0]) {
         Some(id) => id,
@@ -343,9 +400,21 @@ fn ui_panel(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, 
     let x = to_i64(&args[2]).unwrap_or(0);
     let y = to_i64(&args[3]).unwrap_or(0);
     let w = to_i64(&args[4]).unwrap_or(100);
-    let h = if args.len() > 5 { to_i64(&args[5]).unwrap_or(100) } else { 100 };
-    let bg_color = if args.len() > 6 { to_color(&args[6]).unwrap_or(0x181825) } else { 0x181825 };
-    let border_color = if args.len() > 7 { to_color(&args[7]).unwrap_or(0x45475A) } else { 0x45475A };
+    let h = if args.len() > 5 {
+        to_i64(&args[5]).unwrap_or(100)
+    } else {
+        100
+    };
+    let bg_color = if args.len() > 6 {
+        to_color(&args[6]).unwrap_or(0x181825)
+    } else {
+        0x181825
+    };
+    let border_color = if args.len() > 7 {
+        to_color(&args[7]).unwrap_or(0x45475A)
+    } else {
+        0x45475A
+    };
 
     let mut reg = crate::gui::get_window_registry().lock().unwrap();
     let win = match reg.get_mut(&win_id) {
@@ -368,10 +437,10 @@ fn ui_panel(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, 
 
 fn ui_label(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     if args.len() < 4 {
-        return Err(
-            RuntimeError::new("ui.label expects (window, text, x, y, [color], [scale])".into())
-                .at(span),
-        );
+        return Err(RuntimeError::new(
+            "ui.label expects (window, text, x, y, [color], [scale])".into(),
+        )
+        .at(span));
     }
     let win_id = match to_win_id(&args[0]) {
         Some(id) => id,
@@ -383,8 +452,16 @@ fn ui_label(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, 
     };
     let x = to_i64(&args[2]).unwrap_or(0);
     let y = to_i64(&args[3]).unwrap_or(0);
-    let color = if args.len() > 4 { to_color(&args[4]).unwrap_or(0xCDD6F4) } else { 0xCDD6F4 };
-    let scale = if args.len() > 5 { to_i64(&args[5]).unwrap_or(1).max(1) as usize } else { 1 };
+    let color = if args.len() > 4 {
+        to_color(&args[4]).unwrap_or(0xCDD6F4)
+    } else {
+        0xCDD6F4
+    };
+    let scale = if args.len() > 5 {
+        to_i64(&args[5]).unwrap_or(1).max(1) as usize
+    } else {
+        1
+    };
 
     let mut reg = crate::gui::get_window_registry().lock().unwrap();
     let win = match reg.get_mut(&win_id) {
@@ -396,7 +473,11 @@ fn ui_label(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, 
     Ok(Value::Null)
 }
 
-fn ui_progress_bar(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn ui_progress_bar(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.len() < 6 {
         return Err(
             RuntimeError::new("ui.progress_bar expects (window, x, y, w, h, progress_0_to_1, [fill_color], [bg_color])".into())
@@ -412,8 +493,16 @@ fn ui_progress_bar(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<
     let w = to_i64(&args[3]).unwrap_or(100);
     let h = to_i64(&args[4]).unwrap_or(16);
     let progress = to_f64(&args[5]).unwrap_or(0.0).max(0.0).min(1.0);
-    let fill_color = if args.len() > 6 { to_color(&args[6]).unwrap_or(0xA6E3A1) } else { 0xA6E3A1 };
-    let bg_color = if args.len() > 7 { to_color(&args[7]).unwrap_or(0x313244) } else { 0x313244 };
+    let fill_color = if args.len() > 6 {
+        to_color(&args[6]).unwrap_or(0xA6E3A1)
+    } else {
+        0xA6E3A1
+    };
+    let bg_color = if args.len() > 7 {
+        to_color(&args[7]).unwrap_or(0x313244)
+    } else {
+        0x313244
+    };
 
     let mut reg = crate::gui::get_window_registry().lock().unwrap();
     let win = match reg.get_mut(&win_id) {

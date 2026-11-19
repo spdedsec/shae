@@ -68,11 +68,11 @@ pub enum Token {
     Arrow,          // ->
 
     // Operators
-    Plus,        // +
-    Minus,       // -
-    Star,        // *
-    Slash,       // /
-    Percent,     // %
+    Plus,          // +
+    Minus,         // -
+    Star,          // *
+    Slash,         // /
+    Percent,       // %
     Equals,        // =
     PlusEquals,    // +=
     MinusEquals,   // -=
@@ -80,14 +80,14 @@ pub enum Token {
     SlashEquals,   // /=
     PercentEquals, // %=
     EqEq,          // ==
-    NotEq,       // !=
-    Lt,          // <
-    LtEq,        // <=
-    Gt,          // >
-    GtEq,        // >=
-    And,         // &&
-    Or,          // ||
-    Not,         // !
+    NotEq,         // !=
+    Lt,            // <
+    LtEq,          // <=
+    Gt,            // >
+    GtEq,          // >=
+    And,           // &&
+    Or,            // ||
+    Not,           // !
 
     // Bitwise Operators
     Amp,   // &
