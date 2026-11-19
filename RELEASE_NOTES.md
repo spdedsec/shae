@@ -6,7 +6,22 @@ We are proud to announce **Shae v0.5.0**, a landmark release transforming Shae i
 
 ### 🌟 Key Highlights & Major Milestones
 
-#### 1. 🎮 Native 2D Game & Windowing Engine (`std:gui` / `std:graphics`)
+#### 1. 🚀 Universal Multi-Platform Distribution & Single-Line Installer
+- **Single-Line Universal Installer**: Install Shae instantly across Linux, macOS, and Windows with a single command:
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/spdedsec/shae/main/install.sh | bash
+  # Or via Vercel:
+  curl -fsSL https://shae-site.vercel.app/install.sh | bash
+  ```
+- **Automated Multi-Platform Release Matrix**:
+  - **Linux x86_64**: glibc (`shae-v0.4.0-linux-x86_64.tar.gz`) & musl (`shae-v0.4.0-linux-x86_64-musl.tar.gz`)
+  - **Linux aarch64**: (`shae-v0.4.0-linux-aarch64.tar.gz`)
+  - **macOS Apple Silicon**: (`shae-v0.4.0-macos-arm64.tar.gz`)
+  - **macOS Intel**: (`shae-v0.4.0-macos-x86_64.tar.gz`)
+  - **Windows x86_64**: (`shae-v0.4.0-windows-x86_64.zip`)
+- **Cryptographic SHA-256 Checksums**: Every release artifact is checksummed in `SHA256SUMS.txt` and verified automatically by `install.sh`.
+
+#### 2. 🎮 Native 2D Game & Windowing Engine (`std:gui` / `std:graphics`)
 - **60 FPS Software Rasterizer**: Embedded immediate-mode 2D framebuffer rendering natively on Linux Wayland (`wayland-1`) and X11 (`DISPLAY=:0`).
 - **Complete Drawing Primitives**:
   - Solid fills and clears: `gui.clear(win, [color])`.
