@@ -1,73 +1,68 @@
-# Shae v0.5.0 — Native 2D GUI, Creative Engine & Direct Scripting Release
+# Shae v0.6.0 — Gradual Type Checker, Package Registry & Space Invaders 2D Showcase
 
-We are proud to announce **Shae v0.5.0**, a landmark release transforming Shae into a high-performance creative and graphical programming language. This release introduces an embedded 60 FPS 2D software framebuffer with native Wayland and X11 windowing, new creative standard library modules (`std:gui`, `std:random`, `std:math`, `std:io`), direct script execution with shebang support, language ergonomics, rich LSP documentation, and complete playable showcase games.
+We are thrilled to announce **Shae v0.6.0**, a massive evolutionary leap for the Shae programming language. This landmark release introduces an opt-in **Gradual Static Type System & Diagnostics Checker**, a complete decentralized **Remote Package Registry Subsystem**, the **Shae Studio Web IDE**, and the **Unified Creative Suite** featuring a full retro **Space Invaders 2D** arcade game with synthesized waveform audio.
 
 ---
 
 ### 🌟 Key Highlights & Major Milestones
 
-#### 1. 🚀 Universal Multi-Platform Distribution & Single-Line Installer
-- **Single-Line Universal Installer**: Install Shae instantly across Linux, macOS, and Windows with a single command:
-  ```bash
-  curl -fsSL https://raw.githubusercontent.com/spdedsec/shae/main/install.sh | bash
-  # Or via Vercel:
-  curl -fsSL https://shae-site.vercel.app/install.sh | bash
+#### 1. 🛡️ Gradual Typing & Static Type Checker (`shae check`)
+- **Syntax Type Annotations**: Opt-in static typing on functions, parameters, return bounds, and variable declarations:
+  ```shae
+  fn calculate_tax(subtotal: float, rate: float | null) -> float {
+      let effective_rate: float = rate ?? 0.08
+      return subtotal * effective_rate
+  }
   ```
-- **Automated Multi-Platform Release Matrix**:
-  - **Linux x86_64**: glibc (`shae-v0.4.0-linux-x86_64.tar.gz`) & musl (`shae-v0.4.0-linux-x86_64-musl.tar.gz`)
-  - **Linux aarch64**: (`shae-v0.4.0-linux-aarch64.tar.gz`)
-  - **macOS Apple Silicon**: (`shae-v0.4.0-macos-arm64.tar.gz`)
-  - **macOS Intel**: (`shae-v0.4.0-macos-x86_64.tar.gz`)
-  - **Windows x86_64**: (`shae-v0.4.0-windows-x86_64.zip`)
-- **Cryptographic SHA-256 Checksums**: Every release artifact is checksummed in `SHA256SUMS.txt` and verified automatically by `install.sh`.
+- **Type Universe**: Primitive types (`int`, `float`, `string`, `bool`), compound types (`list`, `map`), escape hatch (`any`), and nullable sentinel (`null`).
+- **Nullable Union Types**: Expressive union syntax (`int | null`, `string | float | any`) with natural null-safety ergonomics.
+- **Deep Static Analysis Engine**: `shae check` verifies return type consistency, parameter arity and types, and variable assignments without executing code.
+- **LSP Diagnostics Integration**: Full real-time editor diagnostic squiggles and hover tooltips for typed identifiers.
+- **100% Backward Compatibility**: Dynamically typed code continues to execute seamlessly without friction.
 
-#### 2. 🎮 Native 2D Game & Windowing Engine (`std:gui` / `std:graphics`)
-- **60 FPS Software Rasterizer**: Embedded immediate-mode 2D framebuffer rendering natively on Linux Wayland (`wayland-1`) and X11 (`DISPLAY=:0`).
-- **Complete Drawing Primitives**:
-  - Solid fills and clears: `gui.clear(win, [color])`.
-  - Individual pixels: `gui.pixel(win, x, y, color)`.
-  - Rectangles: `gui.rect(win, x, y, w, h, color)` and `gui.rect_outline(win, x, y, w, h, color, [thickness])`.
-  - Circles: `gui.circle(win, cx, cy, r, color)` and `gui.circle_outline(win, cx, cy, r, color)`.
-  - Lines: Bresenham line rasterizer `gui.line(win, x0, y0, x1, y1, color)`.
-  - Text: Scalable retro text `gui.text(win, x, y, text, color, [scale])`.
-- **Zero-Dependency 8x8 Bitmap Font**: Embedded font table covering ASCII 32 (`' '`) through 126 (`'~'`) enabling instant in-game typography without external asset dependencies.
-- **Non-Blocking Input Polling**: Non-blocking keyboard state querying (`gui.is_key_down`, `gui.get_keys`) and mouse coordinates/buttons (`gui.mouse_pos`, `gui.is_mouse_down`).
-- **Frame-Rate Capping**: Microsecond loop pacing with `gui.limit_fps(win, 60)` and `gui.sleep(ms)`.
-- **Virtual Headless Canvas**: Automatic fallback to an in-memory virtual canvas when executed in headless CI/SSH environments, ensuring test suites and headless simulations never panic.
+#### 2. 📦 Remote Package Registry & Manager Subsystem (`shae pkg`)
+- **Comprehensive CLI Suite**:
+  - `shae pkg init <name>`: Scaffolds a standardized package repository with `shae.toml`.
+  - `shae pkg add <pkg>@<version>`: Downloads dependencies from local or remote registries and records them in `shae.toml`.
+  - `shae pkg install`: Deterministically resolves and installs all dependencies from `shae.lock`.
+  - `shae pkg pack`: Packages libraries into portable, compressed `.shaepkg` archives.
+  - `shae pkg publish`: Securely authenticates and uploads packages to remote HTTP registries.
+  - `shae pkg verify`: Validates package integrity, structure, and metadata checksums.
+- **Cryptographic Security**: Every package is validated with SHA-256 integrity checksums, and the extractor enforces Zip-Slip path traversal defense.
 
-#### 2. 🎲 Creative Standard Library Suite (`std:random`, `std:math`, `std:io`)
-- **`std:random`**: Fast seedable PRNG supporting `int(min, max)`, `float(min, max)`, `bool(prob)`, `choice(arr)`, `shuffle(arr)`, and deterministic `seed(n)`.
-- **`std:math`**: Comprehensive mathematical functions including `sqrt`, `abs`, `min`, `max`, `pow`, `floor`, `ceil`, `round`, `sin`, `cos`, `tan`, `atan2`, `clamp`, and constants `PI` and `E`.
-- **`std:io`**: Standard stream utilities `print`, `println`, `input([prompt])`, and `flush`.
+#### 3. 👾 Space Invaders 2D Showcase & Unified Creative Engine
+- **`examples/space_invaders.shae`**: Full retro 2D arcade game running natively in pure Shae:
+  - 5x11 animated alien armada with stepped pacing and descent.
+  - Player laser cannon with collision detection and bunker degradation.
+  - Real-time score tracking, wave escalation, and lives HUD.
+- **`std:gui` Multi-Mode Graphics**:
+  - 24-bit TrueColor ANSI half-block terminal canvas rendering at 60 FPS.
+  - Embedded desktop windowing fallback (`minifb`) with hardware pixel buffers.
+  - Sprite blitting, color fills, and non-blocking keyboard input polling (`is_key_down`).
+- **`std:audio` Hardware Sound Synthesis**:
+  - Pure waveform synthesis engine: sine, square, triangle, sawtooth, and white noise.
+  - Retro sound triggers: `shoot`, `invader_killed`, `explosion`, and `step`.
+  - Master volume controls, ADSR envelope generation, and headless audio event tracing.
+- **`std:ui` Arcade UI Toolkit**:
+  - Arcade HUD components (`draw_hud`, `draw_score`, `draw_lives_icons`, `draw_panel`).
+  - Immediate-mode UI widgets: buttons, sliders, checkboxes, and progress bars.
 
-#### 3. 📜 Direct Script Execution & Shebang Support
-- **Direct Invocation**: Run any script immediately with `shae <file.shae>` without requiring `shae run`.
-- **Shebang Integration**: Scripts can start with `#!/usr/bin/env shae` and execute directly in bash (`./game.shae`).
-- **Script Comments**: First-class support for `#` single-line comments alongside `//`.
-- **Desktop Launcher**: Freedesktop `.desktop` runner (`shae-runner.desktop`) and MIME type configuration (`shae.xml`) for single/double-click script execution in Linux file managers.
+#### 4. 💻 Shae Studio Web IDE (`shae ide` / `shae studio`)
+- **Zero-Dependency Browser IDE**: Run `shae ide --port 8080` to launch an interactive development environment directly from the Shae binary.
+- **Integrated Toolchain**: Code editor with syntax formatting (`/api/fmt`), static type analysis (`/api/check`), sub-millisecond execution runner (`/api/run`), interactive REPL console, and workspace file explorer.
 
-#### 4. ⚡ Language Ergonomics & VM Optimizations
-- **Boolean Negation**: Added `!` operator alias for `not`.
-- **Compound Assignment**: Full support for `+=`, `-=`, `*=`, `/=`, and `%=` across both Evaluator and Bytecode VM.
-- **Built-in `input([prompt])`**: Read interactive user input directly from standard input.
-- **String Method Aliases**: Added `.to_upper()`, `.to_lower()`, `.to_uppercase()`, and `.to_lowercase()` to string primitives.
-
-#### 5. 🛠️ LSP & VS Code Extension Overhaul
-- **LSP Auto-Completion & Hover Docs**: Real-time signatures and interactive documentation for `std:gui`, `std:random`, `std:math`, `std:io`, `std:actor`, `std:actor:cluster`, and `std:async`.
-- **VS Code Extension v0.5.0**: Updated TextMate grammar for `#` comments, compound assignment operators, and modern syntax tokens.
-
-#### 6. 🕹️ Playable Games & Showcase Demos
-- [**`snake.shae`**](examples/snake_gui.shae): 60 FPS retro arcade Snake game with score counter, apple spawning, collision physics, and instant restart (`[R]`).
-- [**`particles.shae`**](examples/particles_gui.shae): 60 FPS generative particle physics and fireworks sandbox with gravity, wall/floor bounces, and interactive mouse bursts.
-- [**`dungeon.shae`**](examples/dungeon.shae): Pure-Shae terminal RPG with procedural combat, inventory management, and ASCII rendering.
+#### 5. 📖 Comprehensive Genesis Guide (`SHAE_FROM_SCRATCH.md`)
+- A master architectural manifesto detailing the journey from sand and silicon to the Pratt parser, stack bytecode VM, Cranelift JIT SSA, LLVM 18 IR generation, and distributed actor clusters.
 
 ---
 
-### 📦 Installation & Upgrade
+### 📦 Installation & Verification
 
-#### Single-Line Universal Installer (macOS, Linux, Windows)
+#### Single-Line Universal Installer (Linux, macOS, Windows)
 ```bash
 curl -fsSL https://raw.githubusercontent.com/spdedsec/shae/main/install.sh | bash
+# Or via official site:
+curl -fsSL https://shae-site.vercel.app/install.sh | bash
 ```
 
 #### Build and Install from Source
@@ -80,5 +75,5 @@ cargo install --path .
 Verify your installation:
 ```bash
 shae --version
-# Expected: shae 0.5.0
+# Expected: shae 0.6.0
 ```

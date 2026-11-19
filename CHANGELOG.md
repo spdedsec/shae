@@ -5,9 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.0] - 2026-11-18
+## [0.6.0] - 2026-11-19
 
 ### Added
+- **Gradual Type System & Static Type Checker (`shae check`)**:
+  - Syntax type annotations on function parameters, return bounds (`fn calc(x: int, y: int) -> int`), and variables (`let x: string | null = null`).
+  - Primitive and compound types: `int`, `float`, `string`, `bool`, `list`, `map`, `any`, `null`.
+  - Nullable union types: `int | null`, `string | float | any` with pipe syntax.
+  - Deep static analysis engine (`shae check`) validating return type consistency, argument counts, variable assignments, and unreachable branches.
+  - Editor diagnostics via Language Server Protocol (LSP) diagnostics, squiggles, and hover types.
+  - Full backward compatibility: dynamically typed untyped code remains first-class.
+- **Remote Package Registry Subsystem & Distribution (`shae pkg`)**:
+  - Subcommands: `shae pkg init`, `shae pkg add <pkg>@<ver>`, `shae pkg install`, `shae pkg pack`, `shae pkg publish`, `shae pkg verify`.
+  - Remote HTTP/HTTPS registry index resolution, automatic tarball downloading, and lockfile synchronization.
+  - `.shaepkg` package archive format with gzip compression, embedded manifest, and cryptographic SHA-256 integrity verification.
+  - Secure extraction with Zip-Slip path traversal attack defense.
+  - Deterministic dependency management via `shae.toml` and `shae.lock`.
+- **Space Invaders 2D Retro Arcade Showcase (`examples/space_invaders.shae`)**:
+  - Full playable retro 2D arcade game featuring animated alien fleet matrices, bunker degradation, player cannon, laser firing, score/lives tracking, and game states.
+  - Unified Creative Engine:
+    - `std:gui`: Multi-mode graphics engine supporting 24-bit TrueColor ANSI half-block terminal canvas, minifb desktop windowing, sprite blitting, and keyboard polling.
+    - `std:audio`: Hardware audio synthesis engine producing sine, square, triangle, sawtooth, and noise waveforms with volume envelopes and retro sound triggers (`shoot`, `invader_killed`, `explosion`, `step`).
+    - `std:ui`: Arcade HUD layout, panel containers, score displays, health/lives icons, and immediate-mode UI widgets.
 - **Shae Studio Web IDE (`shae ide` / `shae studio`)**:
   - Embedded zero-dependency browser-based development environment served directly by Shae.
   - Interactive dark-theme code editor with line numbers, tab indentation, and keyboard shortcuts (`Ctrl+S` to save, `Ctrl+Enter` to run).
