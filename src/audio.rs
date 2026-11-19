@@ -92,6 +92,17 @@ pub fn build_audio_module() -> Value {
         ("isPlaying", audio_is_playing),
         ("is_available", audio_is_available),
         ("isAvailable", audio_is_available),
+        ("play_laser", audio_play_laser),
+        ("play_explosion", audio_play_explosion),
+        ("play_hit", audio_play_hit),
+        ("play_jingle", audio_play_jingle),
+        ("play_tone", audio_play_tone_retro),
+        ("mute", audio_mute),
+        ("unmute", audio_unmute),
+        ("is_muted", audio_is_muted),
+        ("get_audio_log", audio_get_audio_log),
+        ("last_sound", audio_last_sound),
+        ("clear_log", audio_clear_log),
     ];
 
     for (name, func) in entries {
@@ -380,6 +391,16 @@ fn audio_stop_sound(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result
 }
 
 fn audio_set_volume(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if !args.is_empty() {
+        let f = match &args[0] {
+            Value::Float(f) => *f,
+            Value::Int(i) => *i as f64,
+            _ => 0.8,
+        };
+        let mut re = get_audio_engine().write().unwrap();
+        re.volume = f;
+    }
+
     expect_args("audio.set_volume", 1, &args, span)?;
     let vol = match to_f32(&args[0]) {
         Some(v) => v.max(0.0).min(1.0),
@@ -397,8 +418,8 @@ fn audio_set_volume(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result
 }
 
 fn audio_get_volume(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
-    let state = get_audio_state().lock().unwrap();
-    Ok(Value::Float(state.master_volume as f64))
+    let vol = get_audio_engine().read().unwrap().volume;
+    Ok(Value::Float(vol))
 }
 
 fn audio_is_playing(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
@@ -410,4 +431,277 @@ fn audio_is_playing(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Resu
 fn audio_is_available(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
     let state = get_audio_state().lock().unwrap();
     Ok(Value::Bool(!state.is_headless && state.stream_handle.is_some()))
+}
+
+
+// ----------------------------------------------------------------------------
+// Retro Arcade Sound & Audio Event Engine (Milestone 3 Integration)
+// ----------------------------------------------------------------------------
+use std::time::Instant;
+
+#[derive(Debug, Clone)]
+pub struct AudioEvent {
+    pub sound: String,
+    pub time_secs: f64,
+    pub duration_ms: u64,
+    pub volume: f64,
+    pub freq: Option<f64>,
+}
+
+pub struct AudioEngine {
+    pub volume: f64,
+    pub muted: bool,
+    pub start_time: Instant,
+    pub log: Vec<AudioEvent>,
+    pub sample_rate: u32,
+}
+
+impl AudioEngine {
+    pub fn new() -> Self {
+        AudioEngine {
+            volume: 0.8,
+            muted: false,
+            start_time: Instant::now(),
+            log: Vec::new(),
+            sample_rate: 44100,
+        }
+    }
+}
+
+pub fn get_audio_engine() -> &'static RwLock<AudioEngine> {
+    static RETRO_ENGINE: OnceLock<RwLock<AudioEngine>> = OnceLock::new();
+    RETRO_ENGINE.get_or_init(|| RwLock::new(AudioEngine::new()))
+}
+
+pub fn synthesize_waveform(freq: f64, ms: u64, wave: &str, volume: f64) -> Vec<f32> {
+    let sample_rate = 44100.0;
+    let num_samples = ((ms as f64 / 1000.0) * sample_rate) as usize;
+    let mut buffer = Vec::with_capacity(num_samples);
+    let vol = volume.clamp(0.0, 1.0) as f32;
+
+    match wave.to_lowercase().as_str() {
+        "square" => {
+            for i in 0..num_samples {
+                let t = (i as f64) / sample_rate;
+                let phase = (t * freq) % 1.0;
+                let sample = if phase < 0.5 { vol } else { -vol };
+                buffer.push(sample);
+            }
+        }
+        "triangle" => {
+            for i in 0..num_samples {
+                let t = (i as f64) / sample_rate;
+                let phase = (t * freq) % 1.0;
+                let sample = (4.0 * (phase - 0.5).abs() - 1.0) as f32 * vol;
+                buffer.push(sample);
+            }
+        }
+        "saw" | "sawtooth" => {
+            for i in 0..num_samples {
+                let t = (i as f64) / sample_rate;
+                let phase = (t * freq) % 1.0;
+                let sample = (2.0 * phase - 1.0) as f32 * vol;
+                buffer.push(sample);
+            }
+        }
+        "noise" => {
+            let mut state: u32 = 0x12345678;
+            for _ in 0..num_samples {
+                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                let norm = ((state >> 16) as f32 / 32768.0) - 1.0;
+                buffer.push(norm * vol);
+            }
+        }
+        _ => {
+            // Default: sine wave
+            for i in 0..num_samples {
+                let t = (i as f64) / sample_rate;
+                let sample = (2.0 * std::f64::consts::PI * freq * t).sin() as f32 * vol;
+                buffer.push(sample);
+            }
+        }
+    }
+
+    buffer
+}
+
+pub fn play_laser_internal() {
+    let mut engine = get_audio_engine().write().unwrap();
+    if engine.muted {
+        return;
+    }
+    let elapsed = engine.start_time.elapsed().as_secs_f64();
+    let vol = engine.volume;
+    engine.log.push(AudioEvent {
+        sound: "laser".to_string(),
+        time_secs: elapsed,
+        duration_ms: 120,
+        volume: vol,
+        freq: Some(880.0),
+    });
+}
+
+pub fn play_explosion_internal() {
+    let mut engine = get_audio_engine().write().unwrap();
+    if engine.muted {
+        return;
+    }
+    let elapsed = engine.start_time.elapsed().as_secs_f64();
+    let vol = engine.volume;
+    engine.log.push(AudioEvent {
+        sound: "explosion".to_string(),
+        time_secs: elapsed,
+        duration_ms: 400,
+        volume: vol,
+        freq: None,
+    });
+}
+
+pub fn play_hit_internal() {
+    let mut engine = get_audio_engine().write().unwrap();
+    if engine.muted {
+        return;
+    }
+    let elapsed = engine.start_time.elapsed().as_secs_f64();
+    let vol = engine.volume;
+    engine.log.push(AudioEvent {
+        sound: "hit".to_string(),
+        time_secs: elapsed,
+        duration_ms: 80,
+        volume: vol,
+        freq: Some(220.0),
+    });
+}
+
+pub fn play_jingle_internal(jingle: &str) {
+    let mut engine = get_audio_engine().write().unwrap();
+    if engine.muted {
+        return;
+    }
+    let elapsed = engine.start_time.elapsed().as_secs_f64();
+    let vol = engine.volume;
+    engine.log.push(AudioEvent {
+        sound: jingle.to_string(),
+        time_secs: elapsed,
+        duration_ms: 600,
+        volume: vol,
+        freq: None,
+    });
+}
+
+pub fn play_tone_internal(freq: f64, ms: u64, _wave: &str) {
+    let mut engine = get_audio_engine().write().unwrap();
+    if engine.muted {
+        return;
+    }
+    let elapsed = engine.start_time.elapsed().as_secs_f64();
+    let vol = engine.volume;
+    engine.log.push(AudioEvent {
+        sound: "tone".to_string(),
+        time_secs: elapsed,
+        duration_ms: ms,
+        volume: vol,
+        freq: Some(freq),
+    });
+}
+
+pub fn clear_log_internal() {
+    let mut engine = get_audio_engine().write().unwrap();
+    engine.log.clear();
+}
+
+fn audio_play_laser(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+    play_laser_internal();
+    Ok(Value::Null)
+}
+
+fn audio_play_explosion(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+    play_explosion_internal();
+    Ok(Value::Null)
+}
+
+fn audio_play_hit(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+    play_hit_internal();
+    Ok(Value::Null)
+}
+
+fn audio_play_jingle(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    expect_args("audio.play_jingle", 1, &args, span)?;
+    let jingle = args[0].to_display();
+    play_jingle_internal(&jingle);
+    Ok(Value::Null)
+}
+
+fn audio_play_tone_retro(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(RuntimeError::new("audio.play_tone: expected frequency".into()).at(span));
+    }
+    let freq = match &args[0] {
+        Value::Int(i) => *i as f64,
+        Value::Float(f) => *f,
+        _ => 440.0,
+    };
+    let ms = if args.len() > 1 {
+        match &args[1] {
+            Value::Int(i) => *i as u64,
+            _ => 100,
+        }
+    } else {
+        100
+    };
+    let wave = if args.len() > 2 {
+        args[2].to_display()
+    } else {
+        "sine".to_string()
+    };
+    play_tone_internal(freq, ms, &wave);
+    Ok(Value::Null)
+}
+
+fn audio_mute(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+    let mut engine = get_audio_engine().write().unwrap();
+    engine.muted = true;
+    Ok(Value::Null)
+}
+
+fn audio_unmute(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+    let mut engine = get_audio_engine().write().unwrap();
+    engine.muted = false;
+    Ok(Value::Null)
+}
+
+fn audio_is_muted(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+    let muted = get_audio_engine().read().unwrap().muted;
+    Ok(Value::Bool(muted))
+}
+
+fn audio_get_audio_log(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+    let engine = get_audio_engine().read().unwrap();
+    let mut list = Vec::with_capacity(engine.log.len());
+    for item in &engine.log {
+        let mut map = IndexMap::new();
+        map.insert("sound".to_string(), Value::String(item.sound.clone()));
+        map.insert("time".to_string(), Value::Float(item.time_secs));
+        map.insert("duration_ms".to_string(), Value::Int(item.duration_ms as i64));
+        map.insert("volume".to_string(), Value::Float(item.volume));
+        if let Some(f) = item.freq {
+            map.insert("freq".to_string(), Value::Float(f));
+        }
+        list.push(Value::Map(Arc::new(RwLock::new(map))));
+    }
+    Ok(Value::Array(Arc::new(RwLock::new(list))))
+}
+
+fn audio_last_sound(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+    let engine = get_audio_engine().read().unwrap();
+    if let Some(last) = engine.log.last() {
+        Ok(Value::String(last.sound.clone()))
+    } else {
+        Ok(Value::Null)
+    }
+}
+
+fn audio_clear_log(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+    clear_log_internal();
+    Ok(Value::Null)
 }

@@ -1,0 +1,545 @@
+// ============================================================================
+// Shae Space Invaders - Pure Shae 2D Retro Arcade Game
+// Demonstrates std:gui, std:audio, and std:ui runtime bindings.
+// ============================================================================
+
+let gui = use "std:gui"
+let audio = use "std:audio"
+let ui = use "std:ui"
+
+// -------------------------------------------------------------
+// Constants & Configuration
+// -------------------------------------------------------------
+let SCREEN_W = 80
+let SCREEN_H = 40
+
+let STATE_MENU = 0
+let STATE_PLAYING = 1
+let STATE_PLAYER_HIT = 2
+let STATE_GAME_OVER = 3
+let STATE_VICTORY = 4
+
+let COLOR_BLACK = 0x000000
+let COLOR_WHITE = 0xFFFFFF
+let COLOR_GREEN = 0x00FF00
+let COLOR_RED = 0xFF0000
+let COLOR_YELLOW = 0xFFFF00
+let COLOR_CYAN = 0x00FFFF
+let COLOR_MAGENTA = 0xFF00FF
+let COLOR_DARK_CYAN = 0x003344
+let COLOR_BUNKER_GREEN = 0x22DD22
+let COLOR_BUNKER_YELLOW = 0xDDDD22
+let COLOR_BUNKER_RED = 0xDD2222
+
+// Sprites
+let SPRITE_PLAYER = [
+    "  █  ",
+    " ███ ",
+    "█████"
+]
+
+let SPRITE_SQUID = [
+    " █ █ ",
+    "█████",
+    "█ █ █"
+]
+
+let SPRITE_CRAB = [
+    "█ █ █",
+    "█████",
+    " █ █ "
+]
+
+let SPRITE_OCTOPUS = [
+    "█████",
+    "█ █ █",
+    "█   █"
+]
+
+// -------------------------------------------------------------
+// Global Game State
+// -------------------------------------------------------------
+let state = STATE_MENU
+let score = 0
+let high_score = 1000
+let lives = 3
+let max_lives = 3
+
+let player_x = 38
+let player_y = 34
+let player_w = 5
+let player_h = 3
+let player_speed = 1
+let laser_cooldown = 0
+
+let player_lasers = []
+let alien_bombs = []
+let bunkers = []
+let aliens = []
+let explosions = []
+
+let fleet_dir = 1
+let fleet_step_timer = 0
+let bomb_drop_timer = 0
+let hit_timer = 0
+let menu_selected = 0
+let start_debounce = 0
+
+// -------------------------------------------------------------
+// Game Initialization & Helpers
+// -------------------------------------------------------------
+
+fn init_game() {
+    score = 0
+    lives = 3
+    player_x = 38
+    player_y = 34
+    laser_cooldown = 0
+    player_lasers = []
+    alien_bombs = []
+    explosions = []
+    fleet_dir = 1
+    fleet_step_timer = 0
+    bomb_drop_timer = 0
+    hit_timer = 0
+
+    // Build 5 rows x 8 cols alien armada (40 aliens)
+    aliens = []
+    let r = 0
+    while r < 5 {
+        let alien_type = "squid"
+        let alien_pts = 30
+        let alien_color = COLOR_CYAN
+        let alien_sprite = SPRITE_SQUID
+
+        if r == 1 or r == 2 {
+            alien_type = "crab"
+            alien_pts = 20
+            alien_color = COLOR_MAGENTA
+            alien_sprite = SPRITE_CRAB
+        } else if r == 3 or r == 4 {
+            alien_type = "octopus"
+            alien_pts = 10
+            alien_color = COLOR_YELLOW
+            alien_sprite = SPRITE_OCTOPUS
+        }
+
+        let c = 0
+        while c < 8 {
+            let ax = 12 + c * 7
+            let ay = 6 + r * 4
+            let alien = {
+                x: ax,
+                y: ay,
+                w: 5,
+                h: 3,
+                alive: true,
+                type: alien_type,
+                points: alien_pts,
+                color: alien_color,
+                sprite: alien_sprite,
+                row: r,
+                col: c
+            }
+            push(aliens, alien)
+            c += 1
+        }
+        r += 1
+    }
+
+    // Build 4 destructible bunkers
+    bunkers = []
+    let bx_list = [12, 28, 44, 60]
+    let bi = 0
+    while bi < len(bx_list) {
+        let b = {
+            x: bx_list[bi],
+            y: 29,
+            w: 8,
+            h: 3,
+            hp: 4
+        }
+        push(bunkers, b)
+        bi += 1
+    }
+}
+
+// -------------------------------------------------------------
+// State Updates
+// -------------------------------------------------------------
+
+fn update_menu() {
+    if start_debounce > 0 {
+        start_debounce -= 1
+    }
+
+    if gui.is_key_down("up") or gui.is_key_down("w") {
+        menu_selected = ui.menu_select(menu_selected, -1, 3)
+    }
+    if gui.is_key_down("down") or gui.is_key_down("s") {
+        menu_selected = ui.menu_select(menu_selected, 1, 3)
+    }
+
+    if gui.is_key_down("space") or gui.is_key_down("enter") {
+        if start_debounce == 0 {
+            if menu_selected == 0 {
+                init_game()
+                state = STATE_PLAYING
+                start_debounce = 15
+            } else if menu_selected == 2 {
+                gui.close_window()
+            }
+        }
+    }
+}
+
+fn update_playing() {
+    // 1. Player controls
+    if (gui.is_key_down("left") or gui.is_key_down("a")) and player_x > 2 {
+        player_x -= player_speed
+    }
+    if (gui.is_key_down("right") or gui.is_key_down("d")) and player_x < SCREEN_W - player_w - 2 {
+        player_x += player_speed
+    }
+
+    // 2. Firing lasers
+    if laser_cooldown > 0 {
+        laser_cooldown -= 1
+    }
+    if gui.is_key_down("space") and laser_cooldown == 0 {
+        let laser = {
+            x: player_x + 2,
+            y: player_y - 1,
+            active: true
+        }
+        push(player_lasers, laser)
+        laser_cooldown = 10
+        audio.play_laser()
+    }
+
+    // 3. Update player lasers
+    for l in player_lasers {
+        if l.active {
+            l.y -= 1
+            if l.y < 4 {
+                l.active = false
+            }
+        }
+    }
+
+    // 4. Laser collisions with aliens
+    for l in player_lasers {
+        if l.active {
+            for a in aliens {
+                if a.alive and l.active {
+                    if l.x >= a.x and l.x < a.x + a.w and l.y >= a.y and l.y < a.y + a.h {
+                        a.alive = false
+                        l.active = false
+                        score += a.points
+                        if score > high_score {
+                            high_score = score
+                        }
+                        let ex = {
+                            x: a.x,
+                            y: a.y,
+                            timer: 5,
+                            color: a.color
+                        }
+                        push(explosions, ex)
+                        audio.play_explosion()
+                    }
+                }
+            }
+        }
+    }
+
+    // 5. Laser collisions with bunkers
+    for l in player_lasers {
+        if l.active {
+            for b in bunkers {
+                if b.hp > 0 and l.active {
+                    if l.x >= b.x and l.x < b.x + b.w and l.y >= b.y and l.y < b.y + b.h {
+                        l.active = false
+                        b.hp -= 1
+                        audio.play_hit()
+                    }
+                }
+            }
+        }
+    }
+
+    // 6. Check alien armada count and victory condition
+    let alive_count = 0
+    for a in aliens {
+        if a.alive {
+            alive_count += 1
+        }
+    }
+
+    if alive_count == 0 {
+        audio.play_jingle("victory")
+        state = STATE_VICTORY
+        start_debounce = 20
+        return
+    }
+
+    // 7. Alien armada movement (accelerates as aliens are eliminated)
+    let step_period = (alive_count / 3) + 2
+    fleet_step_timer += 1
+
+    if fleet_step_timer >= step_period {
+        fleet_step_timer = 0
+        let hit_edge = false
+
+        for a in aliens {
+            if a.alive {
+                let next_x = a.x + fleet_dir * 2
+                if next_x <= 2 or next_x + a.w >= SCREEN_W - 2 {
+                    hit_edge = true
+                }
+            }
+        }
+
+        if hit_edge {
+            fleet_dir = -fleet_dir
+            for a in aliens {
+                a.y += 1
+                if a.alive and a.y + a.h >= player_y {
+                    lives = 0
+                    audio.play_jingle("game_over")
+                    state = STATE_GAME_OVER
+                    start_debounce = 20
+                    return
+                }
+            }
+        } else {
+            for a in aliens {
+                a.x += fleet_dir * 2
+            }
+        }
+    }
+
+    // 8. Alien bombs dropping
+    bomb_drop_timer += 1
+    if bomb_drop_timer >= 22 {
+        bomb_drop_timer = 0
+
+        // Find lowest alive alien in random columns
+        let shooter = null
+        for a in aliens {
+            if a.alive {
+                if shooter == null or a.y > shooter.y {
+                    shooter = a
+                }
+            }
+        }
+
+        if shooter != null {
+            let bomb = {
+                x: shooter.x + 2,
+                y: shooter.y + shooter.h,
+                active: true
+            }
+            push(alien_bombs, bomb)
+        }
+    }
+
+    // 9. Update alien bombs
+    for b in alien_bombs {
+        if b.active {
+            b.y += 1
+            if b.y >= SCREEN_H - 2 {
+                b.active = false
+            }
+
+            // Bomb hits player
+            if b.active and b.x >= player_x and b.x < player_x + player_w and b.y >= player_y and b.y < player_y + player_h {
+                b.active = false
+                lives -= 1
+                let ex = {
+                    x: player_x,
+                    y: player_y,
+                    timer: 8,
+                    color: COLOR_RED
+                }
+                push(explosions, ex)
+                audio.play_hit()
+
+                if lives <= 0 {
+                    audio.play_jingle("game_over")
+                    state = STATE_GAME_OVER
+                    start_debounce = 20
+                    return
+                } else {
+                    state = STATE_PLAYER_HIT
+                    hit_timer = 20
+                    return
+                }
+            }
+
+            // Bomb hits bunkers
+            if b.active {
+                for bk in bunkers {
+                    if bk.hp > 0 and b.active {
+                        if b.x >= bk.x and b.x < bk.x + bk.w and b.y >= bk.y and b.y < bk.y + bk.h {
+                            b.active = false
+                            bk.hp -= 1
+                            audio.play_hit()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 10. Update explosions
+    for ex in explosions {
+        if ex.timer > 0 {
+            ex.timer -= 1
+        }
+    }
+}
+
+fn update_player_hit() {
+    hit_timer -= 1
+    if hit_timer <= 0 {
+        player_x = 38
+        state = STATE_PLAYING
+    }
+}
+
+fn update_game_over() {
+    if start_debounce > 0 {
+        start_debounce -= 1
+    }
+    if (gui.is_key_down("space") or gui.is_key_down("enter")) and start_debounce == 0 {
+        state = STATE_MENU
+        start_debounce = 15
+    }
+}
+
+fn update_victory() {
+    if start_debounce > 0 {
+        start_debounce -= 1
+    }
+    if (gui.is_key_down("space") or gui.is_key_down("enter")) and start_debounce == 0 {
+        init_game()
+        state = STATE_PLAYING
+        start_debounce = 15
+    }
+}
+
+// -------------------------------------------------------------
+// Rendering
+// -------------------------------------------------------------
+
+fn render() {
+    gui.clear(COLOR_BLACK)
+
+    // Render HUD
+    ui.draw_score_board(score, high_score, 2, 1, SCREEN_W - 4)
+    ui.draw_lives(lives, max_lives, 2, SCREEN_H - 2)
+
+    if state == STATE_MENU {
+        ui.draw_menu(
+            "SPACE INVADERS",
+            ["START GAME", "DIFFICULTY: NORMAL", "QUIT"],
+            menu_selected,
+            20,
+            11,
+            40,
+            20
+        )
+        gui.draw_text(24, 33, "ARROWS: MOVE  SPACE: FIRE", COLOR_CYAN)
+    } else if state == STATE_PLAYING or state == STATE_PLAYER_HIT {
+        // Draw Aliens
+        for a in aliens {
+            if a.alive {
+                gui.draw_sprite(a.x, a.y, a.sprite, a.color)
+            }
+        }
+
+        // Draw Bunkers
+        for b in bunkers {
+            if b.hp > 0 {
+                let b_col = COLOR_BUNKER_GREEN
+                if b.hp == 2 {
+                    b_col = COLOR_BUNKER_YELLOW
+                } else if b.hp == 1 {
+                    b_col = COLOR_BUNKER_RED
+                }
+                gui.fill_rect(b.x, b.y, b.w, b.h, b_col)
+            }
+        }
+
+        // Draw Lasers
+        for l in player_lasers {
+            if l.active {
+                gui.draw_line(l.x, l.y, l.x, l.y - 1, COLOR_WHITE)
+            }
+        }
+
+        // Draw Bombs
+        for b in alien_bombs {
+            if b.active {
+                gui.draw_line(b.x, b.y, b.x, b.y + 1, COLOR_RED)
+            }
+        }
+
+        // Draw Explosions
+        for ex in explosions {
+            if ex.timer > 0 {
+                gui.draw_text(ex.x, ex.y, "* *", ex.color)
+            }
+        }
+
+        // Draw Player
+        if state == STATE_PLAYING or (hit_timer % 4 < 2) {
+            gui.draw_sprite(player_x, player_y, SPRITE_PLAYER, COLOR_GREEN)
+        }
+    } else if state == STATE_GAME_OVER {
+        ui.draw_game_over(22, 12, score, score >= high_score)
+        gui.draw_text(25, 27, "PRESS SPACE TO RETURN", COLOR_CYAN)
+    } else if state == STATE_VICTORY {
+        ui.draw_panel(18, 12, 44, 18, COLOR_YELLOW, COLOR_DARK_CYAN)
+        gui.draw_text(30, 15, "VICTORY!", COLOR_YELLOW)
+        gui.draw_text(24, 19, "ALL INVADERS CLEARED", COLOR_WHITE)
+        let final_score_msg = "SCORE: " + ui.format_score(score, 6)
+        gui.draw_text(28, 23, final_score_msg, COLOR_GREEN)
+        gui.draw_text(23, 27, "PRESS SPACE TO PLAY AGAIN", COLOR_CYAN)
+    }
+}
+
+// -------------------------------------------------------------
+// Main Game Loop (60 FPS)
+// -------------------------------------------------------------
+
+gui.init_window(SCREEN_W, SCREEN_H, "Shae Space Invaders")
+init_game()
+
+let max_frames = num(env("SHAE_MAX_FRAMES", -1))
+let frame_count = 0
+
+while not gui.should_close() and (max_frames < 0 or frame_count < max_frames) {
+    gui.poll_events()
+
+    if state == STATE_MENU {
+        update_menu()
+    } else if state == STATE_PLAYING {
+        update_playing()
+    } else if state == STATE_PLAYER_HIT {
+        update_player_hit()
+    } else if state == STATE_GAME_OVER {
+        update_game_over()
+    } else if state == STATE_VICTORY {
+        update_victory()
+    }
+
+    render()
+    gui.render_frame()
+    gui.frame_delay(60)
+
+    frame_count += 1
+}
+
+gui.close_window()

@@ -42,6 +42,7 @@ pub mod suggest;
 pub mod test_runner;
 pub mod token;
 pub mod typecheck;
+pub mod ui;
 pub mod ui_mod;
 pub mod unicode;
 pub mod value;

@@ -43,7 +43,22 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "async" => Ok(build_async_module()),
         "buffer" => Ok(build_buffer_module()),
         "gui" | "graphics" => Ok(crate::gui::build_gui_module()),
-        "ui" => Ok(crate::ui_mod::build_ui_module()),
+        "ui" => {
+            let mut map = indexmap::IndexMap::new();
+            let arcade_ui = crate::ui::build_ui_module();
+            if let Value::Map(m) = arcade_ui {
+                for (k, v) in m.read().unwrap().iter() {
+                    map.insert(k.clone(), v.clone());
+                }
+            }
+            let desktop_ui = crate::ui_mod::build_ui_module();
+            if let Value::Map(m) = desktop_ui {
+                for (k, v) in m.read().unwrap().iter() {
+                    map.insert(k.clone(), v.clone());
+                }
+            }
+            Ok(Value::Map(std::sync::Arc::new(std::sync::RwLock::new(map))))
+        },
         "audio" | "sound" => Ok(crate::audio::build_audio_module()),
         "random" | "rand" => Ok(crate::random::build_random_module()),
         "math" => Ok(crate::math::build_math_module()),
@@ -58,7 +73,7 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
     }
 }
 
-fn make_map(entries: Vec<(&str, crate::value::BuiltinFn)>) -> Value {
+pub fn make_map(entries: Vec<(&str, crate::value::BuiltinFn)>) -> Value {
     let mut map = IndexMap::new();
     for (name, func) in entries {
         map.insert(
