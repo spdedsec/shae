@@ -16,14 +16,26 @@ fn run_with_large_stack<F: FnOnce() + Send + 'static>(f: F) {
 }
 
 fn get_shae_binary() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_shae") {
+        let pb = std::path::PathBuf::from(p);
+        if pb.exists() {
+            return pb;
+        }
+    }
     if let Ok(cur) = std::env::current_exe() {
         let mut path = cur.clone();
         path.pop(); // deps
-        path.pop(); // debug
-        path.push("debug");
         path.push("shae");
         if path.exists() {
             return path;
+        }
+        let mut path2 = cur.clone();
+        path2.pop(); // deps
+        path2.pop(); // debug
+        path2.push("debug");
+        path2.push("shae");
+        if path2.exists() {
+            return path2;
         }
     }
     std::path::PathBuf::from("./target/debug/shae")

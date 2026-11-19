@@ -1,0 +1,137 @@
+let gui = use "std:gui"
+let ui = use "std:ui"
+let audio = use "std:audio"
+
+println("==================================================")
+println("   ⚡ SHAE GRAPHICAL DESKTOP CALCULATOR ⚡")
+println("==================================================")
+
+let win = gui.window("Shae Calculator", 380, 480)
+
+let display = "0"
+let operand = 0
+let op = ""
+let should_reset = false
+
+while gui.is_open(win) {
+    if gui.is_key_down(win, "Escape") {
+        gui.close(win)
+        break
+    }
+
+    gui.clear(win, 0x11111B)
+
+    // Outer Panel
+    ui.panel(win, "SHAE CALCULATOR", 15, 15, 350, 450, 0x181825, 0x313244)
+
+    // Display Screen
+    gui.rect(win, 30, 45, 320, 60, 0x1E1E2E)
+    gui.rect_outline(win, 30, 45, 320, 60, 0x585B70, 1)
+    ui.label(win, display, 45, 62, 0xA6E3A1, 3)
+
+    // Row 1: Clear, +/-, %, /
+    if ui.button(win, "C", 30, 125, 70, 50, 0xF38BA8, 0x11111B) {
+        audio.beep(300, 30)
+        display = "0"
+        operand = 0
+        op = ""
+    }
+    if ui.button(win, "<", 112, 125, 70, 50) {
+        audio.beep(350, 30)
+        if len(display) > 1 {
+            display = display.slice(0, len(display) - 1)
+        } else {
+            display = "0"
+        }
+    }
+    if ui.button(win, "%", 195, 125, 70, 50) {
+        audio.beep(400, 30)
+        display = str(int(display) / 100)
+    }
+    if ui.button(win, "/", 278, 125, 72, 50, 0x89B4FA, 0x11111B) {
+        audio.beep(450, 30)
+        operand = int(display)
+        op = "/"
+        should_reset = true
+    }
+
+    // Row 2: 7, 8, 9, *
+    if ui.button(win, "7", 30, 185, 70, 50) {
+        audio.beep(500, 30)
+        if display == "0" or should_reset { display = "7"; should_reset = false } else { display = display + "7" }
+    }
+    if ui.button(win, "8", 112, 185, 70, 50) {
+        audio.beep(520, 30)
+        if display == "0" or should_reset { display = "8"; should_reset = false } else { display = display + "8" }
+    }
+    if ui.button(win, "9", 195, 185, 70, 50) {
+        audio.beep(540, 30)
+        if display == "0" or should_reset { display = "9"; should_reset = false } else { display = display + "9" }
+    }
+    if ui.button(win, "*", 278, 185, 72, 50, 0x89B4FA, 0x11111B) {
+        audio.beep(450, 30)
+        operand = int(display)
+        op = "*"
+        should_reset = true
+    }
+
+    // Row 3: 4, 5, 6, -
+    if ui.button(win, "4", 30, 245, 70, 50) {
+        audio.beep(560, 30)
+        if display == "0" or should_reset { display = "4"; should_reset = false } else { display = display + "4" }
+    }
+    if ui.button(win, "5", 112, 245, 70, 50) {
+        audio.beep(580, 30)
+        if display == "0" or should_reset { display = "5"; should_reset = false } else { display = display + "5" }
+    }
+    if ui.button(win, "6", 195, 245, 70, 50) {
+        audio.beep(600, 30)
+        if display == "0" or should_reset { display = "6"; should_reset = false } else { display = display + "6" }
+    }
+    if ui.button(win, "-", 278, 245, 72, 50, 0x89B4FA, 0x11111B) {
+        audio.beep(450, 30)
+        operand = int(display)
+        op = "-"
+        should_reset = true
+    }
+
+    // Row 4: 1, 2, 3, +
+    if ui.button(win, "1", 30, 305, 70, 50) {
+        audio.beep(620, 30)
+        if display == "0" or should_reset { display = "1"; should_reset = false } else { display = display + "1" }
+    }
+    if ui.button(win, "2", 112, 305, 70, 50) {
+        audio.beep(640, 30)
+        if display == "0" or should_reset { display = "2"; should_reset = false } else { display = display + "2" }
+    }
+    if ui.button(win, "3", 195, 305, 70, 50) {
+        audio.beep(660, 30)
+        if display == "0" or should_reset { display = "3"; should_reset = false } else { display = display + "3" }
+    }
+    if ui.button(win, "+", 278, 305, 72, 50, 0x89B4FA, 0x11111B) {
+        audio.beep(450, 30)
+        operand = int(display)
+        op = "+"
+        should_reset = true
+    }
+
+    // Row 5: 0, =, exit
+    if ui.button(win, "0", 30, 365, 152, 50) {
+        audio.beep(400, 30)
+        if display != "0" and !should_reset { display = display + "0" }
+    }
+    if ui.button(win, "=", 195, 365, 155, 50, 0xA6E3A1, 0x11111B) {
+        audio.beep(880, 50)
+        let cur = int(display)
+        if op == "+" { display = str(operand + cur) }
+        if op == "-" { display = str(operand - cur) }
+        if op == "*" { display = str(operand * cur) }
+        if op == "/" { if cur != 0 { display = str(operand / cur) } else { display = "Error" } }
+        should_reset = true
+    }
+
+    gui.render(win)
+    gui.limit_fps(win, 60)
+}
+
+println("Calculator closed.")

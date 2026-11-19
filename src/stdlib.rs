@@ -42,17 +42,38 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "actor:cluster" | "cluster" => Ok(build_cluster_module()),
         "async" => Ok(build_async_module()),
         "buffer" => Ok(build_buffer_module()),
+        "gui" | "graphics" => Ok(crate::gui::build_gui_module()),
+        "ui" => {
+            let mut map = indexmap::IndexMap::new();
+            let arcade_ui = crate::ui::build_ui_module();
+            if let Value::Map(m) = arcade_ui {
+                for (k, v) in m.read().unwrap().iter() {
+                    map.insert(k.clone(), v.clone());
+                }
+            }
+            let desktop_ui = crate::ui_mod::build_ui_module();
+            if let Value::Map(m) = desktop_ui {
+                for (k, v) in m.read().unwrap().iter() {
+                    map.insert(k.clone(), v.clone());
+                }
+            }
+            Ok(Value::Map(std::sync::Arc::new(std::sync::RwLock::new(map))))
+        },
+        "audio" | "sound" => Ok(crate::audio::build_audio_module()),
+        "random" | "rand" => Ok(crate::random::build_random_module()),
+        "math" => Ok(crate::math::build_math_module()),
+        "io" => Ok(crate::io_mod::build_io_module()),
         "test" => Ok(build_test_module()),
         "bench" | "benchmark" => Ok(build_bench_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:async, std:buffer, std:test, std:bench",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:async, std:buffer, std:gui, std:ui, std:audio, std:random, std:math, std:io, std:test, std:bench",
             clean_name
         ))
         .at(span)),
     }
 }
 
-fn make_map(entries: Vec<(&str, crate::value::BuiltinFn)>) -> Value {
+pub fn make_map(entries: Vec<(&str, crate::value::BuiltinFn)>) -> Value {
     let mut map = IndexMap::new();
     for (name, func) in entries {
         map.insert(
@@ -4635,10 +4656,15 @@ fn async_spawn(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value
     let func = args[0].clone();
     let call_args: Vec<Value> = args[1..].to_vec();
     let env = ev.global_env.clone();
-    let handle = std::thread::spawn(move || {
-        let mut spawn_eval = Evaluator::with_env(env);
-        spawn_eval.call_value(&func, call_args, span)
-    });
+    let handle = std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let mut spawn_eval = Evaluator::with_env(env);
+            spawn_eval.call_value(&func, call_args, span)
+        })
+        .map_err(|e| {
+            RuntimeError::new(format!("Failed to spawn async task thread: {}", e)).at(span)
+        })?;
     Ok(Value::Task(Arc::new(std::sync::Mutex::new(
         crate::value::TaskInner::new(handle),
     ))))

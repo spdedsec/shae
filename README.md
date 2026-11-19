@@ -13,11 +13,11 @@
 **A modern, strict, and ergonomic systems scripting language with Cranelift JIT compilation.**  
 *Zero ceremony, native machine code JIT, embedded SQLite, RFC 4180 CSV, coroutines, TLS/mTLS cluster mesh, pure-Shae test runner, live doc server, package registry, and standalone binary bundler.*
 
-[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.5.0-blue.svg)](Cargo.toml)
 [![Tests](https://img.shields.io/badge/tests-290%2B%20passing-brightgreen.svg)]()
 [![Rust](https://img.shields.io/badge/built%20with-Rust%202024-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![VS Code](https://img.shields.io/badge/VS%20Code-v0.4.0-purple.svg)](editors/vscode)
+[![VS Code](https://img.shields.io/badge/VS%20Code-v0.5.0-purple.svg)](editors/vscode)
 
 </div>
 
@@ -48,6 +48,12 @@ Looking for an end-to-end explanation of the entire language and runtime? Check 
 
 Shae is designed to hit the sweet spot between safety, ergonomics, raw utility, and high execution speed:
 
+- 🎮 **Native 2D Game & Creative Graphics Engine (`std:gui`)**: Embedded 60 FPS software framebuffer with Wayland/X11 support, instant retro 8x8 font rendering, PNG/BMP image loading, alpha-channel sprite blitting, geometric primitives (rectangles, circles, lines), and non-blocking keyboard/mouse input polling.
+- 🎹 **Hardware Audio Synthesizer & Sound FX Engine (`std:audio`)**: Real-time waveform generation (`audio.beep`, `audio.tone`), asynchronous WAV/FLAC audio playback, and background music looping.
+- 🎛️ **Immediate-Mode Desktop UI Toolkit (`std:ui`)**: Interactive GUI widgets (`ui.button`, `ui.slider`, `ui.checkbox`, `ui.progress_bar`, `ui.panel`) for game menus and desktop utilities.
+- 🖥️ **Shae Studio Web IDE (`shae ide`)**: Embedded browser-based development environment with interactive code editor, real-time code execution, file explorer, code formatting, linter checks, interactive REPL console, and live API documentation.
+- 🎲 **Creative & Math Standard Libraries (`std:random`, `std:math`, `std:io`)**: Fast seedable PRNG, full trigonometry & clamping, and synchronous I/O.
+- 📜 **Direct Script Execution & Shebang Support**: Run any script immediately with `shae script.shae` or `./script.shae` via `#!/usr/bin/env shae` with automatic desktop file-manager association.
 - 🚫 **Zero Ceremony & No Semicolons**: Clean, expressive syntax without unnecessary punctuation or parentheses around conditions.
 - ⚡ **Cranelift JIT SSA Backend**: Native machine code generation (x86_64, aarch64) for hot mathematical loops, recursive functions, `f64` float SSA math, and direct fast-path array indexing with safe deoptimization bailouts.
 - ⏳ **First-Class Coroutines (`async` / `await` & `std:async`)**: Cooperative asynchronous routines, non-blocking evaluation, and concurrent combinators (`async:all`, `async:race`, `async:sleep`).
@@ -117,7 +123,36 @@ shae run hello.shae
 
 ## 🌟 Language Tour
 
-### 1. Cranelift JIT Compilation
+### 1. Gradual Typing & Static Type Checker (`shae check`)
+Shae provides an ergonomic **gradual type system**. Type annotations are completely optional, allowing rapid prototyping with dynamic duck typing while letting you enforce strict static verification across critical interfaces:
+
+```shae
+// Optional function parameter and return type annotations
+fn calculate_tax(subtotal: float, rate: float = 0.08) -> float {
+    return subtotal * (1.0 + rate)
+}
+
+// Variable annotations and nullable union types
+let user_id: int | string | null = null
+user_id = 42
+
+fn fetch_user(id: int | string) -> map | null {
+    if id == 42 {
+        return { "id": id, "name": "Satya" }
+    }
+    return null
+}
+
+let user = fetch_user(user_id)
+```
+
+Run static type checking across your files anytime:
+```bash
+shae check main.shae
+```
+The static checker verifies argument types, arities, return types, and variable assignments without runtime overhead.
+
+### 2. Cranelift JIT Compilation
 Shae features an integrated SSA-based Just-In-Time compiler powered by Cranelift:
 ```shae
 // Explicitly compile a recursive algorithm to native machine code
@@ -427,12 +462,49 @@ env.load_dotenv(".env")
 println("Running on:", sys.platform(), sys.arch())
 ```
 
+### 13. Native 2D Game Development & GUI Engine (`std:gui`)
+Shae includes an embedded immediate-mode 2D graphics engine capable of rendering games at a locked 60 FPS across Linux Wayland and X11:
+
+```shae
+let gui = use "std:gui"
+let rand = use "std:random"
+
+let win = gui.window("Shae Canvas Demo", 640, 480)
+let x = 320
+let y = 240
+
+while gui.is_open(win) {
+    // 1. Non-blocking input polling
+    if gui.is_key_down(win, "Left")  { x = x - 5 }
+    if gui.is_key_down(win, "Right") { x = x + 5 }
+    if gui.is_key_down(win, "Up")    { y = y - 5 }
+    if gui.is_key_down(win, "Down")  { y = y + 5 }
+
+    // 2. Immediate-mode drawing
+    gui.clear(win, "#181825")
+    gui.rect_outline(win, 10, 10, 620, 460, "#45475a", 2)
+    gui.circle(win, x, y, 20, "#a6e3a1")
+    gui.text(win, 20, 20, "Move circle with Arrow Keys", "#cdd6f4", 2)
+
+    // 3. Frame presentation & 60 FPS lock
+    gui.render(win)
+    gui.limit_fps(win, 60)
+}
+gui.close(win)
+```
+
 ---
 
 ## 📂 Standalone Examples & Showcase
 
 Explore ready-to-run examples in the [`examples/`](examples) directory:
 
+- 👾 [**Space Invaders 2D Retro Arcade Game**](examples/space_invaders.shae): Full playable retro arcade game featuring animated alien fleets, destructive bunker degradation, laser projectile physics, sound effects (`std:audio`), score/lives HUD (`std:ui`), and dual TrueColor ANSI terminal / 60 FPS window rendering (`std:gui`).
+- 🐍 [**Shae Retro Snake (60 FPS Native GUI)**](examples/snake_gui.shae): Full playable arcade Snake game with score tracking, apple spawning, collision physics, and instant restart (`[R]`).
+- 🎹 [**Interactive Audio Synthesizer & Piano**](examples/sound_synth.shae): 8-key piano keyboard with waveform selection (sine, square, triangle, saw), volume slider, and real-time audio playback (`std:audio`).
+- 🧮 [**Desktop Graphical Calculator**](examples/calculator_gui.shae): Clean desktop calculator with interactive UI buttons, arithmetic operations, and clear functionality built with `std:ui`.
+- 🎆 [**Particle Physics & Fireworks Sandbox**](examples/particles_gui.shae): 60 FPS interactive particle simulation with gravity, elastic wall/floor bounces, and mouse-click explosions.
+- 🗡️ [**Dungeon of Shae (Terminal RPG)**](examples/dungeon.shae): Pure Shae procedural dungeon crawler with combat, inventory, and ASCII maps.
 - 🎭 [**Actor Concurrency & Supervision Demo**](examples/actor_demo.shae): Stateful actors, request-reply `ask`, named registry, and `OneForOne` supervisor crash recovery.
 - 🌐 [**Distributed Actor Mesh Demo**](examples/actor_cluster_demo.shae): TCP clustering, cross-node discovery, remote actor `ask`, distributed worker pools, and bully leader election.
 - 🧪 [**Pure-Shae Test Runner Suite**](tests/shae/sample_suite_test.shae): Pure-Shae unit and integration tests using `std:test` assertion primitives.
@@ -455,12 +527,13 @@ Shae ships with an all-in-one developer toolchain:
 
 | Command | Description |
 |---|---|
+| `shae <file.shae>` / `./file.shae` | Directly execute a Shae script (supports shebang `#!/usr/bin/env shae` and desktop double-click) |
 | `shae run <file.shae\|file.shaec>` | Run a script or precompiled bytecode (defaults to Bytecode VM; use `--engine=ast` for AST) |
 | `shae compile <file.shae>` | Compile source script into ahead-of-time bytecode binary (`.shaec`) |
 | `shae disasm <file.shae\|file.shaec>` | Disassemble script or compiled bytecode into human-readable instructions and constant pool |
 | `shae fmt <file.shae>` | Format source files canonically (4-space indentation) |
 | `shae fmt --check <file>` | Verify formatting without modifying files |
-| `shae check <file.shae>` | Static linter checking for unused variables, dead code, and shadowing |
+| `shae check <file.shae>` | Static type checker and linter verifying types, function signatures, unused variables, and arity |
 | `shae test [path] [-f <pat>] [--ast] [--nocapture]` | Built-in Pure-Shae test runner with discovery, filtering, and sub-ms timing |
 | `shae doc [path] [-o <dir>] [--format <fmt>] [--serve] [--port <p>] [--open]` | Generate HTML/Markdown/JSON API documentation with optional live HTTP server |
 | `shae pkg init [name]` | Initialize a new package with `shae.toml` manifest |
@@ -473,6 +546,7 @@ Shae ships with an all-in-one developer toolchain:
 | `shae link <file.shae> [-o <bin>]` | Link script into a standalone 64-bit ELF or PE native executable |
 | `shae wasm <file.shae> [-o <out.wasm>] [--run]` | Compile script into WebAssembly binary bytecode (.wasm) and optionally execute via built-in runner |
 | `shae lsp` | Run the Language Server Protocol daemon for editor integration |
+| `shae ide [dir] [--port <p>] [--host <h>] [--no-open]` | Start interactive Shae Studio Web IDE in your browser with live code runner, REPL, and file explorer |
 | `shae repl` | Start interactive REPL (defaults to Bytecode VM; use `--engine=ast` for AST) |
 
 ---
@@ -484,7 +558,7 @@ Shae provides an official VS Code extension located at [`editors/vscode`](editor
 - **Language Server Protocol Integration**: Real-time compiler diagnostics, completions, and formatting powered by `shae lsp`.
 - **Install**:
   ```bash
-  code --install-extension editors/vscode/shae-vscode-0.4.0.vsix
+  code --install-extension editors/vscode/shae-vscode-0.5.0.vsix
   ```
 
 ---

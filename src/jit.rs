@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub type JitFnPtr = unsafe extern "C" fn(*const i64, usize, *mut i64) -> i32;
 
 pub const JIT_THRESHOLD: usize = 20;
+pub const MAX_JIT_CALL_DEPTH: usize = 1024;
 
 #[inline]
 fn mem_flags() -> MachMemFlags {
@@ -172,46 +173,43 @@ impl JitEngine {
         let chunk = &func.chunk;
         let arity = func.arity;
 
-        let func_name = format!(
-            "shae_jit_fn_{}_{}",
-            func.name.as_deref().unwrap_or("anon"),
-            self.next_func_id.fetch_add(1, Ordering::SeqCst)
-        );
+        let fn_id_num = self.next_func_id.fetch_add(1, Ordering::SeqCst);
+        let fn_base = func.name.as_deref().unwrap_or("anon");
+        let inner_name = format!("shae_jit_inner_{}_{}", fn_base, fn_id_num);
+        let entry_name = format!("shae_jit_entry_{}_{}", fn_base, fn_id_num);
 
         let pointer_type = self.module.target_config().pointer_type();
 
+        // 1. Declare inner function:
+        // (args: *const i64, num_args: usize, out_val: *mut i64, depth: usize) -> i32
         self.ctx.func.signature.params.clear();
         self.ctx.func.signature.returns.clear();
+        self.ctx.func.signature.params.push(AbiParam::new(pointer_type));
+        self.ctx.func.signature.params.push(AbiParam::new(pointer_type));
+        self.ctx.func.signature.params.push(AbiParam::new(pointer_type));
+        self.ctx.func.signature.params.push(AbiParam::new(pointer_type)); // depth
+        self.ctx.func.signature.returns.push(AbiParam::new(types::I32));
 
-        // Signature: extern "C" fn(args: *const i64, num_args: usize, out_val: *mut i64) -> i32
-        self.ctx
-            .func
-            .signature
-            .params
-            .push(AbiParam::new(pointer_type));
-        self.ctx
-            .func
-            .signature
-            .params
-            .push(AbiParam::new(pointer_type));
-        self.ctx
-            .func
-            .signature
-            .params
-            .push(AbiParam::new(pointer_type));
-        self.ctx
-            .func
-            .signature
-            .returns
-            .push(AbiParam::new(types::I32));
-
-        let func_id = self
+        let inner_func_id = self
             .module
-            .declare_function(&func_name, Linkage::Export, &self.ctx.func.signature)
-            .map_err(|e| format!("Declaration error: {}", e))?;
+            .declare_function(&inner_name, Linkage::Local, &self.ctx.func.signature)
+            .map_err(|e| format!("Inner declaration error: {}", e))?;
+
+        // Declare entry trampoline signature:
+        // (args: *const i64, num_args: usize, out_val: *mut i64) -> i32
+        let mut entry_sig = self.module.make_signature();
+        entry_sig.params.push(AbiParam::new(pointer_type));
+        entry_sig.params.push(AbiParam::new(pointer_type));
+        entry_sig.params.push(AbiParam::new(pointer_type));
+        entry_sig.returns.push(AbiParam::new(types::I32));
+
+        let entry_func_id = self
+            .module
+            .declare_function(&entry_name, Linkage::Export, &entry_sig)
+            .map_err(|e| format!("Entry declaration error: {}", e))?;
 
         let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
-        let self_callee = self.module.declare_func_in_func(func_id, &mut builder.func);
+        let self_callee = self.module.declare_func_in_func(inner_func_id, &mut builder.func);
 
         // Pre-scan block starts
         let mut block_starts = BTreeSet::new();
@@ -292,6 +290,7 @@ impl JitEngine {
         let args_ptr = builder.block_params(entry_block)[0];
         let num_args = builder.block_params(entry_block)[1];
         let out_ptr = builder.block_params(entry_block)[2];
+        let depth_val = builder.block_params(entry_block)[3];
 
         let is_float = chunk
             .constants
@@ -307,11 +306,32 @@ impl JitEngine {
         }
         let var = |idx: usize| vars[idx];
 
-        // Deopt bailout block
+        // Error and bailout blocks
         let bailout_block = builder.create_block();
         let div_zero_block = builder.create_block();
+        let stack_overflow_block = builder.create_block();
+        let normal_entry_block = builder.create_block();
 
-        // Setup parameters and local variables in entry
+        // Call depth guard check
+        let max_depth = builder.ins().iconst(pointer_type, MAX_JIT_CALL_DEPTH as i64);
+        let depth_exceeded =
+            builder
+                .ins()
+                .icmp(IntCC::UnsignedGreaterThanOrEqual, depth_val, max_depth);
+        builder
+            .ins()
+            .brif(depth_exceeded, stack_overflow_block, &[], normal_entry_block, &[]);
+
+        // Stack overflow block immediately returns 4
+        builder.switch_to_block(stack_overflow_block);
+        builder.seal_block(stack_overflow_block);
+        let status_overflow = builder.ins().iconst(types::I32, 4);
+        builder.ins().return_(&[status_overflow]);
+
+        // Normal entry block
+        builder.switch_to_block(normal_entry_block);
+        builder.seal_block(normal_entry_block);
+
         let zero_const = if is_float {
             builder.ins().f64const(0.0)
         } else {
@@ -787,9 +807,11 @@ impl JitEngine {
                     }
 
                     let arg_count_val = builder.ins().iconst(pointer_type, arg_count as i64);
+                    let one_val = builder.ins().iconst(pointer_type, 1);
+                    let next_depth = builder.ins().iadd(depth_val, one_val);
                     let call_inst = builder
                         .ins()
-                        .call(self_callee, &[call_args_addr, arg_count_val, call_out_addr]);
+                        .call(self_callee, &[call_args_addr, arg_count_val, call_out_addr, next_depth]);
                     let status = builder.inst_results(call_inst)[0];
 
                     let expected_status = if is_float { 3 } else { 0 };
@@ -799,9 +821,14 @@ impl JitEngine {
                             .icmp_imm_s(IntCC::Equal, status, expected_status as i64);
 
                     let next_block = builder.create_block();
+                    let call_err_block = builder.create_block();
                     builder
                         .ins()
-                        .brif(status_ok, next_block, &[], bailout_block, &[]);
+                        .brif(status_ok, next_block, &[], call_err_block, &[]);
+
+                    builder.switch_to_block(call_err_block);
+                    builder.seal_block(call_err_block);
+                    builder.ins().return_(&[status]);
 
                     builder.switch_to_block(next_block);
                     builder.seal_block(next_block);
@@ -906,15 +933,47 @@ impl JitEngine {
         builder.finalize(self.module.target_config());
 
         self.module
-            .define_function(func_id, &mut self.ctx)
-            .map_err(|e| format!("Definition error: {}", e))?;
+            .define_function(inner_func_id, &mut self.ctx)
+            .map_err(|e| format!("Inner definition error: {}", e))?;
+
+        self.module.clear_context(&mut self.ctx);
+
+        // 2. Build entry trampoline function:
+        // extern "C" fn(args: *const i64, num_args: usize, out_val: *mut i64) -> i32
+        self.ctx.func.signature = entry_sig;
+        let mut tramp_builder =
+            FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
+        let tramp_entry = tramp_builder.create_block();
+        tramp_builder.append_block_params_for_function_params(tramp_entry);
+        tramp_builder.switch_to_block(tramp_entry);
+        tramp_builder.seal_block(tramp_entry);
+
+        let t_args = tramp_builder.block_params(tramp_entry)[0];
+        let t_num_args = tramp_builder.block_params(tramp_entry)[1];
+        let t_out_val = tramp_builder.block_params(tramp_entry)[2];
+        let t_zero_depth = tramp_builder.ins().iconst(pointer_type, 0);
+
+        let inner_callee = self
+            .module
+            .declare_func_in_func(inner_func_id, &mut tramp_builder.func);
+        let tramp_call = tramp_builder
+            .ins()
+            .call(inner_callee, &[t_args, t_num_args, t_out_val, t_zero_depth]);
+        let tramp_status = tramp_builder.inst_results(tramp_call)[0];
+        tramp_builder.ins().return_(&[tramp_status]);
+
+        tramp_builder.finalize(self.module.target_config());
+
+        self.module
+            .define_function(entry_func_id, &mut self.ctx)
+            .map_err(|e| format!("Entry definition error: {}", e))?;
 
         self.module.clear_context(&mut self.ctx);
         self.module
             .finalize_definitions()
             .map_err(|e| format!("Finalize error: {}", e))?;
 
-        let code_ptr = self.module.get_finalized_function(func_id);
+        let code_ptr = self.module.get_finalized_function(entry_func_id);
         let fn_ptr: JitFnPtr = unsafe { std::mem::transmute(code_ptr) };
         Ok(fn_ptr)
     }

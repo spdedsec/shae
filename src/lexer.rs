@@ -85,6 +85,15 @@ impl Lexer {
                         self.advance();
                     }
                 }
+                '#' => {
+                    self.advance(); // consume '#'
+                    while let Some(&(_, next_ch)) = self.current() {
+                        if next_ch == '\n' {
+                            break;
+                        }
+                        self.advance();
+                    }
+                }
                 '/' if self.peek(1) == Some('*') => {
                     let start_line = self.line;
                     let start_col = self.col;
@@ -198,9 +207,60 @@ impl Lexer {
                         });
                     }
                 }
-                '*' => tokens.push(self.single(Token::Star)),
-                '/' => tokens.push(self.single(Token::Slash)),
-                '%' => tokens.push(self.single(Token::Percent)),
+                '*' => {
+                    let start_col = self.col;
+                    self.advance();
+                    if self.current_char() == Some('=') {
+                        self.advance();
+                        tokens.push(SpannedToken {
+                            token: Token::StarEquals,
+                            line: self.line,
+                            col: start_col,
+                        });
+                    } else {
+                        tokens.push(SpannedToken {
+                            token: Token::Star,
+                            line: self.line,
+                            col: start_col,
+                        });
+                    }
+                }
+                '/' => {
+                    let start_col = self.col;
+                    self.advance();
+                    if self.current_char() == Some('=') {
+                        self.advance();
+                        tokens.push(SpannedToken {
+                            token: Token::SlashEquals,
+                            line: self.line,
+                            col: start_col,
+                        });
+                    } else {
+                        tokens.push(SpannedToken {
+                            token: Token::Slash,
+                            line: self.line,
+                            col: start_col,
+                        });
+                    }
+                }
+                '%' => {
+                    let start_col = self.col;
+                    self.advance();
+                    if self.current_char() == Some('=') {
+                        self.advance();
+                        tokens.push(SpannedToken {
+                            token: Token::PercentEquals,
+                            line: self.line,
+                            col: start_col,
+                        });
+                    } else {
+                        tokens.push(SpannedToken {
+                            token: Token::Percent,
+                            line: self.line,
+                            col: start_col,
+                        });
+                    }
+                }
 
                 '|' => {
                     let start_col = self.col;
@@ -283,9 +343,8 @@ impl Lexer {
                             col: start_col,
                         });
                     } else {
-                        return Err(LexerError::UnexpectedChar {
-                            ch: '!',
-                            hint: " Did you mean 'not' or '!='?".to_string(),
+                        tokens.push(SpannedToken {
+                            token: Token::Not,
                             line: self.line,
                             col: start_col,
                         });
@@ -386,7 +445,6 @@ impl Lexer {
 
                 _ => {
                     let hint = match ch {
-                        '#' => " Did you mean '//' for a comment?",
                         '\'' => " Did you mean to use double quotes for a string?",
                         '&' => " Did you mean '&&'?",
                         '|' => " Did you mean '||'?",

@@ -654,3 +654,70 @@ get_at([10, 20], 99)
     // When JIT bails out on index 99, VM fallback executes and generates bounds error
     assert!(matches!(res, InterpretResult::RuntimeError(_)));
 }
+
+#[test]
+fn test_jit_unbounded_recursion_guard_returns_status_4() {
+    let script = r#"
+fn recurse_forever(n) {
+    return recurse_forever(n + 1) + 1
+}
+recurse_forever(0)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let func = chunk
+        .constants
+        .iter()
+        .find_map(|v| match v {
+            Value::CompiledFunction(f) => Some(f.clone()),
+            _ => None,
+        })
+        .expect("CompiledFunction not found");
+
+    assert!(JitEngine::can_compile(&func));
+
+    let mut engine = JitEngine::new().expect("Init JitEngine");
+    let jit_fn = engine
+        .compile_function(&func)
+        .expect("JIT compile recursive function");
+
+    let args = [0i64];
+    let mut out: i64 = 0;
+    let status = unsafe { jit_fn(args.as_ptr(), args.len(), &mut out) };
+    assert_eq!(status, 4, "Expected status code 4 for recursion stack overflow, got {}", status);
+
+    // Verify VM maps status 4 to RuntimeError: Call stack overflow
+    let mut vm = VM::new();
+    vm.jit_threshold = 0;
+    let res = vm.interpret(chunk);
+    assert_eq!(
+        res,
+        InterpretResult::RuntimeError("Call stack overflow".to_string())
+    );
+}
+
+#[test]
+fn test_jit_recursion_catchable_in_vm() {
+    let script = r#"
+fn recurse_forever(n) {
+    return recurse_forever(n + 1) + 1
+}
+
+let caught = "none"
+try {
+    recurse_forever(1)
+} catch (e) {
+    caught = e
+}
+caught
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    vm.jit_threshold = 0;
+    let res = vm.interpret(chunk);
+    assert_eq!(
+        res,
+        InterpretResult::Ok(Value::String("Call stack overflow".to_string()))
+    );
+}

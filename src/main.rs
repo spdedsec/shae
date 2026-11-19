@@ -21,6 +21,9 @@ fn show_help() {
         "  shae run [file.shae]       Run a Shae script (or package entrypoint from shae.toml) (default: VM; use --engine=ast, --disasm)"
     );
     println!(
+        "  shae jit <file.shae>       Run a Shae script with immediate Cranelift JIT compilation (JIT_THRESHOLD = 0)"
+    );
+    println!(
         "  shae compile <file.shae>   Compile a Shae script to bytecode (.shaec) (options: -o, --disasm)"
     );
     println!("  shae disasm <file>         Disassemble a Shae script or .shaec to bytecode");
@@ -32,6 +35,7 @@ fn show_help() {
         "  shae bench [filter]        Run benchmark suite in benchmarks/*.shae (--filter <pat>, --ast, -i <N>)"
     );
     println!("  shae fmt <file.shae>       Format a Shae script");
+    println!("  shae clean                 Clean compiled bytecode (.shaec) artifacts");
     println!(
         "  shae doc [path]            Generate documentation site & reference (-o, --format html|md|json, --serve, --port, --host, --open)"
     );
@@ -67,6 +71,8 @@ fn show_help() {
     println!("  shae dap                   Start Debug Adapter Protocol (DAP) server");
     println!("  shae debug <file.shae>     Start interactive step debugger");
     println!("  shae profile <file.shae>   Profile CPU execution time and opcodes (--folded)");
+    println!("  shae ide [dir]             Start interactive Shae Studio Web IDE (--port, --host, --no-open)");
+    println!("  shae studio [dir]          Start interactive Shae Studio Web IDE (--port, --host, --no-open)");
     println!("  shae serve [dir]           Start instant static HTTP dev server (--port, --host)");
     println!("  shae --joke                Print a programming joke");
     println!("  shae --tip                 Print a Shae tip");
@@ -240,6 +246,23 @@ fn run_file(filename: &str, use_vm: bool) {
     } else {
         shae::run_file(filename)
     };
+    if let Err(e) = res {
+        if is_bytecode {
+            eprintln!("{}", e);
+        } else {
+            let source = fs::read_to_string(filename).unwrap_or_default();
+            eprintln!("{}", shae::render_error(&e, &source));
+        }
+        process::exit(1);
+    }
+}
+
+fn run_file_jit(filename: &str) {
+    let is_bytecode = filename.ends_with(".shaec")
+        || fs::read(filename)
+            .map(|b| b.starts_with(shae::chunk::BYTECODE_MAGIC))
+            .unwrap_or(false);
+    let res = shae::run_file_jit(filename);
     if let Err(e) = res {
         if is_bytecode {
             eprintln!("{}", e);
@@ -448,6 +471,50 @@ fn main() {
             let use_vm = should_use_vm(&args);
             run_repl(use_vm);
         }
+        "ide" | "studio" => {
+            let mut port: u16 = 8080;
+            let mut host = "127.0.0.1".to_string();
+            let mut path = ".".to_string();
+            let mut open = true;
+
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--port" | "-p" => {
+                        if i + 1 < args.len() {
+                            port = args[i + 1].parse().unwrap_or(8080);
+                            i += 2;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    "--host" => {
+                        if i + 1 < args.len() {
+                            host = args[i + 1].clone();
+                            i += 2;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    "--no-open" => {
+                        open = false;
+                        i += 1;
+                    }
+                    arg if !arg.starts_with('-') => {
+                        path = arg.to_string();
+                        i += 1;
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+
+            if let Err(e) = shae::ide::start_ide_server(Path::new(&path), &host, port, open) {
+                eprintln!("Error starting Shae Studio: {}", e);
+                process::exit(1);
+            }
+        }
         "serve" => {
             run_serve_command(&args[2..]);
         }
@@ -478,18 +545,33 @@ fn main() {
             }
         }
         "add" => {
-            if args.len() < 4 {
-                eprintln!("Usage: shae add <dep_name> <source> [--branch <b/t/r>]");
+            if args.len() < 3 {
+                eprintln!("Usage: shae add <package_name> [source] [--version <v>] [--registry <url>] [--branch <b/t/r>]");
                 process::exit(1);
             }
-            let dep_name = &args[2];
-            let source = &args[3];
+            let raw_pkg = &args[2];
+            let (pkg_name, at_ver) = if let Some((n, v)) = raw_pkg.split_once('@') {
+                (n.to_string(), Some(v.to_string()))
+            } else {
+                (raw_pkg.to_string(), None)
+            };
+
+            let mut source = None;
+            let mut version = at_ver;
+            let mut registry = None;
             let mut branch = None;
             let mut tag = None;
             let mut rev = None;
-            let mut i = 4;
+
+            let mut i = 3;
             while i < args.len() {
-                if args[i] == "--branch" && i + 1 < args.len() {
+                if (args[i] == "--version" || args[i] == "-v") && i + 1 < args.len() {
+                    version = Some(args[i + 1].clone());
+                    i += 2;
+                } else if args[i] == "--registry" && i + 1 < args.len() {
+                    registry = Some(args[i + 1].clone());
+                    i += 2;
+                } else if args[i] == "--branch" && i + 1 < args.len() {
                     branch = Some(args[i + 1].as_str());
                     i += 2;
                 } else if args[i] == "--tag" && i + 1 < args.len() {
@@ -498,15 +580,35 @@ fn main() {
                 } else if args[i] == "--rev" && i + 1 < args.len() {
                     rev = Some(args[i + 1].as_str());
                     i += 2;
+                } else if !args[i].starts_with('-') && source.is_none() {
+                    source = Some(args[i].clone());
+                    i += 1;
                 } else {
                     i += 1;
                 }
             }
-            match shae::pkg::add_dependency(Path::new("."), dep_name, source, branch, tag, rev) {
-                Ok(_) => println!("✅ Added and resolved dependency '{}'", dep_name),
-                Err(e) => {
-                    eprintln!("Error adding dependency: {}", e);
-                    process::exit(1);
+
+            if let Some(src) = source {
+                match shae::pkg::add_dependency(Path::new("."), &pkg_name, &src, branch, tag, rev) {
+                    Ok(_) => println!("✅ Added and resolved dependency '{}'", pkg_name),
+                    Err(e) => {
+                        eprintln!("Error adding dependency: {}", e);
+                        process::exit(1);
+                    }
+                }
+            } else {
+                let reg_url = shae::pkg::resolve_registry_url(Some(Path::new(".")), registry.as_deref());
+                match shae::pkg::add_dependency_from_registry(
+                    Path::new("."),
+                    &pkg_name,
+                    version.as_deref(),
+                    &reg_url,
+                ) {
+                    Ok(_) => println!("✅ Added and resolved dependency '{}' from registry", pkg_name),
+                    Err(e) => {
+                        eprintln!("Error adding dependency: {}", e);
+                        process::exit(1);
+                    }
                 }
             }
         }
@@ -540,24 +642,70 @@ fn main() {
                     }
                 }
                 "add" => {
-                    if args.len() < 5 {
-                        eprintln!("Usage: shae pkg add <dep_name> <source>");
+                    if args.len() < 4 {
+                        eprintln!("Usage: shae pkg add <package_name> [source] [--version <v>] [--registry <url>]");
                         process::exit(1);
                     }
-                    let dep_name = &args[3];
-                    let source = &args[4];
-                    match shae::pkg::add_dependency(
-                        Path::new("."),
-                        dep_name,
-                        source,
-                        None,
-                        None,
-                        None,
-                    ) {
-                        Ok(_) => println!("✅ Added and resolved dependency '{}'", dep_name),
-                        Err(e) => {
-                            eprintln!("Error adding dependency: {}", e);
-                            process::exit(1);
+                    let raw_pkg = &args[3];
+                    let (pkg_name, at_ver) = if let Some((n, v)) = raw_pkg.split_once('@') {
+                        (n.to_string(), Some(v.to_string()))
+                    } else {
+                        (raw_pkg.to_string(), None)
+                    };
+
+                    let mut source = None;
+                    let mut version = at_ver;
+                    let mut registry = None;
+                    let mut branch = None;
+                    let mut tag = None;
+                    let mut rev = None;
+
+                    let mut i = 4;
+                    while i < args.len() {
+                        if (args[i] == "--version" || args[i] == "-v") && i + 1 < args.len() {
+                            version = Some(args[i + 1].clone());
+                            i += 2;
+                        } else if args[i] == "--registry" && i + 1 < args.len() {
+                            registry = Some(args[i + 1].clone());
+                            i += 2;
+                        } else if args[i] == "--branch" && i + 1 < args.len() {
+                            branch = Some(args[i + 1].as_str());
+                            i += 2;
+                        } else if args[i] == "--tag" && i + 1 < args.len() {
+                            tag = Some(args[i + 1].as_str());
+                            i += 2;
+                        } else if args[i] == "--rev" && i + 1 < args.len() {
+                            rev = Some(args[i + 1].as_str());
+                            i += 2;
+                        } else if !args[i].starts_with('-') && source.is_none() {
+                            source = Some(args[i].clone());
+                            i += 1;
+                        } else {
+                            i += 1;
+                        }
+                    }
+
+                    if let Some(src) = source {
+                        match shae::pkg::add_dependency(Path::new("."), &pkg_name, &src, branch, tag, rev) {
+                            Ok(_) => println!("✅ Added and resolved dependency '{}'", pkg_name),
+                            Err(e) => {
+                                eprintln!("Error adding dependency: {}", e);
+                                process::exit(1);
+                            }
+                        }
+                    } else {
+                        let reg_url = shae::pkg::resolve_registry_url(Some(Path::new(".")), registry.as_deref());
+                        match shae::pkg::add_dependency_from_registry(
+                            Path::new("."),
+                            &pkg_name,
+                            version.as_deref(),
+                            &reg_url,
+                        ) {
+                            Ok(_) => println!("✅ Added and resolved dependency '{}' from registry", pkg_name),
+                            Err(e) => {
+                                eprintln!("Error adding dependency: {}", e);
+                                process::exit(1);
+                            }
                         }
                     }
                 }
@@ -734,6 +882,69 @@ fn main() {
                 );
                 process::exit(1);
             }
+        }
+        "jit" => {
+            if args.iter().skip(2).any(|a| a == "--help" || a == "-h") {
+                println!("Shae Cranelift JIT Engine\n");
+                println!("Usage:");
+                println!("  shae jit <file.shae> [--disasm] [--profile]\n");
+                println!("Forces Cranelift JIT compilation on all functions immediately (JIT_THRESHOLD = 0).");
+                return;
+            }
+            let disasm = args.iter().any(|a| a == "--disasm");
+            let profile = args.iter().any(|a| a == "--profile");
+            let file_target = args[2..].iter().find(|a| !a.starts_with('-'));
+            if let Some(f) = file_target {
+                if profile {
+                    let folded = args.iter().any(|a| a == "--folded");
+                    if let Err(e) = shae::profiler::profile_file(f, folded) {
+                        eprintln!("Profile error: {}", e);
+                        process::exit(1);
+                    }
+                    return;
+                }
+                if disasm {
+                    disasm_file(f);
+                }
+                run_file_jit(f);
+            } else if let Ok(manifest) = shae::pkg::PackageManifest::load_from_dir(Path::new(".")) {
+                let entry = Path::new(".").join(&manifest.package.entry);
+                if entry.exists() {
+                    let entry_str = entry.to_string_lossy().to_string();
+                    if profile {
+                        let folded = args.iter().any(|a| a == "--folded");
+                        if let Err(e) = shae::profiler::profile_file(&entry_str, folded) {
+                            eprintln!("Profile error: {}", e);
+                            process::exit(1);
+                        }
+                        return;
+                    }
+                    if disasm {
+                        disasm_file(&entry_str);
+                    }
+                    run_file_jit(&entry_str);
+                } else {
+                    eprintln!("Error: Package entry '{}' not found.", entry.display());
+                    process::exit(1);
+                }
+            } else {
+                eprintln!("Usage: shae jit <file.shae> [--disasm] [--profile]");
+                process::exit(1);
+            }
+        }
+        "clean" => {
+            let mut count = 0;
+            if let Ok(entries) = fs::read_dir(".") {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().map_or(false, |ext| ext == "shaec") {
+                        if fs::remove_file(&path).is_ok() {
+                            count += 1;
+                        }
+                    }
+                }
+            }
+            println!("✨ Cleaned {} bytecode artifact(s).", count);
         }
         "doc" => {
             let mut input_path = None;
@@ -1384,27 +1595,49 @@ fn main() {
                 }
             }
         }
-        filename => {
-            if filename.starts_with('-') {
+        other => {
+            if other.starts_with('-') {
                 if let Some(actual_file) = args[1..].iter().find(|a| !a.starts_with('-')) {
-                    let disasm = args.iter().any(|a| a == "--disasm");
-                    if disasm {
-                        disasm_file(actual_file);
+                    if actual_file.ends_with(".shae")
+                        || actual_file.ends_with(".shaec")
+                        || Path::new(actual_file).is_file()
+                    {
+                        let disasm = args.iter().any(|a| a == "--disasm");
+                        if disasm {
+                            disasm_file(actual_file);
+                        }
+                        let use_vm = should_use_vm(&args);
+                        run_file(actual_file, use_vm);
+                        return;
                     }
-                    let use_vm = should_use_vm(&args);
-                    run_file(actual_file, use_vm);
-                    return;
                 }
-                eprintln!("Unknown flag: {}", filename);
+                eprintln!("error: unknown flag '{}'", other);
                 show_help();
                 process::exit(1);
             }
-            let disasm = args.iter().any(|a| a == "--disasm");
-            if disasm {
-                disasm_file(filename);
+
+            if other.ends_with(".shae")
+                || other.ends_with(".shaec")
+                || Path::new(other).is_file()
+            {
+                let disasm = args.iter().any(|a| a == "--disasm");
+                if disasm {
+                    disasm_file(other);
+                }
+                let use_vm = should_use_vm(&args);
+                run_file(other, use_vm);
+            } else {
+                eprintln!("error: unknown subcommand '{}'", other);
+                eprintln!();
+                eprintln!("Available subcommands:");
+                eprintln!("  run, jit, repl, compile, check, disasm, fmt, bench, test, doc, clean,");
+                eprintln!("  new, init, add, install, pkg, bundle, link, wasm, llvm, lsp, dap, debug, profile, serve");
+                eprintln!();
+                eprintln!("Did you mean to run a script?");
+                eprintln!("  shae run <file>");
+                eprintln!("  shae <file.shae>");
+                process::exit(1);
             }
-            let use_vm = should_use_vm(&args);
-            run_file(filename, use_vm);
         }
     }
 }

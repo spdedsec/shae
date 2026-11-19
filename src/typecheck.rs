@@ -1,6 +1,6 @@
 use crate::ast::{
-    BinaryOp, BindingPattern, Expr, Literal, Pattern, Program, Stmt, StmtKind, TypeAnnotation,
-    UnaryOp,
+    BinaryOp, BindingPattern, Expr, Literal, Pattern, Program, Span, Stmt, StmtKind,
+    TypeAnnotation, UnaryOp,
 };
 use crate::linter::{Diagnostic, DiagnosticSeverity};
 use std::collections::HashMap;
@@ -9,6 +9,8 @@ use std::collections::HashMap;
 pub struct FunctionSig {
     pub params: Vec<TypeAnnotation>,
     pub return_type: TypeAnnotation,
+    pub min_args: usize,
+    pub is_varargs: bool,
 }
 
 pub struct TypeChecker {
@@ -40,28 +42,34 @@ impl TypeChecker {
         let bool_t = TypeAnnotation::Bool;
         let void = TypeAnnotation::Void;
 
-        let builtins: Vec<(&str, Vec<TypeAnnotation>, TypeAnnotation)> = vec![
-            ("print", vec![any.clone()], void.clone()),
-            ("println", vec![any.clone()], void.clone()),
-            ("dbg", vec![any.clone()], any.clone()),
-            ("len", vec![any.clone()], int.clone()),
-            ("type", vec![any.clone()], string.clone()),
-            ("str", vec![any.clone()], string.clone()),
-            ("num", vec![any.clone()], float.clone()),
+        let builtins: Vec<(&str, Vec<TypeAnnotation>, TypeAnnotation, usize, bool)> = vec![
+            ("print", vec![any.clone()], void.clone(), 0, true),
+            ("println", vec![any.clone()], void.clone(), 0, true),
+            ("dbg", vec![any.clone()], any.clone(), 0, true),
+            ("len", vec![any.clone()], int.clone(), 1, false),
+            ("type", vec![any.clone()], string.clone(), 1, false),
+            ("str", vec![any.clone()], string.clone(), 1, false),
+            ("num", vec![any.clone()], float.clone(), 1, false),
             (
                 "range",
-                vec![int.clone(), int.clone()],
+                vec![int.clone(), int.clone(), int.clone()],
                 TypeAnnotation::Array(Box::new(int.clone())),
+                1,
+                false,
             ),
             (
                 "push",
                 vec![TypeAnnotation::Array(Box::new(any.clone())), any.clone()],
                 TypeAnnotation::Array(Box::new(any.clone())),
+                2,
+                false,
             ),
             (
                 "pop",
                 vec![TypeAnnotation::Array(Box::new(any.clone()))],
                 any.clone(),
+                1,
+                false,
             ),
             (
                 "map",
@@ -73,6 +81,8 @@ impl TypeChecker {
                     },
                 ],
                 TypeAnnotation::Array(Box::new(any.clone())),
+                2,
+                false,
             ),
             (
                 "filter",
@@ -84,30 +94,40 @@ impl TypeChecker {
                     },
                 ],
                 TypeAnnotation::Array(Box::new(any.clone())),
+                2,
+                false,
             ),
             (
                 "sum",
                 vec![TypeAnnotation::Array(Box::new(float.clone()))],
                 float.clone(),
+                1,
+                false,
             ),
             (
                 "sort",
                 vec![TypeAnnotation::Array(Box::new(any.clone()))],
                 TypeAnnotation::Array(Box::new(any.clone())),
+                1,
+                false,
             ),
             (
                 "keys",
                 vec![any.clone()],
                 TypeAnnotation::Array(Box::new(string.clone())),
+                1,
+                false,
             ),
             (
                 "values",
                 vec![any.clone()],
                 TypeAnnotation::Array(Box::new(any.clone())),
+                1,
+                false,
             ),
-            ("get", vec![any.clone(), any.clone()], any.clone()),
-            ("json_parse", vec![string.clone()], any.clone()),
-            ("json_stringify", vec![any.clone()], string.clone()),
+            ("get", vec![any.clone(), any.clone()], any.clone(), 2, false),
+            ("json_parse", vec![string.clone()], any.clone(), 1, false),
+            ("json_stringify", vec![any.clone()], string.clone(), 1, false),
             (
                 "serve",
                 vec![
@@ -118,30 +138,50 @@ impl TypeChecker {
                     },
                 ],
                 void.clone(),
+                2,
+                false,
             ),
-            ("read", vec![string.clone()], string.clone()),
+            ("read", vec![string.clone()], string.clone(), 1, false),
             (
                 "write",
                 vec![string.clone(), string.clone()],
                 bool_t.clone(),
+                2,
+                false,
             ),
-            ("fetch", vec![string.clone()], any.clone()),
-            ("time", vec![], int.clone()),
+            ("fetch", vec![string.clone()], any.clone(), 1, false),
+            ("time", vec![], int.clone(), 0, false),
             (
                 "env",
                 vec![string.clone()],
                 TypeAnnotation::Nullable(Box::new(string.clone())),
+                1,
+                false,
             ),
-            ("assert", vec![bool_t.clone()], void.clone()),
-            ("assert_eq", vec![any.clone(), any.clone()], void.clone()),
+            ("assert", vec![bool_t.clone(), any.clone()], void.clone(), 1, false),
+            (
+                "assert_eq",
+                vec![any.clone(), any.clone(), any.clone()],
+                void.clone(),
+                2,
+                false,
+            ),
+            ("send", vec![any.clone(), any.clone()], any.clone(), 2, false),
+            ("recv", vec![any.clone()], any.clone(), 1, false),
+            ("try_recv", vec![any.clone()], any.clone(), 1, false),
+            ("close", vec![any.clone()], void.clone(), 1, false),
+            ("gc", vec![], int.clone(), 0, true),
+            ("jit", vec![], string.clone(), 0, true),
         ];
 
-        for (name, params, ret) in builtins {
+        for (name, params, ret, min_args, is_varargs) in builtins {
             self.fn_signatures.insert(
                 name.to_string(),
                 FunctionSig {
                     params,
                     return_type: ret,
+                    min_args,
+                    is_varargs,
                 },
             );
         }
@@ -167,7 +207,7 @@ impl TypeChecker {
                     return_type,
                     ..
                 } => {
-                    let sig_params = params
+                    let sig_params: Vec<TypeAnnotation> = params
                         .iter()
                         .map(|p| p.type_ann.clone().unwrap_or(TypeAnnotation::Any))
                         .collect();
@@ -175,6 +215,8 @@ impl TypeChecker {
                     self.fn_signatures.insert(
                         name.clone(),
                         FunctionSig {
+                            min_args: sig_params.len(),
+                            is_varargs: false,
                             params: sig_params,
                             return_type: sig_ret,
                         },
@@ -219,6 +261,105 @@ impl TypeChecker {
             });
         }
         None
+    }
+
+    fn is_var_in_scopes(&self, name: &str) -> bool {
+        for scope in self.scopes.iter().rev() {
+            if scope.contains_key(name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn check_call_sig(
+        &mut self,
+        sig: &FunctionSig,
+        arg_types: &[TypeAnnotation],
+        span: Span,
+    ) -> TypeAnnotation {
+        let has_arity_error = if sig.is_varargs {
+            if arg_types.len() < sig.min_args {
+                self.diagnostics.push(Diagnostic {
+                    severity: DiagnosticSeverity::Error,
+                    message: format!(
+                        "Function expects at least {} argument(s), but got {}",
+                        sig.min_args,
+                        arg_types.len()
+                    ),
+                    hint: None,
+                    span,
+                });
+                true
+            } else {
+                false
+            }
+        } else if sig.min_args != sig.params.len() {
+            if arg_types.len() < sig.min_args || arg_types.len() > sig.params.len() {
+                self.diagnostics.push(Diagnostic {
+                    severity: DiagnosticSeverity::Error,
+                    message: format!(
+                        "Function expects {} to {} argument(s), but got {}",
+                        sig.min_args,
+                        sig.params.len(),
+                        arg_types.len()
+                    ),
+                    hint: None,
+                    span,
+                });
+                true
+            } else {
+                false
+            }
+        } else {
+            if arg_types.len() != sig.params.len() {
+                self.diagnostics.push(Diagnostic {
+                    severity: DiagnosticSeverity::Error,
+                    message: format!(
+                        "Function expects {} argument(s), but got {}",
+                        sig.params.len(),
+                        arg_types.len()
+                    ),
+                    hint: None,
+                    span,
+                });
+                true
+            } else {
+                false
+            }
+        };
+
+        if !has_arity_error {
+            for (i, arg_t) in arg_types.iter().enumerate() {
+                let param_t = if i < sig.params.len() {
+                    &sig.params[i]
+                } else if sig.is_varargs {
+                    sig.params.last().unwrap_or(&TypeAnnotation::Any)
+                } else {
+                    continue;
+                };
+
+                if !self.is_assignable_to(arg_t, param_t) {
+                    self.diagnostics.push(Diagnostic {
+                        severity: DiagnosticSeverity::Error,
+                        message: format!(
+                            "Argument {} type mismatch: expected '{}', found '{}'",
+                            i + 1,
+                            param_t,
+                            arg_t
+                        ),
+                        hint: Some(format!(
+                            "Parameter {} is annotated with type '{}'.",
+                            i + 1,
+                            param_t
+                        )),
+                        span,
+                    });
+                }
+            }
+        }
+
+        sig.return_type.clone()
     }
 
     fn is_assignable_to(&self, actual: &TypeAnnotation, expected: &TypeAnnotation) -> bool {
@@ -343,14 +484,29 @@ impl TypeChecker {
                 }
             }
             StmtKind::FnDef {
-                name: _,
+                name,
                 params,
                 return_type,
                 body,
                 ..
             } => {
+                let sig_params: Vec<TypeAnnotation> = params
+                    .iter()
+                    .map(|p| p.type_ann.clone().unwrap_or(TypeAnnotation::Any))
+                    .collect();
+                let sig_ret = return_type.clone().unwrap_or(TypeAnnotation::Any);
+                self.fn_signatures.insert(
+                    name.clone(),
+                    FunctionSig {
+                        min_args: sig_params.len(),
+                        is_varargs: false,
+                        params: sig_params,
+                        return_type: sig_ret.clone(),
+                    },
+                );
+
                 self.push_scope();
-                let declared_ret = return_type.clone().unwrap_or(TypeAnnotation::Any);
+                let declared_ret = sig_ret;
                 let old_ret = self.current_return_type.take();
                 self.current_return_type = Some(declared_ret.clone());
 
@@ -359,7 +515,30 @@ impl TypeChecker {
                     self.declare_var(&p.name, p_ty);
                 }
 
-                for s in body.iter() {
+                let body_len = body.len();
+                for (idx, s) in body.iter().enumerate() {
+                    if idx == body_len - 1 {
+                        if let StmtKind::Expr(expr) = &s.kind {
+                            let inferred = self.infer_expr(expr);
+                            if declared_ret != TypeAnnotation::Any
+                                && !self.is_assignable_to(&inferred, &declared_ret)
+                            {
+                                self.diagnostics.push(Diagnostic {
+                                    severity: DiagnosticSeverity::Error,
+                                    message: format!(
+                                        "Return type mismatch: expected '{}', found '{}'",
+                                        declared_ret, inferred
+                                    ),
+                                    hint: Some(format!(
+                                        "Function is declared to return '{}', but returning '{}'.",
+                                        declared_ret, inferred
+                                    )),
+                                    span: s.span,
+                                });
+                            }
+                            continue;
+                        }
+                    }
                     self.check_stmt(s);
                 }
 
@@ -701,60 +880,46 @@ impl TypeChecker {
                 }
             }
             Expr::Call { callee, args, span } => {
-                let callee_ty = self.infer_expr(callee);
                 let arg_types: Vec<TypeAnnotation> =
                     args.iter().map(|a| self.infer_expr(a)).collect();
 
-                match callee_ty {
-                    TypeAnnotation::Function {
-                        params,
-                        return_type,
-                    } => {
-                        if params.len() != arg_types.len() {
+                let known_sig = if let Expr::Variable { name, .. } = &**callee {
+                    if !self.is_var_in_scopes(name) {
+                        self.fn_signatures.get(name).cloned()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(sig) = known_sig {
+                    self.check_call_sig(&sig, &arg_types, *span)
+                } else {
+                    let callee_ty = self.infer_expr(callee);
+                    match callee_ty {
+                        TypeAnnotation::Function {
+                            params,
+                            return_type,
+                        } => {
+                            let sig = FunctionSig {
+                                min_args: params.len(),
+                                is_varargs: false,
+                                params,
+                                return_type: *return_type,
+                            };
+                            self.check_call_sig(&sig, &arg_types, *span)
+                        }
+                        TypeAnnotation::Any => TypeAnnotation::Any,
+                        other => {
                             self.diagnostics.push(Diagnostic {
                                 severity: DiagnosticSeverity::Error,
-                                message: format!(
-                                    "Function expects {} argument(s), but got {}",
-                                    params.len(),
-                                    arg_types.len()
-                                ),
-                                hint: None,
+                                message: format!("Cannot call non-function type '{}'", other),
+                                hint: Some("Only functions can be invoked with '()'.".into()),
                                 span: *span,
                             });
-                        } else {
-                            for (i, (arg_t, param_t)) in
-                                arg_types.iter().zip(params.iter()).enumerate()
-                            {
-                                if !self.is_assignable_to(arg_t, param_t) {
-                                    self.diagnostics.push(Diagnostic {
-                                        severity: DiagnosticSeverity::Error,
-                                        message: format!(
-                                            "Argument {} type mismatch: expected '{}', found '{}'",
-                                            i + 1,
-                                            param_t,
-                                            arg_t
-                                        ),
-                                        hint: Some(format!(
-                                            "Parameter {} is annotated with type '{}'.",
-                                            i + 1,
-                                            param_t
-                                        )),
-                                        span: *span,
-                                    });
-                                }
-                            }
+                            TypeAnnotation::Any
                         }
-                        *return_type
-                    }
-                    TypeAnnotation::Any => TypeAnnotation::Any,
-                    other => {
-                        self.diagnostics.push(Diagnostic {
-                            severity: DiagnosticSeverity::Error,
-                            message: format!("Cannot call non-function type '{}'", other),
-                            hint: Some("Only functions can be invoked with '()'.".into()),
-                            span: *span,
-                        });
-                        TypeAnnotation::Any
                     }
                 }
             }
@@ -896,7 +1061,34 @@ impl TypeChecker {
                     sig_params.push(p_ty);
                 }
 
-                for s in body.iter() {
+                let body_len = body.len();
+                let mut actual_ret = declared_ret.clone();
+                for (idx, s) in body.iter().enumerate() {
+                    if idx == body_len - 1 {
+                        if let StmtKind::Expr(expr) = &s.kind {
+                            let inferred = self.infer_expr(expr);
+                            if declared_ret != TypeAnnotation::Any
+                                && !self.is_assignable_to(&inferred, &declared_ret)
+                            {
+                                self.diagnostics.push(Diagnostic {
+                                    severity: DiagnosticSeverity::Error,
+                                    message: format!(
+                                        "Return type mismatch: expected '{}', found '{}'",
+                                        declared_ret, inferred
+                                    ),
+                                    hint: Some(format!(
+                                        "Function is declared to return '{}', but returning '{}'.",
+                                        declared_ret, inferred
+                                    )),
+                                    span: s.span,
+                                });
+                            }
+                            if return_type.is_none() {
+                                actual_ret = inferred;
+                            }
+                            continue;
+                        }
+                    }
                     self.check_stmt(s);
                 }
 
@@ -905,7 +1097,7 @@ impl TypeChecker {
 
                 TypeAnnotation::Function {
                     params: sig_params,
-                    return_type: Box::new(declared_ret),
+                    return_type: Box::new(actual_ret),
                 }
             }
             Expr::Await { expr, span: _ } => self.infer_expr(expr),

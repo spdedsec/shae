@@ -1,79 +1,71 @@
-# Shae v0.4.0 — Official Multi-Platform Release & Systems Ecosystem Overhaul
+# Shae v0.6.0 — Gradual Type Checker, Package Registry & Space Invaders 2D Showcase
 
-We are thrilled to announce **Shae v0.4.0**, our largest and most ambitious release to date. This milestone establishes Shae as an industrial-grade systems scripting language, introducing an official multi-platform release pipeline, a single-line universal installer, self-hosting compilation, encrypted distributed cluster actors, first-class coroutines, an automated documentation engine, and a secure package publishing ecosystem.
+We are thrilled to announce **Shae v0.6.0**, a massive evolutionary leap for the Shae programming language. This landmark release introduces an opt-in **Gradual Static Type System & Diagnostics Checker**, a complete decentralized **Remote Package Registry Subsystem**, the **Shae Studio Web IDE**, and the **Unified Creative Suite** featuring a full retro **Space Invaders 2D** arcade game with synthesized waveform audio.
 
 ---
 
 ### 🌟 Key Highlights & Major Milestones
 
-#### 1. 🚀 Universal Multi-Platform Distribution & Single-Line Installer
-- **Single-Line Universal Installer**: Install Shae instantly across Linux, macOS, and Windows with a single command:
-  ```bash
-  curl -fsSL https://raw.githubusercontent.com/spdedsec/shae/main/install.sh | bash
-  # Or via Vercel:
-  curl -fsSL https://shae-site.vercel.app/install.sh | bash
+#### 1. 🛡️ Gradual Typing & Static Type Checker (`shae check`)
+- **Syntax Type Annotations**: Opt-in static typing on functions, parameters, return bounds, and variable declarations:
+  ```shae
+  fn calculate_tax(subtotal: float, rate: float | null) -> float {
+      let effective_rate: float = rate ?? 0.08
+      return subtotal * effective_rate
+  }
   ```
-- **Automated Multi-Platform Release Matrix**:
-  - **Linux x86_64**: glibc (`shae-v0.4.0-linux-x86_64.tar.gz`) & musl (`shae-v0.4.0-linux-x86_64-musl.tar.gz`)
-  - **Linux aarch64**: (`shae-v0.4.0-linux-aarch64.tar.gz`)
-  - **macOS Apple Silicon**: (`shae-v0.4.0-macos-arm64.tar.gz`)
-  - **macOS Intel**: (`shae-v0.4.0-macos-x86_64.tar.gz`)
-  - **Windows x86_64**: (`shae-v0.4.0-windows-x86_64.zip`)
-- **Cryptographic SHA-256 Checksums**: Every release artifact is checksummed in `SHA256SUMS.txt` and verified automatically by `install.sh`.
+- **Type Universe**: Primitive types (`int`, `float`, `string`, `bool`), compound types (`list`, `map`), escape hatch (`any`), and nullable sentinel (`null`).
+- **Nullable Union Types**: Expressive union syntax (`int | null`, `string | float | any`) with natural null-safety ergonomics.
+- **Deep Static Analysis Engine**: `shae check` verifies return type consistency, parameter arity and types, and variable assignments without executing code.
+- **LSP Diagnostics Integration**: Full real-time editor diagnostic squiggles and hover tooltips for typed identifiers.
+- **100% Backward Compatibility**: Dynamically typed code continues to execute seamlessly without friction.
 
-#### 2. 🛡️ Cluster Transport Security: TLS & Mutual-TLS (mTLS) (`std:actor:cluster`)
-- **Enterprise-Grade Encryption**: Fully encrypted actor-to-actor node communication backed by `rustls` v0.23.
-- **Mutual-TLS (mTLS)**: Strict bidirectional cryptographic authentication using custom certificate authorities (CAs) and client certificates.
-- **Dynamic Configuration**: Configure secure clusters with `cluster.node({ "tls": { "cert": ..., "key": ..., "ca": ..., "verify_peer": true } })`.
-- **Introspection API**: Runtime inspection via `node.is_tls()` and `is_tls(node)` across both Bytecode VM and AST Evaluator.
-- **Adversarial Resilience**: Automatic rejection and defensive termination of rogue or unverified node connections.
+#### 2. 📦 Remote Package Registry & Manager Subsystem (`shae pkg`)
+- **Comprehensive CLI Suite**:
+  - `shae pkg init <name>`: Scaffolds a standardized package repository with `shae.toml`.
+  - `shae pkg add <pkg>@<version>`: Downloads dependencies from local or remote registries and records them in `shae.toml`.
+  - `shae pkg install`: Deterministically resolves and installs all dependencies from `shae.lock`.
+  - `shae pkg pack`: Packages libraries into portable, compressed `.shaepkg` archives.
+  - `shae pkg publish`: Securely authenticates and uploads packages to remote HTTP registries.
+  - `shae pkg verify`: Validates package integrity, structure, and metadata checksums.
+- **Cryptographic Security**: Every package is validated with SHA-256 integrity checksums, and the extractor enforces Zip-Slip path traversal defense.
 
-#### 3. 🧵 First-Class Coroutines (`async` / `await`) & `std:async` Runtime
-- **Thread-Safe Task Lifecycles**: Non-blocking asynchronous tasks managed via `TaskInner` with states `"pending"`, `"completed"`, and `"failed"`.
-- **Idempotent Awaiting**: Safe repeated `.await` / `.join()` without panicking.
-- **Rich Task Reflection**: `task.join()`, `task.wait()`, `task.is_done()`, `task.status()`, and `task.result()`.
-- **Concurrency Combinators (`std:async`)**:
-  - `async.spawn(fn, ...args)`: Spawn background coroutine tasks.
-  - `async.all(tasks)`: Aggregate multiple asynchronous operations in parallel.
-  - `async.race(tasks)`: Resolve to whichever task completes first.
-  - `async.sleep(ms)`: Non-blocking coroutine sleep timer.
-  - `async.timeout(ms, task)`: Deadline enforcement and timeout handling.
-- **100% Dual-Engine Parity**: Identical asynchronous behavior across both the Tree-Walking AST Evaluator and Bytecode Stack VM.
+#### 3. 👾 Space Invaders 2D Showcase & Unified Creative Engine
+- **`examples/space_invaders.shae`**: Full retro 2D arcade game running natively in pure Shae:
+  - 5x11 animated alien armada with stepped pacing and descent.
+  - Player laser cannon with collision detection and bunker degradation.
+  - Real-time score tracking, wave escalation, and lives HUD.
+- **`std:gui` Multi-Mode Graphics**:
+  - 24-bit TrueColor ANSI half-block terminal canvas rendering at 60 FPS.
+  - Embedded desktop windowing fallback (`minifb`) with hardware pixel buffers.
+  - Sprite blitting, color fills, and non-blocking keyboard input polling (`is_key_down`).
+- **`std:audio` Hardware Sound Synthesis**:
+  - Pure waveform synthesis engine: sine, square, triangle, sawtooth, and white noise.
+  - Retro sound triggers: `shoot`, `invader_killed`, `explosion`, and `step`.
+  - Master volume controls, ADSR envelope generation, and headless audio event tracing.
+- **`std:ui` Arcade UI Toolkit**:
+  - Arcade HUD components (`draw_hud`, `draw_score`, `draw_lives_icons`, `draw_panel`).
+  - Immediate-mode UI widgets: buttons, sliders, checkboxes, and progress bars.
 
-#### 4. 📚 Standard Documentation Engine (`shae doc`)
-- **First-Class Doc Comments**: Item doc comments (`///`) and module doc comments (`//!`).
-- **Comprehensive AST Symbol Extractor**: Extracts functions, async functions, structs, enums with variants, and constants with line and signature precision.
-- **Responsive HTML Site Generator**: Modern dark-mode static site with client-side real-time search filtering, collapsible sidebar navigation, and type signature badges.
-- **Multi-Format Export**: Generate clean GitHub-Flavored Markdown (`doc.md`) and structured JSON schema models (`doc.json`).
-- **CLI Subcommand**:
-  ```bash
-  shae doc . --format all -o ./docs --open
-  ```
+#### 4. 💻 Shae Studio Web IDE (`shae ide` / `shae studio`)
+- **Zero-Dependency Browser IDE**: Run `shae ide --port 8080` to launch an interactive development environment directly from the Shae binary.
+- **Integrated Toolchain**: Code editor with syntax formatting (`/api/fmt`), static type analysis (`/api/check`), sub-millisecond execution runner (`/api/run`), interactive REPL console, and workspace file explorer.
 
-#### 5. 📦 Package Publishing & Registry Pipeline (`shae pkg pack` / `publish`)
-- **Deterministic Package Archives (`.shaepkg`)**: High-efficiency gzip tarballs omitting build artifacts, git repositories, and local caches.
-- **Cryptographic Tamper Protection**: SHA-256 integrity hash computation and validation.
-- **Path Traversal Security**: Strict directory containment checking in `unpack_package` preventing zip-slip vulnerabilities.
-- **Dual-Mode Publishing Engine**: Direct support for local directory/filesystem registries (`file://`) and remote HTTP(S) API registries with Bearer token authentication (`--token` or `SHAE_REGISTRY_TOKEN`).
-- **Safe Pre-Flight Validation**: `--dry-run` flag to inspect manifests and archives prior to upload.
-- **CLI Commands**: `shae pkg pack`, `shae pkg publish`, `shae pkg verify`.
-
-#### 6. 🔄 Complete Self-Hosting Bootstrap Pipeline (`lib/compiler/main.shae`)
-- **Stage 1 (Pure-Shae Lexer & Pratt Parser)**: Self-parsing grammar parser implemented entirely in Shae (`lib/compiler/`).
-- **Stage 2 (Bytecode Compiler & Serializer)**: Ahead-of-time bytecode compilation emitting `.shaec` chunks from pure Shae.
-- **Stage 3 (Native Linker)**: Direct emission of 64-bit ELF and PE executables without GCC, Clang, or external linkers (`shae link`).
-- **Verified 3-Stage Bootstrapping**: Multi-stage self-hosting integration tests passing across all engines.
+#### 5. 📖 Comprehensive Genesis Guide (`SHAE_FROM_SCRATCH.md`)
+- A master architectural manifesto detailing the journey from sand and silicon to the Pratt parser, stack bytecode VM, Cranelift JIT SSA, LLVM 18 IR generation, and distributed actor clusters.
 
 ---
 
-### 📦 Installation
+### 📦 Installation & Verification
 
-#### Quick Install (macOS / Linux / Windows WSL / MSYS):
+#### Single-Line Universal Installer (Linux, macOS, Windows)
 ```bash
 curl -fsSL https://raw.githubusercontent.com/spdedsec/shae/main/install.sh | bash
+# Or via official site:
+curl -fsSL https://shae-site.vercel.app/install.sh | bash
 ```
 
-#### Build from Source:
+#### Build and Install from Source
 ```bash
 git clone https://github.com/spdedsec/shae.git
 cd shae
@@ -83,17 +75,5 @@ cargo install --path .
 Verify your installation:
 ```bash
 shae --version
-# Output: shae 0.4.0
+# Expected: shae 0.6.0
 ```
-
----
-
-### 🎨 VS Code Extension
-Download and install the official VS Code extension from the release assets:
-```bash
-code --install-extension shae-vscode-0.4.0.vsix
-```
-
----
-
-**Full Commit History & Milestone Tracking**: https://github.com/spdedsec/shae/compare/v0.3.2...v0.4.0

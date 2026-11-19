@@ -1,0 +1,99 @@
+let gui = use "std:gui"
+let audio = use "std:audio"
+let ui = use "std:ui"
+
+println("==================================================")
+println("   ⚡ SHAE INTERACTIVE AUDIO SYNTHESIZER ⚡")
+println("==================================================")
+println("Controls:")
+println("  Keys 1-8 or A-K: Play musical piano notes")
+println("  Mouse click: Click piano keys directly")
+println("  Escape: Exit synthesizer")
+println("==================================================")
+
+let win = gui.window("Shae Audio Synthesizer & Piano", 640, 380)
+
+// Frequencies for C Major Scale
+let notes = [
+    { "name": "C4", "freq": 261.63, "key": "1", "alt": "A" },
+    { "name": "D4", "freq": 293.66, "key": "2", "alt": "S" },
+    { "name": "E4", "freq": 329.63, "key": "3", "alt": "D" },
+    { "name": "F4", "freq": 349.23, "key": "4", "alt": "F" },
+    { "name": "G4", "freq": 392.00, "key": "5", "alt": "G" },
+    { "name": "A4", "freq": 440.00, "key": "6", "alt": "H" },
+    { "name": "B4", "freq": 493.88, "key": "7", "alt": "J" },
+    { "name": "C5", "freq": 523.25, "key": "8", "alt": "K" }
+]
+
+let waveform = "sine"
+let volume = 0.6
+let last_played_note = "None"
+
+while gui.is_open(win) {
+    if gui.is_key_down(win, "Escape") {
+        gui.close(win)
+        break
+    }
+
+    // Clear background (Dark theme)
+    gui.clear(win, 0x11111B)
+
+    // Header Panel
+    ui.panel(win, "SYNTHESIZER CONTROLS", 20, 15, 600, 100, 0x181825, 0x313244)
+    ui.label(win, "Now Playing: " + last_played_note, 35, 45, 0xF9E2AF, 1)
+
+    // Waveform selector buttons
+    if ui.button(win, "Sine", 220, 42, 60, 24) { waveform = "sine" }
+    if ui.button(win, "Square", 290, 42, 70, 24) { waveform = "square" }
+    if ui.button(win, "Triangle", 370, 42, 80, 24) { waveform = "triangle" }
+    if ui.button(win, "Saw", 460, 42, 55, 24) { waveform = "saw" }
+
+    // Volume Slider
+    volume = ui.slider(win, "Master Vol", 35, 75, 200, 0.0, 1.0, volume)
+    audio.set_volume(volume)
+
+    // Draw Piano Keyboard
+    let start_x = 24
+    let key_w = 70
+    let key_h = 200
+    let key_y = 135
+
+    let i = 0
+    while i < len(notes) {
+        let note = notes[i]
+        let kx = start_x + (i * 74)
+
+        // Check key press
+        let is_pressed = gui.is_key_down(win, note.key) or gui.is_key_down(win, note.alt)
+
+        // Check mouse click on key
+        let clicked = ui.button(win, "", kx, key_y, key_w, key_h, 0xCDD6F4)
+        if clicked { is_pressed = true }
+
+        if is_pressed {
+            audio.tone(note.freq, waveform, 180, volume)
+            last_played_note = note.name + " (" + str(note.freq) + " Hz)"
+        }
+
+        // Visual Key Color
+        let key_bg = 0xCDD6F4 // White key normal
+        if is_pressed {
+            key_bg = 0x89B4FA // Blue highlight when pressed
+        }
+
+        gui.rect(win, kx, key_y, key_w, key_h, key_bg)
+        gui.rect_outline(win, kx, key_y, key_w, key_h, 0x181825, 2)
+
+        // Label on piano key
+        let label_color = 0x11111B
+        gui.text(win, kx + 18, key_y + 130, note.name, label_color, 2)
+        gui.text(win, kx + 22, key_y + 165, "[" + note.key + "]", 0x585B70, 1)
+
+        i = i + 1
+    }
+
+    gui.render(win)
+    gui.limit_fps(win, 60)
+}
+
+println("Synthesizer exited cleanly.")

@@ -2,6 +2,7 @@ pub mod actor;
 pub mod actor_cluster;
 pub mod ast;
 pub mod async_rt;
+pub mod audio;
 pub mod builtins;
 pub mod bundle;
 pub mod buffer;
@@ -17,17 +18,23 @@ pub mod env;
 pub mod eval;
 pub mod ffi;
 pub mod fmt;
+pub mod font_8x8;
 pub mod gc;
+pub mod gui;
+pub mod ide;
+pub mod io_mod;
 pub mod jit;
 pub mod lexer;
 pub mod linker;
 pub mod linter;
 pub mod llvm;
 pub mod lsp;
+pub mod math;
 pub mod opcode;
 pub mod parser;
 pub mod pkg;
 pub mod profiler;
+pub mod random;
 pub mod repl;
 pub mod sqlite;
 pub mod stdlib;
@@ -35,6 +42,8 @@ pub mod suggest;
 pub mod test_runner;
 pub mod token;
 pub mod typecheck;
+pub mod ui;
+pub mod ui_mod;
 pub mod unicode;
 pub mod value;
 pub mod vm;
@@ -179,6 +188,70 @@ pub fn run_file_vm<P: AsRef<std::path::Path>>(path: P) -> Result<value::Value, S
     vm.current_file = std::fs::canonicalize(path_ref)
         .ok()
         .or_else(|| Some(path_ref.to_path_buf()));
+    match vm.interpret(chunk) {
+        vm::InterpretResult::Ok(val) => Ok(val),
+        vm::InterpretResult::RuntimeError(msg) => Err(eval::RuntimeError::new(msg).into()),
+        vm::InterpretResult::CompileError => {
+            Err(eval::RuntimeError::new("VM compile error".into()).into())
+        }
+    }
+}
+
+pub fn run_file_jit<P: AsRef<std::path::Path>>(path: P) -> Result<value::Value, ShaeError> {
+    let path_ref = path.as_ref();
+    let bytes = std::fs::read(path_ref).map_err(|e| {
+        eval::RuntimeError::new(format!(
+            "Failed to read file '{}': {}",
+            path_ref.display(),
+            e
+        ))
+    })?;
+
+    let chunk = if bytes.starts_with(crate::chunk::BYTECODE_MAGIC)
+        || path_ref.extension().map_or(false, |ext| ext == "shaec")
+    {
+        chunk::Chunk::from_bytes(&bytes).map_err(|e| {
+            eval::RuntimeError::new(format!(
+                "Bytecode load error in '{}': {}",
+                path_ref.display(),
+                e
+            ))
+        })?
+    } else {
+        let source = String::from_utf8(bytes).map_err(|e| {
+            eval::RuntimeError::new(format!(
+                "File '{}' is not valid UTF-8: {}",
+                path_ref.display(),
+                e
+            ))
+        })?;
+        let program = parse_source(&source)?;
+        compiler::Compiler::new()
+            .compile_program(&program)
+            .map_err(eval::RuntimeError::new)?
+    };
+
+    let mut vm = vm::VM::new();
+    vm.jit_threshold = 0;
+    vm.current_file = std::fs::canonicalize(path_ref)
+        .ok()
+        .or_else(|| Some(path_ref.to_path_buf()));
+    match vm.interpret(chunk) {
+        vm::InterpretResult::Ok(val) => Ok(val),
+        vm::InterpretResult::RuntimeError(msg) => Err(eval::RuntimeError::new(msg).into()),
+        vm::InterpretResult::CompileError => {
+            Err(eval::RuntimeError::new("VM compile error".into()).into())
+        }
+    }
+}
+
+pub fn run_jit(source: &str) -> Result<value::Value, ShaeError> {
+    let program = parse_source(source)?;
+    let chunk = compiler::Compiler::new()
+        .compile_program(&program)
+        .map_err(eval::RuntimeError::new)?;
+    let mut vm = vm::VM::new();
+    vm.jit_threshold = 0;
     match vm.interpret(chunk) {
         vm::InterpretResult::Ok(val) => Ok(val),
         vm::InterpretResult::RuntimeError(msg) => Err(eval::RuntimeError::new(msg).into()),

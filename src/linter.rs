@@ -36,6 +36,7 @@ impl Linter {
             "print",
             "println",
             "dbg",
+            "input",
             "len",
             "type",
             "str",

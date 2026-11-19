@@ -69,6 +69,7 @@ pub fn register(env: &mut Environment) {
         ("panic", builtin_panic),
         ("gc", builtin_gc),
         ("jit", builtin_jit),
+        ("input", builtin_input),
     ];
     for (name, func) in builtins {
         env.define(
@@ -87,6 +88,41 @@ fn builtin_gc(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Val
 
 fn builtin_jit(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
     Ok(Value::String("enabled".to_string()))
+}
+
+pub fn builtin_input(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    use std::io::{self, Write};
+
+    if args.len() > 1 {
+        return Err(RuntimeError::new(format!(
+            "'input' expects at most 1 argument, but got {}",
+            args.len()
+        ))
+        .at(span));
+    }
+
+    if let Some(prompt) = args.first() {
+        print!("{}", prompt.to_display());
+    }
+    let _ = io::stdout().flush();
+
+    let mut line = String::new();
+    match io::stdin().read_line(&mut line) {
+        Ok(_) => {
+            if line.ends_with('\n') {
+                line.pop();
+                if line.ends_with('\r') {
+                    line.pop();
+                }
+            }
+            Ok(Value::String(line))
+        }
+        Err(e) => Err(RuntimeError::new(format!("Failed to read line from stdin: {}", e)).at(span)),
+    }
 }
 
 fn builtin_print(

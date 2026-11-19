@@ -1,6 +1,6 @@
 [package]
 name = "shae"
-version = "0.4.0"
+version = "0.6.0"
 edition = "2024"
 
 [[bin]]
@@ -35,6 +35,10 @@ unicode-segmentation = "1.12"
 ctrlc = { version = "3.4", features = ["termination"] }
 flate2 = "1.1.10"
 tar = "0.4.46"
+minifb = "0.29"
+fastrand = "2.5"
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "jpeg"] }
+rodio = { version = "0.20", default-features = false, features = ["wav", "vorbis", "flac"] }
 
 [dev-dependencies]
 rcgen = "0.13"

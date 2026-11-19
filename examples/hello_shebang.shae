@@ -1,0 +1,22 @@
+#!/usr/bin/env shae
+# Direct executable Shae script demonstration
+// This script verifies direct execution via shebang, '#' comments, and language features.
+
+fn compute_stats(name, score) {
+    let bonus = 10
+    bonus *= 2
+    let final_score = score + bonus
+    let is_perfect = !(final_score < 100)
+    return {
+        name: name,
+        score: final_score,
+        perfect: is_perfect
+    }
+}
+
+let result = compute_stats("Shae Explorer", 80)
+println("=== Direct Shebang Execution Verification ===")
+println("Player:", result.name)
+println("Final Score (with bonus):", result.score)
+println("Is 100+ points?:", result.perfect)
+println("Direct execution completed successfully!")
