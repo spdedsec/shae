@@ -142,6 +142,73 @@ fn test_lsp_diagnostics_and_linting() {
 }
 
 #[test]
+fn test_lsp_typechecker_diagnostics() {
+    let output = SharedOutput::new();
+    let mut server = LspServer::new(Cursor::new(Vec::new()), output.clone());
+
+    // 1. Diagnostics on type error (with source: "shae-typechecker")
+    let bad_type_code = r#"
+fn compute() -> int {
+    "not_an_int"
+}
+"#;
+    server
+        .publish_diagnostics("file:///test_typecheck.shae", bad_type_code)
+        .unwrap();
+
+    let resps = parse_lsp_responses(&output.take());
+    assert_eq!(resps.len(), 1);
+    assert_eq!(resps[0]["method"], "textDocument/publishDiagnostics");
+    let diags = resps[0]["params"]["diagnostics"].as_array().unwrap();
+    let typechecker_diags: Vec<_> = diags
+        .iter()
+        .filter(|d| d["source"] == "shae-typechecker")
+        .collect();
+    assert!(
+        !typechecker_diags.is_empty(),
+        "Expected at least one 'shae-typechecker' diagnostic, got: {:?}",
+        diags
+    );
+    assert_eq!(typechecker_diags[0]["severity"], 1); // Error
+    let msg = typechecker_diags[0]["message"].as_str().unwrap();
+    assert!(
+        msg.contains("Return type mismatch"),
+        "Diagnostic message should describe return type mismatch: {}",
+        msg
+    );
+    let range = &typechecker_diags[0]["range"];
+    assert!(range["start"]["line"].as_u64().is_some());
+    assert!(range["start"]["character"].as_u64().is_some());
+
+    // 2. Diagnostics on valid typed code with variadic print (no type errors)
+    let valid_code = r#"
+let count: int = 10
+fn square(n: int) -> int {
+    n * n
+}
+let res: int = square(count)
+print("Result is", res, "success!")
+"#;
+    server
+        .publish_diagnostics("file:///test_valid.shae", valid_code)
+        .unwrap();
+
+    let resps2 = parse_lsp_responses(&output.take());
+    assert_eq!(resps2.len(), 1);
+    let diags2 = resps2[0]["params"]["diagnostics"].as_array().unwrap();
+    let typechecker_diags2: Vec<_> = diags2
+        .iter()
+        .filter(|d| d["source"] == "shae-typechecker")
+        .collect();
+    assert_eq!(
+        typechecker_diags2.len(),
+        0,
+        "Expected 0 typechecker diagnostics for valid code, got: {:?}",
+        typechecker_diags2
+    );
+}
+
+#[test]
 fn test_lsp_completion_and_hover_and_formatting() {
     let output = SharedOutput::new();
     let mut server = LspServer::new(Cursor::new(Vec::new()), output.clone());

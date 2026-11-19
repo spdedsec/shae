@@ -1,7 +1,9 @@
 // Shae Self-Hosting Compiler: WebAssembly Binary Generator (wasm32-wasi & Web Target)
 // Emits compliant WebAssembly binary modules (.wasm) directly from pure Shae.
 
-use { write_bytes } from "std:fs"
+use { read, write_bytes } from "std:fs"
+use { tokenize } from "./lexer.shae"
+use { parse } from "./parser.shae"
 
 // WebAssembly Binary Magic & Version
 let WASM_MAGIC = [0, 97, 115, 109] // \0asm = 0x00, 0x61, 0x73, 0x6D
@@ -281,3 +283,236 @@ fn emit_wasm_file(output_path, wasm_bytes) {
     write_bytes(output_path, wasm_bytes)
     return wasm_bytes.len
 }
+
+fn compile_wasm_expr(expr, locals_map, func_indices, out) {
+    let etype = expr.type
+    if etype == "LiteralExpr" {
+        if expr.kind == "int" {
+            out.push(OP_I64_CONST)
+            append_bytes(out, encode_i64_leb128(expr.value))
+            return null
+        }
+        if expr.kind == "bool" {
+            out.push(OP_I64_CONST)
+            let bval = 0
+            if expr.value { bval = 1 }
+            append_bytes(out, encode_i64_leb128(bval))
+            return null
+        }
+        out.push(OP_I64_CONST)
+        append_bytes(out, encode_i64_leb128(0))
+        return null
+    }
+
+    if etype == "VariableExpr" {
+        if locals_map.has(expr.name) {
+            let slot = locals_map[expr.name]
+            out.push(OP_LOCAL_GET)
+            append_bytes(out, encode_u32_leb128(slot))
+        } else {
+            out.push(OP_I64_CONST)
+            append_bytes(out, encode_i64_leb128(0))
+        }
+        return null
+    }
+
+    if etype == "BinaryExpr" {
+        compile_wasm_expr(expr.left, locals_map, func_indices, out)
+        compile_wasm_expr(expr.right, locals_map, func_indices, out)
+        let op = expr.op
+        if op == "+" { out.push(OP_I64_ADD) }
+        else if op == "-" { out.push(OP_I64_SUB) }
+        else if op == "*" { out.push(OP_I64_MUL) }
+        else if op == "/" { out.push(OP_I64_DIV_S) }
+        else if op == "%" { out.push(OP_I64_REM_S) }
+        else if op == "&" { out.push(OP_I64_AND) }
+        else if op == "|" { out.push(OP_I64_OR) }
+        else if op == "^" { out.push(OP_I64_XOR) }
+        else if op == "<<" { out.push(OP_I64_SHL) }
+        else if op == ">>" { out.push(OP_I64_SHR_S) }
+        else if op == "==" { out.push(OP_I64_EQ) }
+        else if op == "!=" { out.push(OP_I64_NE) }
+        else if op == "<" { out.push(OP_I64_LT_S) }
+        else if op == ">" { out.push(OP_I64_GT_S) }
+        else if op == "<=" { out.push(OP_I64_LE_S) }
+        else if op == ">=" { out.push(OP_I64_GE_S) }
+        else { out.push(OP_I64_ADD) }
+        return null
+    }
+
+    if etype == "CallExpr" {
+        let ai = 0
+        while ai < expr.args.len {
+            compile_wasm_expr(expr.args[ai], locals_map, func_indices, out)
+            ai = ai + 1
+        }
+        if expr.callee.type == "VariableExpr" and func_indices.has(expr.callee.name) {
+            let fn_idx = func_indices[expr.callee.name]
+            out.push(OP_CALL)
+            append_bytes(out, encode_u32_leb128(fn_idx))
+        } else {
+            out.push(OP_I64_CONST)
+            append_bytes(out, encode_i64_leb128(0))
+        }
+        return null
+    }
+
+    out.push(OP_I64_CONST)
+    append_bytes(out, encode_i64_leb128(0))
+    return null
+}
+
+fn compile_wasm_stmt(stmt, locals_map, extra_locals, func_indices, out, is_last) {
+    let stype = stmt.type
+    if stype == "LetStmt" {
+        compile_wasm_expr(stmt.init, locals_map, func_indices, out)
+        let slot = extra_locals.base + extra_locals.count
+        extra_locals.count = extra_locals.count + 1
+        let vname = stmt.pattern
+        if type(vname) == "map" and vname.has("name") {
+            vname = vname.name
+        }
+        locals_map[vname] = slot
+        out.push(OP_LOCAL_SET)
+        append_bytes(out, encode_u32_leb128(slot))
+        return null
+    }
+
+    if stype == "AssignStmt" {
+        compile_wasm_expr(stmt.value, locals_map, func_indices, out)
+        let tname = stmt.target
+        if type(tname) == "map" and tname.has("name") {
+            tname = tname.name
+        }
+        if locals_map.has(tname) {
+            let slot = locals_map[tname]
+            out.push(OP_LOCAL_SET)
+            append_bytes(out, encode_u32_leb128(slot))
+        }
+        return null
+    }
+
+    if stype == "ReturnStmt" {
+        if stmt.value != null {
+            compile_wasm_expr(stmt.value, locals_map, func_indices, out)
+        } else {
+            out.push(OP_I64_CONST)
+            append_bytes(out, encode_i64_leb128(0))
+        }
+        out.push(OP_RETURN)
+        return null
+    }
+
+    if stype == "ExprStmt" {
+        compile_wasm_expr(stmt.expr, locals_map, func_indices, out)
+        if not is_last {
+            out.push(OP_DROP)
+        }
+        return null
+    }
+
+    return null
+}
+
+fn compile_source_to_wasm(source) {
+    let tokens = tokenize(source)
+    let program = parse(tokens)
+    let m = make_wasm_module()
+    wasm_enable_memory(m, 1, 2)
+
+    // 1. First pass: register function names and indices
+    let func_indices = {}
+    let fn_count = 0
+    let i = 0
+    while i < program.statements.len {
+        let stmt = program.statements[i]
+        if stmt.type == "FnStmt" {
+            func_indices[stmt.name] = fn_count
+            fn_count = fn_count + 1
+        }
+        i = i + 1
+    }
+
+    // 2. Second pass: compile function bodies
+    i = 0
+    while i < program.statements.len {
+        let stmt = program.statements[i]
+        if stmt.type == "FnStmt" {
+            let param_count = stmt.params.len
+            let locals_map = {}
+            let param_types = []
+            let p = 0
+            while p < param_count {
+                let p_obj = stmt.params[p]
+                let pname = p_obj
+                if type(p_obj) == "map" and p_obj.has("name") {
+                    pname = p_obj.name
+                }
+                locals_map[pname] = p
+                param_types.push(TYPE_I64)
+                p = p + 1
+            }
+            let type_idx = wasm_add_type(m, param_types, [TYPE_I64])
+
+            let extra_locals = { count: 0, base: param_count }
+            let body_bytes = []
+            let s = 0
+            while s < stmt.body.len {
+                let is_last = (s + 1) == stmt.body.len
+                compile_wasm_stmt(stmt.body[s], locals_map, extra_locals, func_indices, body_bytes, is_last)
+                s = s + 1
+            }
+            if stmt.body.len == 0 {
+                body_bytes.push(OP_I64_CONST)
+                append_bytes(body_bytes, encode_i64_leb128(0))
+                body_bytes.push(OP_RETURN)
+            } else if body_bytes.len == 0 or body_bytes[body_bytes.len - 1] != OP_RETURN {
+                body_bytes.push(OP_RETURN)
+            }
+
+            let fn_idx = wasm_add_function(m, type_idx, extra_locals.count, body_bytes)
+            wasm_add_export(m, stmt.name, EXPORT_FUNC, fn_idx)
+        }
+        i = i + 1
+    }
+
+    // 3. Compile top-level statements into main function
+    let tl_stmts = []
+    i = 0
+    while i < program.statements.len {
+        let stmt = program.statements[i]
+        if stmt.type != "FnStmt" and stmt.type != "StructStmt" and stmt.type != "EnumStmt" and stmt.type != "UseStmt" {
+            tl_stmts.push(stmt)
+        }
+        i = i + 1
+    }
+
+    if tl_stmts.len > 0 {
+        let main_locals = {}
+        let main_extra = { count: 0, base: 0 }
+        let main_body = []
+        let tli = 0
+        while tli < tl_stmts.len {
+            let is_last = (tli + 1) == tl_stmts.len
+            compile_wasm_stmt(tl_stmts[tli], main_locals, main_extra, func_indices, main_body, is_last)
+            tli = tli + 1
+        }
+        if main_body.len == 0 or main_body[main_body.len - 1] != OP_RETURN {
+            main_body.push(OP_RETURN)
+        }
+
+        let main_type_idx = wasm_add_type(m, [], [TYPE_I64])
+        let main_fn_idx = wasm_add_function(m, main_type_idx, main_extra.count, main_body)
+        wasm_add_export(m, "main", EXPORT_FUNC, main_fn_idx)
+    }
+
+    return build_wasm_binary(m)
+}
+
+fn compile_file_to_wasm(input_file, output_file) {
+    let src = read(input_file)
+    let wasm_bytes = compile_source_to_wasm(src)
+    emit_wasm_file(output_file, wasm_bytes)
+    return wasm_bytes.len
+}
+

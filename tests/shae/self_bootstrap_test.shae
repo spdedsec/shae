@@ -1,0 +1,231 @@
+// Shae Self-Hosting Compiler: Bootstrap Pipeline Integration Test
+// Exercises compile_to_bytecode, disassemble_bytecode, link_to_native, compile_to_wasm, and main(args).
+
+use {
+    compile_to_bytecode,
+    disassemble_bytecode,
+    link_to_native,
+    compile_to_wasm,
+    main
+} from "../../lib/compiler/main.shae"
+use {
+    read, write, read_bytes, exists, remove
+} from "std:fs"
+use {
+    exit
+} from "std:sys"
+
+print("=== Shae Milestone 1: Complete Self-Hosting Bootstrap Pipeline Test ===")
+
+let test_source = "fn compute(x, y) \{\n    let sum = x + y\n    return sum * 2\n\}\nlet answer = compute(15, 6)\nanswer\n"
+let temp_shae = "tests/temp_bootstrap_sample.shae"
+let temp_shaec = "tests/temp_bootstrap_sample.shaec"
+let temp_elf = "tests/temp_bootstrap_sample.elf"
+let temp_pe = "tests/temp_bootstrap_sample.exe"
+let temp_wasm = "tests/temp_bootstrap_sample.wasm"
+
+write(temp_shae, test_source)
+if not exists(temp_shae) {
+    print("FAILED: Failed to create temp_shae file")
+    exit(1)
+}
+
+// [1] Test compile_to_bytecode (producing .shaec chunk)
+fn test_bytecode_pipeline(src_file, out_file) {
+    print("\n[1] Testing compile_to_bytecode...")
+    let shaec_len = compile_to_bytecode(src_file, out_file)
+    if not exists(out_file) {
+        print("FAILED: compile_to_bytecode did not produce output file!")
+        exit(1)
+    }
+    let shaec_bytes = read_bytes(out_file)
+    if shaec_bytes.len != shaec_len {
+        print("FAILED: shaec byte length mismatch!")
+        exit(1)
+    }
+    // Bytecode magic: \x7fSHAE = [127, 83, 72, 65, 69]
+    if shaec_bytes[0] != 127 or shaec_bytes[1] != 83 or shaec_bytes[2] != 72 or shaec_bytes[3] != 65 or shaec_bytes[4] != 69 {
+        print("FAILED: bytecode magic mismatch!")
+        exit(1)
+    }
+    // Version 1 (u16 le): [1, 0]
+    if shaec_bytes[5] != 1 or shaec_bytes[6] != 0 {
+        print("FAILED: bytecode version mismatch!")
+        exit(1)
+    }
+    print("   [✓] compile_to_bytecode emitted valid .shaec chunk (" + str(shaec_len) + " bytes).")
+}
+
+// [2] Test disassemble_bytecode (human-readable disassembly)
+fn test_disasm_pipeline(shaec_file, shae_file) {
+    print("\n[2] Testing disassemble_bytecode on .shaec file...")
+    let dis_file = disassemble_bytecode(shaec_file)
+    if not dis_file.contains("Disassembly:") {
+        print("FAILED: disassemble_bytecode output missing 'Disassembly:'")
+        exit(1)
+    }
+    if not dis_file.contains("Return") {
+        print("FAILED: disassemble_bytecode output missing 'Return'")
+        exit(1)
+    }
+    print("   [✓] disassemble_bytecode produced valid disassembly from .shaec file.")
+
+    print("   Testing disassemble_bytecode directly on source file...")
+    let dis_src = disassemble_bytecode(shae_file)
+    if not dis_src.contains("Disassembly:") or not dis_src.contains("Return") {
+        print("FAILED: disassemble_bytecode on source file failed")
+        exit(1)
+    }
+    print("   [✓] disassemble_bytecode produced valid disassembly from source file.")
+}
+
+// [3] Test link_to_native (producing standalone ELF and PE binaries)
+fn test_native_pipeline(src_file, elf_file, pe_file) {
+    print("\n[3] Testing link_to_native (ELF & PE)...")
+    let elf_len = link_to_native(src_file, elf_file, "elf")
+    if not exists(elf_file) {
+        print("FAILED: link_to_native did not produce ELF file!")
+        exit(1)
+    }
+    let elf_bytes = read_bytes(elf_file)
+    if elf_bytes.len != elf_len {
+        print("FAILED: ELF byte length mismatch!")
+        exit(1)
+    }
+    // ELF magic: \x7fELF = [127, 69, 76, 70]
+    if elf_bytes[0] != 127 or elf_bytes[1] != 69 or elf_bytes[2] != 76 or elf_bytes[3] != 70 {
+        print("FAILED: ELF magic header mismatch!")
+        exit(1)
+    }
+    // 64-bit ELF (class 2)
+    if elf_bytes[4] != 2 {
+        print("FAILED: ELF class should be 2 (64-bit)!")
+        exit(1)
+    }
+    print("   [✓] link_to_native produced valid ELF64 executable (" + str(elf_len) + " bytes).")
+
+    let pe_len = link_to_native(src_file, pe_file, "pe")
+    if not exists(pe_file) {
+        print("FAILED: link_to_native did not produce PE file!")
+        exit(1)
+    }
+    let pe_bytes = read_bytes(pe_file)
+    if pe_bytes.len != pe_len {
+        print("FAILED: PE byte length mismatch!")
+        exit(1)
+    }
+    // DOS header magic: MZ = [77, 90]
+    if pe_bytes[0] != 77 or pe_bytes[1] != 90 {
+        print("FAILED: DOS magic header mismatch!")
+        exit(1)
+    }
+    // PE signature at 128: [80, 69, 0, 0]
+    if pe_bytes[128] != 80 or pe_bytes[129] != 69 or pe_bytes[130] != 0 or pe_bytes[131] != 0 {
+        print("FAILED: PE signature mismatch at offset 128!")
+        exit(1)
+    }
+    print("   [✓] link_to_native produced valid PE32+ executable (" + str(pe_len) + " bytes).")
+}
+
+// [4] Test compile_to_wasm (producing .wasm binary module)
+fn test_wasm_pipeline(src_file, wasm_file) {
+    print("\n[4] Testing compile_to_wasm...")
+    let wasm_len = compile_to_wasm(src_file, wasm_file)
+    if not exists(wasm_file) {
+        print("FAILED: compile_to_wasm did not produce .wasm file!")
+        exit(1)
+    }
+    let wasm_bytes = read_bytes(wasm_file)
+    if wasm_bytes.len != wasm_len {
+        print("FAILED: WASM byte length mismatch!")
+        exit(1)
+    }
+    // WASM magic: \0asm = [0, 97, 115, 109]
+    if wasm_bytes[0] != 0 or wasm_bytes[1] != 97 or wasm_bytes[2] != 115 or wasm_bytes[3] != 109 {
+        print("FAILED: WASM magic mismatch!")
+        exit(1)
+    }
+    // WASM version 1: [1, 0, 0, 0]
+    if wasm_bytes[4] != 1 or wasm_bytes[5] != 0 or wasm_bytes[6] != 0 or wasm_bytes[7] != 0 {
+        print("FAILED: WASM version mismatch!")
+        exit(1)
+    }
+    print("   [✓] compile_to_wasm produced valid WebAssembly module (" + str(wasm_len) + " bytes).")
+}
+
+// [5] Test CLI dispatcher main(args)
+fn test_cli_pipeline(src_file) {
+    print("\n[5] Testing CLI dispatcher main(args)...")
+
+    let cli_shaec = "tests/temp_cli_test.shaec"
+    let cli_elf = "tests/temp_cli_test.bin"
+    let cli_pe = "tests/temp_cli_test.exe"
+    let cli_wasm = "tests/temp_cli_test.wasm"
+
+    // main(["compile", ...])
+    let c_res = main(["compile", src_file, "-o", cli_shaec])
+    if not exists(cli_shaec) or c_res <= 0 {
+        print("FAILED: main(['compile', ...]) failed!")
+        exit(1)
+    }
+    print("   [✓] main(['compile', ...]) succeeded.")
+
+    // main(["disasm", ...])
+    let d_res = main(["disasm", cli_shaec])
+    if not d_res.contains("Disassembly:") {
+        print("FAILED: main(['disasm', ...]) failed!")
+        exit(1)
+    }
+    print("   [✓] main(['disasm', ...]) succeeded.")
+
+    // main(["link", ... --format elf])
+    let l_elf_res = main(["link", src_file, "-o", cli_elf, "--format", "elf"])
+    if not exists(cli_elf) or l_elf_res <= 0 {
+        print("FAILED: main(['link', ... --format elf]) failed!")
+        exit(1)
+    }
+    print("   [✓] main(['link', ..., '--format', 'elf']) succeeded.")
+
+    // main(["link", ... --format pe])
+    let l_pe_res = main(["link", src_file, "-o", cli_pe, "--format", "pe"])
+    if not exists(cli_pe) or l_pe_res <= 0 {
+        print("FAILED: main(['link', ... --format pe]) failed!")
+        exit(1)
+    }
+    print("   [✓] main(['link', ..., '--format', 'pe']) succeeded.")
+
+    // main(["wasm", ...])
+    let w_res = main(["wasm", src_file, "-o", cli_wasm])
+    if not exists(cli_wasm) or w_res <= 0 {
+        print("FAILED: main(['wasm', ...]) failed!")
+        exit(1)
+    }
+    print("   [✓] main(['wasm', ...]) succeeded.")
+
+    // main(["--help"])
+    let h_res = main(["--help"])
+    if h_res != 0 {
+        print("FAILED: main(['--help']) should return 0!")
+        exit(1)
+    }
+    print("   [✓] main(['--help']) succeeded.")
+
+    remove(cli_shaec)
+    remove(cli_elf)
+    remove(cli_pe)
+    remove(cli_wasm)
+}
+
+test_bytecode_pipeline(temp_shae, temp_shaec)
+test_disasm_pipeline(temp_shaec, temp_shae)
+test_native_pipeline(temp_shae, temp_elf, temp_pe)
+test_wasm_pipeline(temp_shae, temp_wasm)
+test_cli_pipeline(temp_shae)
+
+remove(temp_shae)
+remove(temp_shaec)
+remove(temp_elf)
+remove(temp_pe)
+remove(temp_wasm)
+
+print("\n=== All Self-Hosting Bootstrap Pipeline Tests Passed! ===")

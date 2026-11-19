@@ -67,6 +67,12 @@ impl Linter {
             "channel",
             "assert",
             "assert_eq",
+            "send",
+            "recv",
+            "try_recv",
+            "close",
+            "gc",
+            "jit",
         ];
         for b in list {
             builtins.insert(b.to_string());

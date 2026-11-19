@@ -1,0 +1,271 @@
+// Shae Self-Hosting Compiler Pipeline Driver
+// Unified pure-Shae compiler CLI driver orchestrating lexer, parser, codegen, disasm, elf, pe, linker, and wasm.
+
+use { tokenize } from "./lexer.shae"
+use { parse } from "./parser.shae"
+use {
+    compile_source_to_chunk, compile_file_to_shaec, compile_program
+} from "./codegen.shae"
+use {
+    disassemble_chunk, disassemble_instruction
+} from "./disasm.shae"
+use {
+    build_standalone_elf, emit_elf_file
+} from "./elf.shae"
+use {
+    build_standalone_pe, emit_pe_file
+} from "./pe.shae"
+use {
+    link_file, link_source_to_elf, link_source_to_pe
+} from "./linker.shae"
+use {
+    make_wasm_module, wasm_add_type, wasm_add_function, wasm_add_export,
+    wasm_enable_memory, build_wasm_binary, emit_wasm_file,
+    compile_source_to_wasm, compile_file_to_wasm
+} from "./wasm.shae"
+use {
+    serialize_chunk, deserialize_chunk, make_chunk
+} from "./chunk.shae"
+use {
+    read, exists, read_bytes, write_bytes, write
+} from "std:fs"
+use {
+    args, exit, platform
+} from "std:sys"
+
+// 1. Compile Shae source file or string into a .shaec bytecode chunk binary file.
+fn compile_to_bytecode(source_file, out_file) {
+    let src = ""
+    if exists(source_file) {
+        src = read(source_file)
+    } else {
+        src = source_file
+    }
+    let chunk = compile_source_to_chunk(src)
+    let bytes = serialize_chunk(chunk)
+    let dest = out_file
+    if dest == null {
+        if source_file.ends_with(".shae") {
+            dest = source_file.slice(0, source_file.len - 5) + ".shaec"
+        } else {
+            dest = source_file + ".shaec"
+        }
+    }
+    write_bytes(dest, bytes)
+    return bytes.len
+}
+
+// 2. Disassemble a bytecode chunk, .shaec binary file, or source file into human-readable disassembly.
+fn disassemble_bytecode(target) {
+    if type(target) == "map" and target.has("code") {
+        return disassemble_chunk(target, "<chunk>")
+    }
+    if type(target) == "list" {
+        let chunk = deserialize_chunk(target)
+        if chunk != null {
+            return disassemble_chunk(chunk, "<bytecode>")
+        }
+        return "Error: failed to deserialize bytecode from byte array"
+    }
+    if type(target) == "string" {
+        if exists(target) {
+            let bytes = read_bytes(target)
+            if bytes.len >= 5 and bytes[0] == 127 and bytes[1] == 83 and bytes[2] == 72 and bytes[3] == 65 and bytes[4] == 69 {
+                let chunk = deserialize_chunk(bytes)
+                if chunk != null {
+                    return disassemble_chunk(chunk, target)
+                }
+                return "Error: failed to deserialize bytecode chunk from " + target
+            } else {
+                let src = read(target)
+                let chunk = compile_source_to_chunk(src)
+                return disassemble_chunk(chunk, target)
+            }
+        } else {
+            let chunk = compile_source_to_chunk(target)
+            return disassemble_chunk(chunk, "<source>")
+        }
+    }
+    return "Error: invalid target for disassemble_bytecode"
+}
+
+// 3. Link source file or code directly into standalone ELF or PE native binary executable.
+fn link_to_native(source_file, out_file, format) {
+    let target_format = format
+    if target_format == null {
+        target_format = "auto"
+    }
+    if exists(source_file) {
+        return link_file(source_file, out_file, target_format, null, "x86_64")
+    } else {
+        if target_format == "pe" {
+            return link_source_to_pe(source_file, out_file, null)
+        } else {
+            return link_source_to_elf(source_file, out_file, null, "x86_64")
+        }
+    }
+}
+
+// 4. Compile source file or code into a WebAssembly binary (.wasm) module.
+fn compile_to_wasm(source_file, out_file) {
+    let wasm_bytes = null
+    if type(source_file) == "map" and source_file.has("types") {
+        wasm_bytes = build_wasm_binary(source_file)
+    } else if exists(source_file) {
+        let src = read(source_file)
+        wasm_bytes = compile_source_to_wasm(src)
+    } else {
+        wasm_bytes = compile_source_to_wasm(source_file)
+    }
+    if out_file != null {
+        emit_wasm_file(out_file, wasm_bytes)
+    }
+    return wasm_bytes.len
+}
+
+// CLI Dispatcher: Parse arguments and execute compilation pipelines.
+fn main(args) {
+    if args == null or args.len == 0 {
+        print("Shae Self-Hosting Compiler Driver")
+        print("Usage: shae [compile|disasm|link|wasm] <input> [-o <output>] [--format <elf|pe>]")
+        return 0
+    }
+
+    let start_idx = 0
+    if args[0] == "shae" or args[0].ends_with(".shae") or args[0].ends_with(".rs") {
+        start_idx = 1
+    }
+    if start_idx >= args.len {
+        print("Shae Self-Hosting Compiler Driver")
+        print("Usage: shae [compile|disasm|link|wasm] <input> [-o <output>] [--format <elf|pe>]")
+        return 0
+    }
+
+    let cmd = args[start_idx]
+    let input_file = null
+    let output_file = null
+    let format = null
+
+    let i = start_idx + 1
+    while i < args.len {
+        let arg = args[i]
+        if arg == "-o" or arg == "--output" {
+            if i + 1 < args.len {
+                output_file = args[i + 1]
+                i = i + 2
+            } else {
+                print("Error: -o requires an argument")
+                return 1
+            }
+        } else if arg == "--format" or arg == "-f" {
+            if i + 1 < args.len {
+                format = args[i + 1]
+                i = i + 2
+            } else {
+                print("Error: --format requires an argument (elf or pe)")
+                return 1
+            }
+        } else if not arg.starts_with("-") {
+            if input_file == null {
+                input_file = arg
+            }
+            i = i + 1
+        } else {
+            i = i + 1
+        }
+    }
+
+    if cmd == "compile" {
+        if input_file == null {
+            print("Error: compile requires an input source file")
+            return 1
+        }
+        if output_file == null {
+            if input_file.ends_with(".shae") {
+                output_file = input_file.slice(0, input_file.len - 5) + ".shaec"
+            } else {
+                output_file = input_file + ".shaec"
+            }
+        }
+        let written = compile_to_bytecode(input_file, output_file)
+        print("✨ Compiled " + input_file + " -> " + output_file + " (" + str(written) + " bytes)")
+        return written
+    }
+
+    if cmd == "disasm" {
+        if input_file == null {
+            print("Error: disasm requires a target file")
+            return 1
+        }
+        let dis = disassemble_bytecode(input_file)
+        print(dis)
+        return dis
+    }
+
+    if cmd == "link" {
+        if input_file == null {
+            print("Error: link requires an input source file")
+            return 1
+        }
+        if output_file == null {
+            let stem = input_file
+            if stem.ends_with(".shae") {
+                stem = stem.slice(0, stem.len - 5)
+            }
+            if format == "pe" {
+                output_file = stem + ".exe"
+            } else {
+                output_file = stem + ".bin"
+            }
+        }
+        let written = link_to_native(input_file, output_file, format)
+        print("⚡ Linked native binary: " + output_file + " (" + str(written) + " bytes)")
+        return written
+    }
+
+    if cmd == "wasm" {
+        if input_file == null {
+            print("Error: wasm requires an input source file")
+            return 1
+        }
+        if output_file == null {
+            let stem = input_file
+            if stem.ends_with(".shae") {
+                stem = stem.slice(0, stem.len - 5)
+            }
+            output_file = stem + ".wasm"
+        }
+        let written = compile_to_wasm(input_file, output_file)
+        print("🕸️ Compiled WebAssembly binary: " + output_file + " (" + str(written) + " bytes)")
+        return written
+    }
+
+    if cmd == "--help" or cmd == "-h" or cmd == "help" {
+        print("Shae Self-Hosting Compiler Driver")
+        print("Usage: shae [compile|disasm|link|wasm] <input> [-o <output>] [--format <elf|pe>]")
+        return 0
+    }
+
+    print("Unknown compiler command: " + cmd)
+    return 1
+}
+
+// Invoke main dispatcher only when run directly as CLI entrypoint
+let raw_args = args()
+let script_args = []
+let found_main = false
+let a_idx = 0
+while a_idx < raw_args.len {
+    let a = raw_args[a_idx]
+    if not found_main {
+        if a.ends_with("lib/compiler/main.shae") or a.ends_with("main.shae") {
+            found_main = true
+        }
+    } else {
+        script_args.push(a)
+    }
+    a_idx = a_idx + 1
+}
+if found_main and script_args.len > 0 {
+    main(script_args)
+}

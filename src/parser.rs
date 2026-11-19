@@ -153,6 +153,10 @@ impl Parser {
 
     fn parse_single_type(&mut self) -> Result<TypeAnnotation, ParserError> {
         let mut base = match &self.peek().token {
+            Token::Null => {
+                self.advance();
+                TypeAnnotation::Null
+            }
             Token::Ident(name) => {
                 let name = name.clone();
                 self.advance();

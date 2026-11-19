@@ -31,11 +31,11 @@ fn show_help() {
     println!("  shae fmt <file.shae>       Format a Shae script");
     println!("  shae new <project_name>    Create a new Shae project folder");
     println!("  shae init [name]           Initialize package manifest (shae.toml)");
-    println!("  shae add <dep> <source>    Add dependency (git URL or local path)");
+    println!("  shae add <pkg> [source]    Add dependency from registry or source (git/path)");
     println!(
-        "  shae install               Install dependencies into .shae/packages and update shae.lock"
+        "  shae install               Install dependencies into .packages and update shae.lock"
     );
-    println!("  shae pkg <cmd>             Package manager subcommands (init, add, install)");
+    println!("  shae pkg <cmd>             Package manager subcommands (init, add, install, pack)");
     println!(
         "  shae bundle <entry.shae>   Bundle application into a standalone binary (--strip, --no-bytecode)"
     );
@@ -546,18 +546,33 @@ fn main() {
             }
         }
         "add" => {
-            if args.len() < 4 {
-                eprintln!("Usage: shae add <dep_name> <source> [--branch <b/t/r>]");
+            if args.len() < 3 {
+                eprintln!("Usage: shae add <package_name> [source] [--version <v>] [--registry <url>] [--branch <b/t/r>]");
                 process::exit(1);
             }
-            let dep_name = &args[2];
-            let source = &args[3];
+            let raw_pkg = &args[2];
+            let (pkg_name, at_ver) = if let Some((n, v)) = raw_pkg.split_once('@') {
+                (n.to_string(), Some(v.to_string()))
+            } else {
+                (raw_pkg.to_string(), None)
+            };
+
+            let mut source = None;
+            let mut version = at_ver;
+            let mut registry = None;
             let mut branch = None;
             let mut tag = None;
             let mut rev = None;
-            let mut i = 4;
+
+            let mut i = 3;
             while i < args.len() {
-                if args[i] == "--branch" && i + 1 < args.len() {
+                if (args[i] == "--version" || args[i] == "-v") && i + 1 < args.len() {
+                    version = Some(args[i + 1].clone());
+                    i += 2;
+                } else if args[i] == "--registry" && i + 1 < args.len() {
+                    registry = Some(args[i + 1].clone());
+                    i += 2;
+                } else if args[i] == "--branch" && i + 1 < args.len() {
                     branch = Some(args[i + 1].as_str());
                     i += 2;
                 } else if args[i] == "--tag" && i + 1 < args.len() {
@@ -566,15 +581,35 @@ fn main() {
                 } else if args[i] == "--rev" && i + 1 < args.len() {
                     rev = Some(args[i + 1].as_str());
                     i += 2;
+                } else if !args[i].starts_with('-') && source.is_none() {
+                    source = Some(args[i].clone());
+                    i += 1;
                 } else {
                     i += 1;
                 }
             }
-            match shae::pkg::add_dependency(Path::new("."), dep_name, source, branch, tag, rev) {
-                Ok(_) => println!("✅ Added and resolved dependency '{}'", dep_name),
-                Err(e) => {
-                    eprintln!("Error adding dependency: {}", e);
-                    process::exit(1);
+
+            if let Some(src) = source {
+                match shae::pkg::add_dependency(Path::new("."), &pkg_name, &src, branch, tag, rev) {
+                    Ok(_) => println!("✅ Added and resolved dependency '{}'", pkg_name),
+                    Err(e) => {
+                        eprintln!("Error adding dependency: {}", e);
+                        process::exit(1);
+                    }
+                }
+            } else {
+                let reg_url = shae::pkg::resolve_registry_url(Some(Path::new(".")), registry.as_deref());
+                match shae::pkg::add_dependency_from_registry(
+                    Path::new("."),
+                    &pkg_name,
+                    version.as_deref(),
+                    &reg_url,
+                ) {
+                    Ok(_) => println!("✅ Added and resolved dependency '{}' from registry", pkg_name),
+                    Err(e) => {
+                        eprintln!("Error adding dependency: {}", e);
+                        process::exit(1);
+                    }
                 }
             }
         }
@@ -590,7 +625,7 @@ fn main() {
         },
         "pkg" => {
             if args.len() < 3 {
-                println!("Usage: shae pkg <init|add|install>");
+                println!("Usage: shae pkg <init|add|install|pack>");
                 return;
             }
             match args[2].as_str() {
@@ -608,24 +643,70 @@ fn main() {
                     }
                 }
                 "add" => {
-                    if args.len() < 5 {
-                        eprintln!("Usage: shae pkg add <dep_name> <source>");
+                    if args.len() < 4 {
+                        eprintln!("Usage: shae pkg add <package_name> [source] [--version <v>] [--registry <url>]");
                         process::exit(1);
                     }
-                    let dep_name = &args[3];
-                    let source = &args[4];
-                    match shae::pkg::add_dependency(
-                        Path::new("."),
-                        dep_name,
-                        source,
-                        None,
-                        None,
-                        None,
-                    ) {
-                        Ok(_) => println!("✅ Added and resolved dependency '{}'", dep_name),
-                        Err(e) => {
-                            eprintln!("Error adding dependency: {}", e);
-                            process::exit(1);
+                    let raw_pkg = &args[3];
+                    let (pkg_name, at_ver) = if let Some((n, v)) = raw_pkg.split_once('@') {
+                        (n.to_string(), Some(v.to_string()))
+                    } else {
+                        (raw_pkg.to_string(), None)
+                    };
+
+                    let mut source = None;
+                    let mut version = at_ver;
+                    let mut registry = None;
+                    let mut branch = None;
+                    let mut tag = None;
+                    let mut rev = None;
+
+                    let mut i = 4;
+                    while i < args.len() {
+                        if (args[i] == "--version" || args[i] == "-v") && i + 1 < args.len() {
+                            version = Some(args[i + 1].clone());
+                            i += 2;
+                        } else if args[i] == "--registry" && i + 1 < args.len() {
+                            registry = Some(args[i + 1].clone());
+                            i += 2;
+                        } else if args[i] == "--branch" && i + 1 < args.len() {
+                            branch = Some(args[i + 1].as_str());
+                            i += 2;
+                        } else if args[i] == "--tag" && i + 1 < args.len() {
+                            tag = Some(args[i + 1].as_str());
+                            i += 2;
+                        } else if args[i] == "--rev" && i + 1 < args.len() {
+                            rev = Some(args[i + 1].as_str());
+                            i += 2;
+                        } else if !args[i].starts_with('-') && source.is_none() {
+                            source = Some(args[i].clone());
+                            i += 1;
+                        } else {
+                            i += 1;
+                        }
+                    }
+
+                    if let Some(src) = source {
+                        match shae::pkg::add_dependency(Path::new("."), &pkg_name, &src, branch, tag, rev) {
+                            Ok(_) => println!("✅ Added and resolved dependency '{}'", pkg_name),
+                            Err(e) => {
+                                eprintln!("Error adding dependency: {}", e);
+                                process::exit(1);
+                            }
+                        }
+                    } else {
+                        let reg_url = shae::pkg::resolve_registry_url(Some(Path::new(".")), registry.as_deref());
+                        match shae::pkg::add_dependency_from_registry(
+                            Path::new("."),
+                            &pkg_name,
+                            version.as_deref(),
+                            &reg_url,
+                        ) {
+                            Ok(_) => println!("✅ Added and resolved dependency '{}' from registry", pkg_name),
+                            Err(e) => {
+                                eprintln!("Error adding dependency: {}", e);
+                                process::exit(1);
+                            }
                         }
                     }
                 }
@@ -639,6 +720,16 @@ fn main() {
                         process::exit(1);
                     }
                 },
+                "pack" => {
+                    let target_dir = args.get(3).map(|s| s.as_str()).unwrap_or(".");
+                    match shae::pkg::pack_to_file(Path::new(target_dir), Path::new(".")) {
+                        Ok(p) => println!("📦 Created package archive: {}", p.display()),
+                        Err(e) => {
+                            eprintln!("Error packing package: {}", e);
+                            process::exit(1);
+                        }
+                    }
+                }
                 other => {
                     eprintln!("Unknown pkg command: {}", other);
                     process::exit(1);

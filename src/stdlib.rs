@@ -40,15 +40,18 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "unicode" => Ok(build_unicode_module()),
         "actor" | "actors" => Ok(build_actor_module()),
         "actor:cluster" | "cluster" => Ok(build_cluster_module()),
+        "gui" => Ok(crate::gui::build_gui_module()),
+        "audio" => Ok(crate::audio::build_audio_module()),
+        "ui" => Ok(crate::ui::build_ui_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:gui, std:audio, std:ui",
             clean_name
         ))
         .at(span)),
     }
 }
 
-fn make_map(entries: Vec<(&str, crate::value::BuiltinFn)>) -> Value {
+pub(crate) fn make_map(entries: Vec<(&str, crate::value::BuiltinFn)>) -> Value {
     let mut map = IndexMap::new();
     for (name, func) in entries {
         map.insert(
