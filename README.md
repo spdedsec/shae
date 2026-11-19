@@ -123,7 +123,36 @@ shae run hello.shae
 
 ## 🌟 Language Tour
 
-### 1. Cranelift JIT Compilation
+### 1. Gradual Typing & Static Type Checker (`shae check`)
+Shae provides an ergonomic **gradual type system**. Type annotations are completely optional, allowing rapid prototyping with dynamic duck typing while letting you enforce strict static verification across critical interfaces:
+
+```shae
+// Optional function parameter and return type annotations
+fn calculate_tax(subtotal: float, rate: float = 0.08) -> float {
+    return subtotal * (1.0 + rate)
+}
+
+// Variable annotations and nullable union types
+let user_id: int | string | null = null
+user_id = 42
+
+fn fetch_user(id: int | string) -> map | null {
+    if id == 42 {
+        return { "id": id, "name": "Satya" }
+    }
+    return null
+}
+
+let user = fetch_user(user_id)
+```
+
+Run static type checking across your files anytime:
+```bash
+shae check main.shae
+```
+The static checker verifies argument types, arities, return types, and variable assignments without runtime overhead.
+
+### 2. Cranelift JIT Compilation
 Shae features an integrated SSA-based Just-In-Time compiler powered by Cranelift:
 ```shae
 // Explicitly compile a recursive algorithm to native machine code
@@ -470,6 +499,7 @@ gui.close(win)
 
 Explore ready-to-run examples in the [`examples/`](examples) directory:
 
+- 👾 [**Space Invaders 2D Retro Arcade Game**](examples/space_invaders.shae): Full playable retro arcade game featuring animated alien fleets, destructive bunker degradation, laser projectile physics, sound effects (`std:audio`), score/lives HUD (`std:ui`), and dual TrueColor ANSI terminal / 60 FPS window rendering (`std:gui`).
 - 🐍 [**Shae Retro Snake (60 FPS Native GUI)**](examples/snake_gui.shae): Full playable arcade Snake game with score tracking, apple spawning, collision physics, and instant restart (`[R]`).
 - 🎹 [**Interactive Audio Synthesizer & Piano**](examples/sound_synth.shae): 8-key piano keyboard with waveform selection (sine, square, triangle, saw), volume slider, and real-time audio playback (`std:audio`).
 - 🧮 [**Desktop Graphical Calculator**](examples/calculator_gui.shae): Clean desktop calculator with interactive UI buttons, arithmetic operations, and clear functionality built with `std:ui`.
@@ -503,7 +533,7 @@ Shae ships with an all-in-one developer toolchain:
 | `shae disasm <file.shae\|file.shaec>` | Disassemble script or compiled bytecode into human-readable instructions and constant pool |
 | `shae fmt <file.shae>` | Format source files canonically (4-space indentation) |
 | `shae fmt --check <file>` | Verify formatting without modifying files |
-| `shae check <file.shae>` | Static linter checking for unused variables, dead code, and shadowing |
+| `shae check <file.shae>` | Static type checker and linter verifying types, function signatures, unused variables, and arity |
 | `shae test [path] [-f <pat>] [--ast] [--nocapture]` | Built-in Pure-Shae test runner with discovery, filtering, and sub-ms timing |
 | `shae doc [path] [-o <dir>] [--format <fmt>] [--serve] [--port <p>] [--open]` | Generate HTML/Markdown/JSON API documentation with optional live HTTP server |
 | `shae pkg init [name]` | Initialize a new package with `shae.toml` manifest |
