@@ -122,6 +122,12 @@ pub fn build_gui_module() -> Value {
         ("frame_delay", gui_frame_delay),
         ("poll_events", gui_poll_events),
         ("simulate_key", gui_simulate_key),
+        ("load_font", gui_load_font),
+        ("loadFont", gui_load_font),
+        ("draw_text_font", gui_draw_text_font),
+        ("drawTextFont", gui_draw_text_font),
+        ("measure_text_font", gui_measure_text_font),
+        ("measureTextFont", gui_measure_text_font),
     ];
     for (name, func) in entries {
         map.insert(
@@ -2138,5 +2144,142 @@ fn gui_simulate_key(
     };
     let is_down = args[1].is_truthy();
     simulate_key_internal(key, is_down);
+    Ok(Value::Null)
+}
+
+
+// -------------------------------------------------------------
+// Scalable Vector Typography Functions (TrueType / OpenType)
+// -------------------------------------------------------------
+
+fn to_f64_opt(val: &Value) -> Option<f64> {
+    match val {
+        Value::Float(f) | Value::Number(f) => Some(*f),
+        Value::Int(i) => Some(*i as f64),
+        _ => None,
+    }
+}
+
+fn extract_font_handle(val: &Value) -> Option<(usize, f32)> {
+    match val {
+        Value::Int(i) if *i > 0 => Some((*i as usize, 16.0)),
+        Value::Map(m) => {
+            let map = m.read().unwrap();
+            let id = match map.get("id") {
+                Some(Value::Int(i)) => *i as usize,
+                _ => return None,
+            };
+            let size = match map.get("size") {
+                Some(Value::Float(f)) => *f as f32,
+                Some(Value::Int(i)) => *i as f32,
+                _ => 16.0,
+            };
+            Some((id, size))
+        }
+        _ => None,
+    }
+}
+
+fn gui_load_font(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(RuntimeError::new("gui.load_font expects (path, [size_px])".into()).at(span));
+    }
+    let path = match &args[0] {
+        Value::String(s) => s.as_str(),
+        other => &other.to_display(),
+    };
+    let size = if args.len() > 1 {
+        to_f64_opt(&args[1]).unwrap_or(16.0) as f32
+    } else {
+        16.0
+    };
+
+    match crate::font::load_font_file(path, size) {
+        Ok(id) => {
+            let mut map = IndexMap::new();
+            map.insert("id".to_string(), Value::Int(id as i64));
+            map.insert("path".to_string(), Value::String(path.to_string()));
+            map.insert("size".to_string(), Value::Float(size as f64));
+            Ok(Value::Map(Arc::new(RwLock::new(map))))
+        }
+        Err(e) => Err(RuntimeError::new(format!("gui.load_font: {}", e)).at(span)),
+    }
+}
+
+fn gui_measure_text_font(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() < 2 {
+        return Err(RuntimeError::new("gui.measure_text_font expects (font, text, [size_px])".into()).at(span));
+    }
+    let (font_id, default_size) = extract_font_handle(&args[0])
+        .ok_or_else(|| RuntimeError::new("gui.measure_text_font: invalid font handle".into()).at(span))?;
+
+    let text = match &args[1] {
+        Value::String(s) => s.clone(),
+        other => other.to_display(),
+    };
+    let size = if args.len() > 2 {
+        to_f64_opt(&args[2]).unwrap_or(default_size as f64) as f32
+    } else {
+        default_size
+    };
+
+    let font_arc = crate::font::get_font(font_id)
+        .ok_or_else(|| RuntimeError::new(format!("gui.measure_text_font: font {} not found", font_id)).at(span))?;
+
+    let (w, h) = font_arc.measure_text(&text, size);
+    let arr = vec![Value::Int(w.ceil() as i64), Value::Int(h.ceil() as i64)];
+    Ok(Value::Array(Arc::new(RwLock::new(arr))))
+}
+
+fn gui_draw_text_font(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    if args.len() < 5 {
+        return Err(RuntimeError::new(
+            "gui.draw_text_font expects (window, font, text, x, y, color, [size])".into(),
+        ).at(span));
+    }
+
+    let (win_id, font_arg_idx) = if let Some(wid) = to_win_id(&args[0]) {
+        (wid, 1)
+    } else if extract_font_handle(&args[0]).is_some() {
+        let first_win = get_registry().lock().unwrap().keys().next().copied().unwrap_or(1);
+        (first_win, 0)
+    } else {
+        return Err(RuntimeError::new("gui.draw_text_font: invalid window or font argument".into()).at(span));
+    };
+
+    let (font_id, default_size) = extract_font_handle(&args[font_arg_idx])
+        .ok_or_else(|| RuntimeError::new("gui.draw_text_font: invalid font handle".into()).at(span))?;
+
+    let text = match &args[font_arg_idx + 1] {
+        Value::String(s) => s.clone(),
+        other => other.to_display(),
+    };
+    let x = to_i64(&args[font_arg_idx + 2]).unwrap_or(0);
+    let y = to_i64(&args[font_arg_idx + 3]).unwrap_or(0);
+    let color = parse_color(&args[font_arg_idx + 4]);
+
+    let size = if args.len() > font_arg_idx + 5 {
+        to_f64_opt(&args[font_arg_idx + 5]).unwrap_or(default_size as f64) as f32
+    } else {
+        default_size
+    };
+
+    let font_arc = crate::font::get_font(font_id)
+        .ok_or_else(|| RuntimeError::new(format!("gui.draw_text_font: font {} not found", font_id)).at(span))?;
+
+    let mut reg = get_registry().lock().unwrap();
+    if let Some(win) = reg.get_mut(&win_id) {
+        font_arc.draw_text_to_buffer(
+            &mut win.buffer,
+            win.width,
+            win.height,
+            x,
+            y,
+            &text,
+            color,
+            size,
+        );
+    }
+
     Ok(Value::Null)
 }

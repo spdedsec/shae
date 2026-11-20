@@ -18,6 +18,7 @@ pub mod env;
 pub mod eval;
 pub mod ffi;
 pub mod fmt;
+pub mod font;
 pub mod font_8x8;
 pub mod gc;
 pub mod gui;
