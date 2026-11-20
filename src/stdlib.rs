@@ -43,6 +43,7 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "async" => Ok(build_async_module()),
         "buffer" => Ok(build_buffer_module()),
         "gui" | "graphics" => Ok(crate::gui::build_gui_module()),
+        "physics" | "dyn" => Ok(crate::physics::build_physics_module()),
         "ui" => {
             let mut map = indexmap::IndexMap::new();
             let arcade_ui = crate::ui::build_ui_module();

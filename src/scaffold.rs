@@ -231,9 +231,9 @@ fn print_help() {{
 
 fn main() {{
     let args = sys.args()
-    let mut target = "World"
+    let target = "World"
 
-    let mut i = 0
+    let i = 0
     while i < args.len() {{
         let arg = args[i]
         if arg == "--help" || arg == "-h" {{
@@ -269,10 +269,10 @@ let TITLE = "{name}"
 fn main() {{
     let win = gui.init_window(WIDTH, HEIGHT, TITLE)
 
-    let mut x = 160.0
-    let mut y = 120.0
-    let mut vx = 2.5
-    let mut vy = 1.8
+    let x = 160.0
+    let y = 120.0
+    let vx = 2.5
+    let vy = 1.8
     let radius = 12.0
 
     print("🎮 Starting " + TITLE + " [Press ESC or Close window to exit]")
