@@ -83,6 +83,8 @@ pub struct UpvalueDesc {
 pub struct JitMetadata {
     pub invocation_count: Arc<std::sync::atomic::AtomicUsize>,
     pub jit_fn: Arc<std::sync::RwLock<Option<crate::jit::JitFnPtr>>>,
+    pub osr_fn: Arc<std::sync::RwLock<Option<crate::jit::OsrFnPtr>>>,
+    pub loop_iteration_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl PartialEq for JitMetadata {
@@ -96,6 +98,8 @@ impl Default for JitMetadata {
         Self {
             invocation_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             jit_fn: Arc::new(std::sync::RwLock::new(None)),
+            osr_fn: Arc::new(std::sync::RwLock::new(None)),
+            loop_iteration_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 }
@@ -141,6 +145,21 @@ impl CompiledFunction {
 
     pub fn set_jit_fn(&self, f: crate::jit::JitFnPtr) {
         *self.jit.jit_fn.write().unwrap() = Some(f);
+    }
+
+    pub fn get_osr_fn(&self) -> Option<crate::jit::OsrFnPtr> {
+        *self.jit.osr_fn.read().unwrap()
+    }
+
+    pub fn set_osr_fn(&self, f: crate::jit::OsrFnPtr) {
+        *self.jit.osr_fn.write().unwrap() = Some(f);
+    }
+
+    pub fn record_loop_iteration(&self) -> usize {
+        self.jit
+            .loop_iteration_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1
     }
 
     pub fn is_float_candidate(&self) -> bool {

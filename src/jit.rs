@@ -14,6 +14,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub type JitFnPtr = unsafe extern "C" fn(*const i64, usize, *mut i64) -> i32;
+pub type OsrFnPtr = unsafe extern "C" fn(*const i64, usize, *mut i64, usize) -> i32;
 
 pub const JIT_THRESHOLD: usize = 20;
 pub const MAX_JIT_CALL_DEPTH: usize = 1024;
@@ -177,33 +178,44 @@ impl JitEngine {
         let fn_base = func.name.as_deref().unwrap_or("anon");
         let inner_name = format!("shae_jit_inner_{}_{}", fn_base, fn_id_num);
         let entry_name = format!("shae_jit_entry_{}_{}", fn_base, fn_id_num);
+        let osr_name = format!("shae_jit_osr_{}_{}", fn_base, fn_id_num);
 
         let pointer_type = self.module.target_config().pointer_type();
 
         // 1. Declare inner function:
-        // (args: *const i64, num_args: usize, out_val: *mut i64, depth: usize) -> i32
+        // (slots_ptr: *const i64, num_slots: usize, out_ptr: *mut i64, depth: usize, is_osr: usize, osr_target: usize) -> i32
         self.ctx.func.signature.params.clear();
         self.ctx.func.signature.returns.clear();
         self.ctx
             .func
             .signature
             .params
-            .push(AbiParam::new(pointer_type));
+            .push(AbiParam::new(pointer_type)); // slots_ptr
         self.ctx
             .func
             .signature
             .params
-            .push(AbiParam::new(pointer_type));
+            .push(AbiParam::new(pointer_type)); // num_slots
         self.ctx
             .func
             .signature
             .params
-            .push(AbiParam::new(pointer_type));
+            .push(AbiParam::new(pointer_type)); // out_ptr
         self.ctx
             .func
             .signature
             .params
             .push(AbiParam::new(pointer_type)); // depth
+        self.ctx
+            .func
+            .signature
+            .params
+            .push(AbiParam::new(pointer_type)); // is_osr
+        self.ctx
+            .func
+            .signature
+            .params
+            .push(AbiParam::new(pointer_type)); // osr_target
         self.ctx
             .func
             .signature
@@ -215,7 +227,7 @@ impl JitEngine {
             .declare_function(&inner_name, Linkage::Local, &self.ctx.func.signature)
             .map_err(|e| format!("Inner declaration error: {}", e))?;
 
-        // Declare entry trampoline signature:
+        // Declare standard entry trampoline signature:
         // (args: *const i64, num_args: usize, out_val: *mut i64) -> i32
         let mut entry_sig = self.module.make_signature();
         entry_sig.params.push(AbiParam::new(pointer_type));
@@ -228,6 +240,20 @@ impl JitEngine {
             .declare_function(&entry_name, Linkage::Export, &entry_sig)
             .map_err(|e| format!("Entry declaration error: {}", e))?;
 
+        // Declare OSR trampoline signature:
+        // (slots: *const i64, num_slots: usize, out_val: *mut i64, target_ip: usize) -> i32
+        let mut osr_sig = self.module.make_signature();
+        osr_sig.params.push(AbiParam::new(pointer_type));
+        osr_sig.params.push(AbiParam::new(pointer_type));
+        osr_sig.params.push(AbiParam::new(pointer_type));
+        osr_sig.params.push(AbiParam::new(pointer_type));
+        osr_sig.returns.push(AbiParam::new(types::I32));
+
+        let osr_func_id = self
+            .module
+            .declare_function(&osr_name, Linkage::Export, &osr_sig)
+            .map_err(|e| format!("OSR declaration error: {}", e))?;
+
         let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
         let self_callee = self
             .module
@@ -236,6 +262,7 @@ impl JitEngine {
         // Pre-scan block starts
         let mut block_starts = BTreeSet::new();
         block_starts.insert(0);
+        let mut loop_targets = BTreeSet::new();
 
         let mut offset = 0;
         let mut max_local = arity;
@@ -284,6 +311,7 @@ impl JitEngine {
                     let jump = (hi << 8) | lo;
                     let target = (offset + 3).saturating_sub(jump);
                     block_starts.insert(target);
+                    loop_targets.insert(target);
                     offset += 3;
                 }
                 OpCode::Call => {
@@ -309,10 +337,12 @@ impl JitEngine {
         builder.switch_to_block(entry_block);
         builder.seal_block(entry_block);
 
-        let args_ptr = builder.block_params(entry_block)[0];
-        let num_args = builder.block_params(entry_block)[1];
+        let slots_ptr = builder.block_params(entry_block)[0];
+        let num_slots = builder.block_params(entry_block)[1];
         let out_ptr = builder.block_params(entry_block)[2];
         let depth_val = builder.block_params(entry_block)[3];
+        let is_osr_val = builder.block_params(entry_block)[4];
+        let osr_target_val = builder.block_params(entry_block)[5];
 
         let is_float = chunk
             .constants
@@ -328,11 +358,21 @@ impl JitEngine {
         }
         let var = |idx: usize| vars[idx];
 
+        let zero_const = if is_float {
+            builder.ins().f64const(0.0)
+        } else {
+            builder.ins().iconst(types::I64, 0)
+        };
+
         // Error and bailout blocks
         let bailout_block = builder.create_block();
         let div_zero_block = builder.create_block();
         let stack_overflow_block = builder.create_block();
+
+        let check_mode_block = builder.create_block();
         let normal_entry_block = builder.create_block();
+        let normal_load_block = builder.create_block();
+        let osr_dispatch_block = builder.create_block();
 
         // Call depth guard check
         let max_depth = builder
@@ -346,7 +386,7 @@ impl JitEngine {
             depth_exceeded,
             stack_overflow_block,
             &[],
-            normal_entry_block,
+            check_mode_block,
             &[],
         );
 
@@ -356,22 +396,40 @@ impl JitEngine {
         let status_overflow = builder.ins().iconst(types::I32, 4);
         builder.ins().return_(&[status_overflow]);
 
-        // Normal entry block
+        // Check mode: is_osr_val == 0 -> normal entry, else osr dispatch
+        builder.switch_to_block(check_mode_block);
+        builder.seal_block(check_mode_block);
+        let zero_ptr = builder.ins().iconst(pointer_type, 0);
+        let is_normal = builder.ins().icmp(IntCC::Equal, is_osr_val, zero_ptr);
+        builder.ins().brif(
+            is_normal,
+            normal_entry_block,
+            &[],
+            osr_dispatch_block,
+            &[],
+        );
+
+        // --- Normal Entry Path ---
         builder.switch_to_block(normal_entry_block);
         builder.seal_block(normal_entry_block);
 
-        let zero_const = if is_float {
-            builder.ins().f64const(0.0)
-        } else {
-            builder.ins().iconst(types::I64, 0)
-        };
+        // Check arity
+        let expected_arity = builder.ins().iconst(pointer_type, arity as i64);
+        let arity_match = builder.ins().icmp(IntCC::Equal, num_slots, expected_arity);
+        builder
+            .ins()
+            .brif(arity_match, normal_load_block, &[], bailout_block, &[]);
+
+        builder.switch_to_block(normal_load_block);
+        builder.seal_block(normal_load_block);
+
         builder.def_var(var(0), zero_const);
 
         for i in 0..arity {
             let offset_val = (i * 8) as i32;
             let loaded = builder
                 .ins()
-                .load(val_type, mem_flags(), args_ptr, offset_val);
+                .load(val_type, mem_flags(), slots_ptr, offset_val);
             builder.def_var(var(1 + i), loaded);
         }
 
@@ -379,9 +437,61 @@ impl JitEngine {
             builder.def_var(var(i), zero_const);
         }
 
-        // Check arity
-        let expected_arity = builder.ins().iconst(pointer_type, arity as i64);
-        let arity_match = builder.ins().icmp(IntCC::Equal, num_args, expected_arity);
+        let first_block = blocks[&0];
+        builder.ins().jump(first_block, &[]);
+
+        // --- OSR Dispatch Path ---
+        builder.switch_to_block(osr_dispatch_block);
+        builder.seal_block(osr_dispatch_block);
+
+        let num_slots_to_load = (max_local + 1).max(arity + 1);
+        for i in 0..num_slots_to_load {
+            let offset_val = (i * 8) as i32;
+            let i_const = builder.ins().iconst(pointer_type, i as i64);
+            let in_bounds = builder
+                .ins()
+                .icmp(IntCC::UnsignedLessThan, i_const, num_slots);
+
+            let load_slot_block = builder.create_block();
+            let next_slot_block = builder.create_block();
+
+            builder.def_var(var(i), zero_const);
+            builder
+                .ins()
+                .brif(in_bounds, load_slot_block, &[], next_slot_block, &[]);
+
+            builder.switch_to_block(load_slot_block);
+            builder.seal_block(load_slot_block);
+            let loaded = builder
+                .ins()
+                .load(val_type, mem_flags(), slots_ptr, offset_val);
+            builder.def_var(var(i), loaded);
+            builder.ins().jump(next_slot_block, &[]);
+
+            builder.switch_to_block(next_slot_block);
+            builder.seal_block(next_slot_block);
+        }
+
+        for i in num_slots_to_load..total_vars {
+            builder.def_var(var(i), zero_const);
+        }
+
+        // Branch to target loop block matching osr_target_val
+        for &target in &loop_targets {
+            if let Some(&target_block) = blocks.get(&target) {
+                let target_const = builder.ins().iconst(pointer_type, target as i64);
+                let is_target = builder
+                    .ins()
+                    .icmp(IntCC::Equal, osr_target_val, target_const);
+                let next_check = builder.create_block();
+                builder
+                    .ins()
+                    .brif(is_target, target_block, &[], next_check, &[]);
+                builder.switch_to_block(next_check);
+                builder.seal_block(next_check);
+            }
+        }
+        builder.ins().jump(bailout_block, &[]);
 
         let call_args_slot = builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
@@ -390,11 +500,6 @@ impl JitEngine {
         ));
         let call_out_slot =
             builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-
-        let first_block = blocks[&0];
-        builder
-            .ins()
-            .brif(arity_match, first_block, &[], bailout_block, &[]);
 
         builder.switch_to_block(first_block);
 
@@ -837,9 +942,17 @@ impl JitEngine {
                     let arg_count_val = builder.ins().iconst(pointer_type, arg_count as i64);
                     let one_val = builder.ins().iconst(pointer_type, 1);
                     let next_depth = builder.ins().iadd(depth_val, one_val);
+                    let zero_osr = builder.ins().iconst(pointer_type, 0);
                     let call_inst = builder.ins().call(
                         self_callee,
-                        &[call_args_addr, arg_count_val, call_out_addr, next_depth],
+                        &[
+                            call_args_addr,
+                            arg_count_val,
+                            call_out_addr,
+                            next_depth,
+                            zero_osr,
+                            zero_osr,
+                        ],
                     );
                     let status = builder.inst_results(call_inst)[0];
 
@@ -979,14 +1092,15 @@ impl JitEngine {
         let t_args = tramp_builder.block_params(tramp_entry)[0];
         let t_num_args = tramp_builder.block_params(tramp_entry)[1];
         let t_out_val = tramp_builder.block_params(tramp_entry)[2];
-        let t_zero_depth = tramp_builder.ins().iconst(pointer_type, 0);
+        let t_zero = tramp_builder.ins().iconst(pointer_type, 0);
 
         let inner_callee = self
             .module
             .declare_func_in_func(inner_func_id, &mut tramp_builder.func);
-        let tramp_call = tramp_builder
-            .ins()
-            .call(inner_callee, &[t_args, t_num_args, t_out_val, t_zero_depth]);
+        let tramp_call = tramp_builder.ins().call(
+            inner_callee,
+            &[t_args, t_num_args, t_out_val, t_zero, t_zero, t_zero],
+        );
         let tramp_status = tramp_builder.inst_results(tramp_call)[0];
         tramp_builder.ins().return_(&[tramp_status]);
 
@@ -997,13 +1111,55 @@ impl JitEngine {
             .map_err(|e| format!("Entry definition error: {}", e))?;
 
         self.module.clear_context(&mut self.ctx);
+
+        // 3. Build OSR entry trampoline function:
+        // extern "C" fn(slots: *const i64, num_slots: usize, out_val: *mut i64, target_ip: usize) -> i32
+        self.ctx.func.signature = osr_sig;
+        let mut osr_builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
+        let osr_entry = osr_builder.create_block();
+        osr_builder.append_block_params_for_function_params(osr_entry);
+        osr_builder.switch_to_block(osr_entry);
+        osr_builder.seal_block(osr_entry);
+
+        let o_slots = osr_builder.block_params(osr_entry)[0];
+        let o_num_slots = osr_builder.block_params(osr_entry)[1];
+        let o_out_val = osr_builder.block_params(osr_entry)[2];
+        let o_target_ip = osr_builder.block_params(osr_entry)[3];
+        let o_zero_depth = osr_builder.ins().iconst(pointer_type, 0);
+        let o_one_is_osr = osr_builder.ins().iconst(pointer_type, 1);
+
+        let inner_callee_osr = self
+            .module
+            .declare_func_in_func(inner_func_id, &mut osr_builder.func);
+        let osr_call = osr_builder.ins().call(
+            inner_callee_osr,
+            &[o_slots, o_num_slots, o_out_val, o_zero_depth, o_one_is_osr, o_target_ip],
+        );
+        let osr_status = osr_builder.inst_results(osr_call)[0];
+        osr_builder.ins().return_(&[osr_status]);
+
+        osr_builder.finalize(self.module.target_config());
+
+        self.module
+            .define_function(osr_func_id, &mut self.ctx)
+            .map_err(|e| format!("OSR definition error: {}", e))?;
+
+        self.module.clear_context(&mut self.ctx);
+
         self.module
             .finalize_definitions()
             .map_err(|e| format!("Finalize error: {}", e))?;
 
         let code_ptr = self.module.get_finalized_function(entry_func_id);
-        let fn_ptr: JitFnPtr = unsafe { std::mem::transmute(code_ptr) };
-        Ok(fn_ptr)
+        let entry_fn: JitFnPtr = unsafe { std::mem::transmute(code_ptr) };
+
+        let osr_code_ptr = self.module.get_finalized_function(osr_func_id);
+        let osr_fn: OsrFnPtr = unsafe { std::mem::transmute(osr_code_ptr) };
+
+        func.set_jit_fn(entry_fn);
+        func.set_osr_fn(osr_fn);
+
+        Ok(entry_fn)
     }
 }
 

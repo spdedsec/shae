@@ -725,3 +725,299 @@ caught
         InterpretResult::Ok(Value::String("Call stack overflow".to_string()))
     );
 }
+
+
+// ============================================================================
+// On-Stack Replacement (OSR) & Tiered JIT Execution Tests
+// ============================================================================
+
+#[test]
+fn test_osr_while_loop_accumulator() {
+    let script = r#"
+fn sum_to_100() {
+    let sum = 0
+    let i = 1
+    while i <= 100 {
+        sum = sum + i
+        i = i + 1
+    }
+    return sum
+}
+sum_to_100()
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let res = vm.interpret(chunk);
+    assert_eq!(res, InterpretResult::Ok(Value::Int(5050)));
+}
+
+#[test]
+fn test_osr_preserves_multiple_locals() {
+    let script = r#"
+fn multi_local_loop() {
+    let a = 10
+    let b = 20
+    let c = 30
+    let i = 0
+    while i < 50 {
+        a = a + 1
+        b = b + 2
+        c = c + 3
+        i = i + 1
+    }
+    return a + b + c
+}
+multi_local_loop()
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let res = vm.interpret(chunk);
+    assert_eq!(res, InterpretResult::Ok(Value::Int(360)));
+}
+
+#[test]
+fn test_osr_iterative_fibonacci() {
+    let script = r#"
+fn fib_osr(n) {
+    if n <= 1 {
+        return n
+    }
+    let a = 0
+    let b = 1
+    let i = 2
+    while i <= n {
+        let c = a + b
+        a = b
+        b = c
+        i = i + 1
+    }
+    return b
+}
+fib_osr(35)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let res = vm.interpret(chunk);
+    assert_eq!(res, InterpretResult::Ok(Value::Int(9227465)));
+}
+
+#[test]
+fn test_osr_float_accumulator() {
+    let script = r#"
+fn float_accum(n) {
+    let sum = 0.0
+    let i = 0
+    while i < n {
+        sum = sum + 0.5
+        i = i + 1
+    }
+    return sum
+}
+float_accum(100)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let res = vm.interpret(chunk);
+    assert_eq!(res, InterpretResult::Ok(Value::Float(50.0)));
+}
+
+#[test]
+fn test_osr_with_code_after_loop() {
+    let script = r#"
+fn compute_with_epilogue(n) {
+    let acc = 0
+    let i = 0
+    while i < n {
+        acc = acc + 2
+        i = i + 1
+    }
+    let extra = 77
+    let final_val = acc + extra
+    return final_val
+}
+compute_with_epilogue(50)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let res = vm.interpret(chunk);
+    assert_eq!(res, InterpretResult::Ok(Value::Int(177)));
+}
+
+#[test]
+fn test_osr_nested_loops() {
+    let script = r#"
+fn nested_loop(outer_n, inner_n) {
+    let count = 0
+    let i = 0
+    while i < outer_n {
+        let j = 0
+        while j < inner_n {
+            count = count + 1
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return count
+}
+nested_loop(10, 30)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let res = vm.interpret(chunk);
+    assert_eq!(res, InterpretResult::Ok(Value::Int(300)));
+}
+
+#[test]
+fn test_osr_array_sum() {
+    let script = r#"
+fn sum_arr(arr, len) {
+    let sum = 0
+    let i = 0
+    while i < len {
+        sum = sum + arr[i]
+        i = i + 1
+    }
+    return sum
+}
+let data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+sum_arr(data, 25)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    let res = vm.interpret(chunk);
+    assert_eq!(res, InterpretResult::Ok(Value::Int(325)));
+}
+
+#[test]
+fn test_osr_disabled_flag() {
+    let script = r#"
+fn loop_disabled(n) {
+    let sum = 0
+    let i = 0
+    while i < n {
+        sum = sum + i
+        i = i + 1
+    }
+    return sum
+}
+loop_disabled(50)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    vm.set_jit_enabled(false);
+    let res = vm.interpret(chunk);
+    assert_eq!(res, InterpretResult::Ok(Value::Int(1225)));
+}
+
+#[test]
+fn test_osr_threshold_configuration() {
+    let script = r#"
+fn loop_short(n) {
+    let sum = 0
+    let i = 0
+    while i < n {
+        sum = sum + 1
+        i = i + 1
+    }
+    return sum
+}
+loop_short(8)
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    vm.jit_threshold = 5;
+    let res = vm.interpret(chunk);
+    assert_eq!(res, InterpretResult::Ok(Value::Int(8)));
+}
+
+#[test]
+fn test_osr_zero_division_safety() {
+    let script = r#"
+fn div_zero_loop() {
+    let i = 10
+    let res = 0
+    while i >= 0 {
+        res = 100 / i
+        i = i - 1
+    }
+    return res
+}
+div_zero_loop()
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let mut vm = VM::new();
+    vm.jit_threshold = 5;
+    let res = vm.interpret(chunk);
+    assert!(matches!(res, InterpretResult::RuntimeError(_)));
+}
+
+#[test]
+fn test_osr_direct_function_pointer() {
+    let script = r#"
+fn loop_direct(n) {
+    let sum = 0
+    let i = 1
+    while i <= n {
+        sum = sum + i
+        i = i + 1
+    }
+    return sum
+}
+"#;
+    let program = parse_source(script).unwrap();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    let func = chunk
+        .constants
+        .iter()
+        .find_map(|v| match v {
+            Value::CompiledFunction(f) => Some(f.clone()),
+            _ => None,
+        })
+        .expect("CompiledFunction constant not found");
+
+    let mut engine = JitEngine::new().expect("Failed to initialize JitEngine");
+    let _ = engine.compile_function(&func).expect("Compile failed");
+    let osr_fn = func.get_osr_fn().expect("OSR function pointer missing");
+
+    let mut target_ip = 0;
+    let mut offset = 0;
+    while offset < func.chunk.code.len() {
+        let op: shae::opcode::OpCode = func.chunk.code[offset].into();
+        match op {
+            shae::opcode::OpCode::Loop => {
+                let hi = func.chunk.code[offset + 1] as usize;
+                let lo = func.chunk.code[offset + 2] as usize;
+                let jump = (hi << 8) | lo;
+                target_ip = (offset + 3).saturating_sub(jump);
+                break;
+            }
+            shae::opcode::OpCode::Constant
+            | shae::opcode::OpCode::GetLocal
+            | shae::opcode::OpCode::SetLocal => offset += 2,
+            shae::opcode::OpCode::ConstantLong
+            | shae::opcode::OpCode::GetLocalLong
+            | shae::opcode::OpCode::SetLocalLong
+            | shae::opcode::OpCode::Jump
+            | shae::opcode::OpCode::JumpIfFalse => offset += 3,
+            shae::opcode::OpCode::Call => offset += 2,
+            _ => offset += 1,
+        }
+    }
+    assert!(target_ip > 0, "Loop target IP should be positive");
+
+    let slots = [0i64, 10i64, 15i64, 6i64];
+    let mut out: i64 = 0;
+    let status = unsafe { osr_fn(slots.as_ptr(), slots.len(), &mut out, target_ip) };
+    assert_eq!(status, 0);
+    assert_eq!(out, 55);
+}

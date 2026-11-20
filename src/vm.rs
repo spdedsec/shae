@@ -20,6 +20,7 @@ pub struct CallFrame {
     pub ip: usize,
     pub slots_offset: usize,
     pub try_handlers: Vec<TryHandler>,
+    pub loop_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -257,6 +258,158 @@ impl VM {
         None
     }
 
+    fn try_exec_osr(&mut self, target_ip: usize) -> Option<Result<Value, String>> {
+        if !self.jit_enabled {
+            return None;
+        }
+
+        let frame = self.frames.last()?;
+        let func = frame.closure.function.clone();
+
+        if func.is_async || !func.upvalues.is_empty() {
+            return None;
+        }
+
+        if !crate::jit::JitEngine::can_compile(&func) {
+            return None;
+        }
+
+        func.record_loop_iteration();
+
+        if func.get_osr_fn().is_none() {
+            if let Some(engine) = &self.jit_engine {
+                if let Ok(mut eng) = engine.lock() {
+                    let _ = eng.compile_function(&func);
+                }
+            }
+        }
+
+        let osr_fn = func.get_osr_fn()?;
+        let slots_offset = frame.slots_offset;
+        let slots_slice = &self.stack[slots_offset..];
+        let is_float = func.is_float_candidate();
+
+        if is_float {
+            if slots_slice.len() > 1 {
+                let is_all_num = slots_slice[1..]
+                    .iter()
+                    .all(|v| matches!(v, Value::Int(_) | Value::Float(_) | Value::Number(_)));
+                if !is_all_num {
+                    return None;
+                }
+            }
+            let mut raw_slots: Vec<i64> = Vec::with_capacity(slots_slice.len());
+            raw_slots.push(0); // slot 0 (callee)
+            for v in &slots_slice[1..] {
+                match v {
+                    Value::Int(i) => raw_slots.push((*i as f64).to_bits() as i64),
+                    Value::Float(f) | Value::Number(f) => raw_slots.push(f.to_bits() as i64),
+                    _ => raw_slots.push(0),
+                }
+            }
+            let mut out_res: i64 = 0;
+            let status = unsafe {
+                osr_fn(
+                    raw_slots.as_ptr(),
+                    raw_slots.len(),
+                    &mut out_res,
+                    target_ip,
+                )
+            };
+            if status == 3 {
+                return Some(Ok(Value::Float(f64::from_bits(out_res as u64))));
+            } else if status == 0 {
+                return Some(Ok(Value::Int(out_res)));
+            } else if status == 2 {
+                return Some(Err("Division by zero in native JIT execution".into()));
+            } else if status == 4 {
+                return Some(Err("Call stack overflow".into()));
+            }
+        } else {
+            let mut int_slots: Vec<i64> = Vec::with_capacity(slots_slice.len());
+            int_slots.push(0); // slot 0 (callee)
+            let mut array_buffers: Vec<Vec<i64>> = Vec::new();
+            let mut can_run = true;
+
+            for v in &slots_slice[1..] {
+                match v {
+                    Value::Int(i) => int_slots.push(*i),
+                    Value::Bool(b) => int_slots.push(if *b { 1 } else { 0 }),
+                    Value::Null => int_slots.push(0),
+                    Value::Array(arr) => {
+                        if let Ok(guard) = arr.read() {
+                            if guard.iter().all(|elem| matches!(elem, Value::Int(_))) {
+                                let mut buf = Vec::with_capacity(1 + guard.len());
+                                buf.push(guard.len() as i64);
+                                for elem in guard.iter() {
+                                    if let Value::Int(n) = elem {
+                                        buf.push(*n);
+                                    }
+                                }
+                                array_buffers.push(buf);
+                                int_slots.push(array_buffers.last().unwrap().as_ptr() as i64);
+                            } else {
+                                can_run = false;
+                                break;
+                            }
+                        } else {
+                            can_run = false;
+                            break;
+                        }
+                    }
+                    Value::GcArray(r) => {
+                        if let Some(guard) = self.heap.as_array(*r) {
+                            if guard.iter().all(|elem| matches!(elem, Value::Int(_))) {
+                                let mut buf = Vec::with_capacity(1 + guard.len());
+                                buf.push(guard.len() as i64);
+                                for elem in guard.iter() {
+                                    if let Value::Int(n) = elem {
+                                        buf.push(*n);
+                                    }
+                                }
+                                array_buffers.push(buf);
+                                int_slots.push(array_buffers.last().unwrap().as_ptr() as i64);
+                            } else {
+                                can_run = false;
+                                break;
+                            }
+                        } else {
+                            can_run = false;
+                            break;
+                        }
+                    }
+                    _ => {
+                        can_run = false;
+                        break;
+                    }
+                }
+            }
+
+            if can_run {
+                let mut out_res: i64 = 0;
+                let status = unsafe {
+                    osr_fn(
+                        int_slots.as_ptr(),
+                        int_slots.len(),
+                        &mut out_res,
+                        target_ip,
+                    )
+                };
+                if status == 0 {
+                    return Some(Ok(Value::Int(out_res)));
+                } else if status == 3 {
+                    return Some(Ok(Value::Float(f64::from_bits(out_res as u64))));
+                } else if status == 2 {
+                    return Some(Err("Division by zero in native JIT execution".into()));
+                } else if status == 4 {
+                    return Some(Err("Call stack overflow".into()));
+                }
+            }
+        }
+
+        None
+    }
+
     pub fn collect_garbage(&mut self) -> GcStats {
         let stack = &self.stack;
         let globals = &self.globals;
@@ -367,6 +520,7 @@ impl VM {
             ip: 0,
             slots_offset: 0,
             try_handlers: Vec::new(),
+            loop_count: 0,
         });
         if let Some(prof) = &mut self.profiler {
             prof.enter_function("<main>");
@@ -399,6 +553,7 @@ impl VM {
             ip: 0,
             slots_offset: 0,
             try_handlers: Vec::new(),
+            loop_count: 0,
         });
         self.run()
     }
@@ -1004,7 +1159,39 @@ impl VM {
                 }
                 OpCode::Loop => {
                     let offset = self.read_short();
-                    self.frames.last_mut().unwrap().ip -= offset as usize;
+                    let frame = self.frames.last_mut().unwrap();
+                    let target_ip = frame.ip - offset as usize;
+                    frame.ip = target_ip;
+                    frame.loop_count += 1;
+                    let loop_count = frame.loop_count;
+                    if self.jit_enabled && loop_count >= self.jit_threshold {
+                        if let Some(res) = self.try_exec_osr(target_ip) {
+                            match res {
+                                Ok(val) => {
+                                    let frame = self.frames.pop().unwrap();
+                                    if let Some(prof) = &mut self.profiler {
+                                        let name = frame
+                                            .closure
+                                            .function
+                                            .name
+                                            .as_deref()
+                                            .unwrap_or("<anonymous>");
+                                        prof.exit_function(name);
+                                    }
+                                    self.close_upvalues(frame.slots_offset);
+                                    if self.frames.is_empty() {
+                                        return InterpretResult::Ok(val);
+                                    }
+                                    self.stack.truncate(frame.slots_offset);
+                                    self.stack.push(val);
+                                    continue;
+                                }
+                                Err(msg) => {
+                                    runtime_error!(self, msg);
+                                }
+                            }
+                        }
+                    }
                 }
                 OpCode::BuildList => {
                     let count = self.read_byte() as usize;
@@ -2458,6 +2645,7 @@ impl VM {
                                 ip: 0,
                                 slots_offset: callee_slot,
                                 try_handlers: Vec::new(),
+            loop_count: 0,
                             });
                         }
                         Value::CompiledFunction(func) => {
@@ -2542,6 +2730,7 @@ impl VM {
                                 ip: 0,
                                 slots_offset: callee_slot,
                                 try_handlers: Vec::new(),
+            loop_count: 0,
                             });
                         }
                         Value::Builtin { name, func } => {
@@ -2810,6 +2999,7 @@ impl VM {
                                     ip: 0,
                                     slots_offset: callee_slot,
                                     try_handlers: Vec::new(),
+            loop_count: 0,
                                 });
                             } else {
                                 let current_slots_offset = self.frames.last().unwrap().slots_offset;
@@ -2932,6 +3122,7 @@ impl VM {
                                     ip: 0,
                                     slots_offset: callee_slot,
                                     try_handlers: Vec::new(),
+            loop_count: 0,
                                 });
                             } else {
                                 let current_slots_offset = self.frames.last().unwrap().slots_offset;
