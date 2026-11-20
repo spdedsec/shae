@@ -33,6 +33,7 @@ pub mod math;
 pub mod opcode;
 pub mod parser;
 pub mod pkg;
+pub mod scaffold;
 pub mod profiler;
 pub mod random;
 pub mod repl;

@@ -39,7 +39,7 @@ fn show_help() {
     println!(
         "  shae doc [path]            Generate documentation site & reference (-o, --format html|md|json, --serve, --port, --host, --open)"
     );
-    println!("  shae new <project_name>    Create a new Shae project folder");
+    println!("  shae new <project_name>    Create new project (--template=<cli|game|actor-service|web-app>)");
     println!("  shae init [name]           Initialize package manifest (shae.toml)");
     println!("  shae add <dep> <source>    Add dependency (git URL or local path)");
     println!(
@@ -115,26 +115,71 @@ fn show_tip() {
     println!("💡 {}", tips[idx]);
 }
 
-fn new_project(name: &str) {
-    if let Err(e) = fs::create_dir_all(name) {
-        eprintln!("Error creating directory '{}': {}", name, e);
+fn handle_new_command(args: &[String]) {
+    if args.len() < 3 {
+        eprintln!("Usage: shae new <project_name> [--template <cli|game|actor-service|web-app>] [--force]");
         process::exit(1);
     }
-    let main_file = format!("{}/main.shae", name);
-    let template = r#"// Welcome to your new Shae project!
+    let mut name = String::new();
+    let mut template_str = "cli".to_string();
+    let mut force = false;
 
-fn greet(name) {
-    "Hello {name}, welcome to Shae!"
-}
+    let mut i = 2;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--force" || arg == "-f" {
+            force = true;
+            i += 1;
+        } else if arg == "--template" || arg == "-t" {
+            if i + 1 < args.len() {
+                template_str = args[i + 1].clone();
+                i += 2;
+            } else {
+                eprintln!("Error: --template requires a template name (cli, game, actor-service, web-app)");
+                process::exit(1);
+            }
+        } else if let Some(stripped) = arg.strip_prefix("--template=") {
+            template_str = stripped.to_string();
+            i += 1;
+        } else if !arg.starts_with('-') && name.is_empty() {
+            name = arg.clone();
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
 
-print(greet("World"))
-"#;
-    if let Err(e) = fs::write(&main_file, template) {
-        eprintln!("Error creating '{}': {}", main_file, e);
+    if name.is_empty() {
+        eprintln!("Usage: shae new <project_name> [--template <cli|game|actor-service|web-app>] [--force]");
         process::exit(1);
     }
-    println!("✨ Created new Shae project in '{}/'", name);
-    println!("   Run with: cd {} && shae main.shae", name);
+
+    let template = match template_str.parse::<shae::scaffold::Template>() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            process::exit(1);
+        }
+    };
+
+    let opts = shae::scaffold::ScaffoldOptions {
+        name: name.clone(),
+        template,
+        target_dir: None,
+        force,
+    };
+
+    match shae::scaffold::scaffold_project(&opts) {
+        Ok(path) => {
+            println!("✨ Created new Shae project '{}' ({}) in '{}/'", name, template.as_str(), path.display());
+            println!("   Template: {}", template.description());
+            println!("   Run with: cd {} && shae run src/main.shae", path.display());
+        }
+        Err(e) => {
+            eprintln!("Error scaffolding project: {}", e);
+            process::exit(1);
+        }
+    }
 }
 
 fn run_repl(use_vm: bool) {
@@ -529,11 +574,7 @@ fn main() {
         }
         "--help" | "-h" => show_help(),
         "new" => {
-            if args.len() < 3 {
-                eprintln!("Usage: shae new <project_name>");
-                process::exit(1);
-            }
-            new_project(&args[2]);
+            handle_new_command(&args);
         }
         "init" => {
             let name = args.get(2).map(|s| s.as_str());
