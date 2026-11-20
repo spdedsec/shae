@@ -1,0 +1,170 @@
+// Shae Networked Multiplayer 2D Arena Showcase
+// Demonstrates std:gui + std:physics + std:actor:cluster
+
+let cluster = use "std:actor:cluster"
+let physics = use "std:physics"
+let gui = use "std:gui"
+
+println("=============================================================")
+println("    Shae Networked Multiplayer 2D Arena Showcase (v0.7.0)    ")
+println("=============================================================\n")
+
+// 1. Initialize Network Mesh Nodes
+println("[1] Initializing Cluster Nodes for Arena Simulation...")
+let host_node = cluster.node("host_arena", "127.0.0.1:0", { "cookie": "shae_arena_secret" })
+let client_node = cluster.node("client_arena", "127.0.0.1:0", { "cookie": "shae_arena_secret" })
+
+println("  • Host Arena bound to:  ", host_node.address())
+println("  • Client Node bound to: ", client_node.address())
+
+let connected = host_node.connect(client_node.address())
+println("  • Mesh Connection Established: ", connected)
+
+// 2. Spawn Networked Game State Actor on Host Node
+let initial_state = {
+    "score_p1": 0,
+    "score_p2": 0,
+    "ball_x": 160.0,
+    "ball_y": 120.0,
+    "p1_y": 100.0,
+    "p2_y": 100.0,
+    "status": "active"
+}
+
+let game_actor = host_node.spawn("arena_session", initial_state, fn(state, msg) {
+    let action = msg.get("action", "")
+    if action == "player_input" {
+        let player = msg["player"]
+        let dy = msg["dy"]
+        if player == 1 {
+            let next_p1 = state["p1_y"] + dy
+            if next_p1 < 20.0 { next_p1 = 20.0 }
+            if next_p1 > 200.0 { next_p1 = 200.0 }
+            let next_state = {
+                "score_p1": state["score_p1"],
+                "score_p2": state["score_p2"],
+                "ball_x": state["ball_x"],
+                "ball_y": state["ball_y"],
+                "p1_y": next_p1,
+                "p2_y": state["p2_y"],
+                "status": state["status"]
+            }
+            return { "state": next_state, "reply": next_state }
+        } else {
+            let next_p2 = state["p2_y"] + dy
+            if next_p2 < 20.0 { next_p2 = 20.0 }
+            if next_p2 > 200.0 { next_p2 = 200.0 }
+            let next_state = {
+                "score_p1": state["score_p1"],
+                "score_p2": state["score_p2"],
+                "ball_x": state["ball_x"],
+                "ball_y": state["ball_y"],
+                "p1_y": state["p1_y"],
+                "p2_y": next_p2,
+                "status": state["status"]
+            }
+            return { "state": next_state, "reply": next_state }
+        }
+    } else if action == "sync_ball" {
+        let next_state = {
+            "score_p1": state["score_p1"],
+            "score_p2": state["score_p2"],
+            "ball_x": msg["x"],
+            "ball_y": msg["y"],
+            "p1_y": state["p1_y"],
+            "p2_y": state["p2_y"],
+            "status": state["status"]
+        }
+        return { "state": next_state, "reply": next_state }
+    } else if action == "goal" {
+        let scoring_player = msg["player"]
+        let p1_inc = 0
+        if scoring_player == 1 {
+            p1_inc = 1
+        }
+        let p2_inc = 0
+        if scoring_player == 2 {
+            p2_inc = 1
+        }
+        let next_state = {
+            "score_p1": state["score_p1"] + p1_inc,
+            "score_p2": state["score_p2"] + p2_inc,
+            "ball_x": 160.0,
+            "ball_y": 120.0,
+            "p1_y": state["p1_y"],
+            "p2_y": state["p2_y"],
+            "status": "scored"
+        }
+        return { "state": next_state, "reply": next_state }
+    } else if action == "get_state" {
+        return { "state": state, "reply": state }
+    }
+    return state
+})
+
+// 3. Setup std:physics 2D Simulation
+println("\n[2] Setting up std:physics 2D Kinematics World...")
+let world = physics.world_new(0.0) // Zero-gravity arena
+
+let ball = physics.body({
+    "pos_x": 160.0, "pos_y": 120.0,
+    "w": 12.0, "h": 12.0,
+    "mass": 1.0,
+    "vel_x": 120.0, "vel_y": 70.0,
+    "restitution": 1.0,
+    "friction": 0.0
+})
+physics.world_add_body(world, ball)
+
+// Top and bottom boundary cushions
+let ceiling = physics.body({
+    "pos_x": 0.0, "pos_y": 0.0,
+    "w": 320.0, "h": 10.0,
+    "is_static": true,
+    "restitution": 1.0
+})
+let floor = physics.body({
+    "pos_x": 0.0, "pos_y": 230.0,
+    "w": 320.0, "h": 10.0,
+    "is_static": true,
+    "restitution": 1.0
+})
+physics.world_add_body(world, ceiling)
+physics.world_add_body(world, floor)
+
+// 4. Simulate Networked Match Frames
+println("\n[3] Running Multiplayer Simulation Loop...")
+let remote_session = client_node.actor("arena_session", "host_arena")
+
+let frame = 0
+let dt = 1.0 / 60.0
+
+while frame < 15 {
+    // Client node sends player 2 input across network mesh
+    let input_msg = { "action": "player_input", "player": 2, "dy": -2.5 }
+    let client_sync = remote_session.call(input_msg, 2000)
+
+    // Host node steps physics
+    physics.world_step(world, dt)
+    let bodies = physics.world_get_bodies(world)
+    let current_ball = bodies[0]
+
+    // Sync ball position to actor state
+    let sync_res = remote_session.call({
+        "action": "sync_ball",
+        "x": current_ball["pos_x"],
+        "y": current_ball["pos_y"]
+    }, 2000)
+
+    if frame % 5 == 0 {
+        println("  • Frame " + str(frame) + ": Ball at (" + str(current_ball["pos_x"]) + ", " + str(current_ball["pos_y"]) + "), P2 Y: " + str(client_sync["p2_y"]))
+    }
+    frame = frame + 1
+}
+
+let final_state = remote_session.call({ "action": "get_state" }, 2000)
+println("\n[4] Match Simulation Final State:")
+println("  • Score: P1 [" + str(final_state["score_p1"]) + "] - P2 [" + str(final_state["score_p2"]) + "]")
+println("  • Ball Coordinates: (" + str(final_state["ball_x"]) + ", " + str(final_state["ball_y"]) + ")")
+println("  • Player Paddles: P1=" + str(final_state["p1_y"]) + ", P2=" + str(final_state["p2_y"]))
+println("\n✨ Networked Multiplayer Arena simulation executed successfully!")

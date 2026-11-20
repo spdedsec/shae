@@ -1662,7 +1662,7 @@ impl Evaluator {
                     Value::RemoteActor(rem) => {
                         if matches!(
                             property.as_str(),
-                            "send" | "ask" | "reload" | "is_alive" | "isAlive" | "node" | "name"
+                            "send" | "ask" | "call" | "reload" | "is_alive" | "isAlive" | "node" | "name"
                         ) {
                             Ok(Some(Value::BoundMethod {
                                 object: Box::new(Value::RemoteActor(rem.clone())),
@@ -3682,7 +3682,7 @@ impl Evaluator {
                                 .map_err(|e| e.to_runtime_error(span))
                         }
                     }
-                    (Value::RemoteActor(rem), "ask") => {
+                    (Value::RemoteActor(rem), "ask" | "call") => {
                         let timeout = if args.len() == 1 {
                             None
                         } else if args.len() == 2 {

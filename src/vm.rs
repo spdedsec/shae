@@ -906,14 +906,27 @@ impl VM {
                             }
                             self.stack.push(Value::Int(x % y));
                         }
-                        (Value::Float(x), Value::Float(y)) => {
+                        (Value::Float(x), Value::Float(y)) | (Value::Number(x), Value::Number(y))
+                        | (Value::Float(x), Value::Number(y)) | (Value::Number(x), Value::Float(y)) => {
                             if y == 0.0 {
                                 runtime_error!(self, "Modulo by zero.");
                             }
                             self.stack.push(Value::Float(x % y));
                         }
+                        (Value::Int(x), Value::Float(y)) | (Value::Int(x), Value::Number(y)) => {
+                            if y == 0.0 {
+                                runtime_error!(self, "Modulo by zero.");
+                            }
+                            self.stack.push(Value::Float((x as f64) % y));
+                        }
+                        (Value::Float(x), Value::Int(y)) | (Value::Number(x), Value::Int(y)) => {
+                            if y == 0 {
+                                runtime_error!(self, "Modulo by zero.");
+                            }
+                            self.stack.push(Value::Float(x % (y as f64)));
+                        }
                         _ => {
-                            runtime_error!(self, "Operands must be numbers for modulo.",);
+                            runtime_error!(self, "Operands must be numbers for modulo.");
                         }
                     }
                 }
@@ -1611,6 +1624,7 @@ impl VM {
                                 property.as_str(),
                                 "send"
                                     | "ask"
+                                    | "call"
                                     | "reload"
                                     | "stop"
                                     | "is_alive"
@@ -1639,6 +1653,7 @@ impl VM {
                                 property.as_str(),
                                 "send"
                                     | "ask"
+                                    | "call"
                                     | "reload"
                                     | "is_alive"
                                     | "isAlive"
@@ -1673,6 +1688,7 @@ impl VM {
                                     | "registered"
                                     | "send"
                                     | "ask"
+                                    | "call"
                                     | "reload"
                                     | "reload_actor"
                                     | "reloadActor"
