@@ -13,11 +13,11 @@
 **A modern, strict, and ergonomic systems scripting language with Cranelift JIT compilation.**  
 *Zero ceremony, native machine code JIT, embedded SQLite, RFC 4180 CSV, coroutines, TLS/mTLS cluster mesh, pure-Shae test runner, live doc server, package registry, and standalone binary bundler.*
 
-[![Version](https://img.shields.io/badge/version-0.5.0-blue.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.7.0-blue.svg)](Cargo.toml)
 [![Tests](https://img.shields.io/badge/tests-290%2B%20passing-brightgreen.svg)]()
 [![Rust](https://img.shields.io/badge/built%20with-Rust%202024-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![VS Code](https://img.shields.io/badge/VS%20Code-v0.5.0-purple.svg)](editors/vscode)
+[![VS Code](https://img.shields.io/badge/VS%20Code-v0.7.0-purple.svg)](editors/vscode)
 
 </div>
 
@@ -499,6 +499,7 @@ gui.close(win)
 
 Explore ready-to-run examples in the [`examples/`](examples) directory:
 
+- 🌐 [**Networked Multiplayer 2D Arena**](examples/multiplayer_arena.shae): Real-time 2D physics arena game session combining distributed actor clusters (`std:actor:cluster`), 2D collision dynamics (`std:physics`), and 60 FPS graphics (`std:gui`).
 - 👾 [**Space Invaders 2D Retro Arcade Game**](examples/space_invaders.shae): Full playable retro arcade game featuring animated alien fleets, destructive bunker degradation, laser projectile physics, sound effects (`std:audio`), score/lives HUD (`std:ui`), and dual TrueColor ANSI terminal / 60 FPS window rendering (`std:gui`).
 - 🐍 [**Shae Retro Snake (60 FPS Native GUI)**](examples/snake_gui.shae): Full playable arcade Snake game with score tracking, apple spawning, collision physics, and instant restart (`[R]`).
 - 🎹 [**Interactive Audio Synthesizer & Piano**](examples/sound_synth.shae): 8-key piano keyboard with waveform selection (sine, square, triangle, saw), volume slider, and real-time audio playback (`std:audio`).
@@ -527,6 +528,7 @@ Shae ships with an all-in-one developer toolchain:
 
 | Command | Description |
 |---|---|
+| `shae new <project_name>` | Scaffold a new project skeleton (`--template=<cli|game|actor-service|web-app>`) with `shae.toml`, `.gitignore`, `README.md`, and `src/main.shae` |
 | `shae <file.shae>` / `./file.shae` | Directly execute a Shae script (supports shebang `#!/usr/bin/env shae` and desktop double-click) |
 | `shae run <file.shae\|file.shaec>` | Run a script or precompiled bytecode (defaults to Bytecode VM; use `--engine=ast` for AST) |
 | `shae compile <file.shae>` | Compile source script into ahead-of-time bytecode binary (`.shaec`) |
