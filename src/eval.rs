@@ -1662,7 +1662,14 @@ impl Evaluator {
                     Value::RemoteActor(rem) => {
                         if matches!(
                             property.as_str(),
-                            "send" | "ask" | "call" | "reload" | "is_alive" | "isAlive" | "node" | "name"
+                            "send"
+                                | "ask"
+                                | "call"
+                                | "reload"
+                                | "is_alive"
+                                | "isAlive"
+                                | "node"
+                                | "name"
                         ) {
                             Ok(Some(Value::BoundMethod {
                                 object: Box::new(Value::RemoteActor(rem.clone())),

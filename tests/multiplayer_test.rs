@@ -44,7 +44,11 @@ fn test_multiplayer_arena_integration() {
         let g = arr.read().unwrap();
         assert_eq!(g[0], Value::Bool(true), "Cluster connect should succeed");
         assert_eq!(g[1], Value::Bool(true), "Remote call reply should match");
-        assert_eq!(g[2], Value::Bool(true), "Actor state should be updated to 65");
+        assert_eq!(
+            g[2],
+            Value::Bool(true),
+            "Actor state should be updated to 65"
+        );
         assert_eq!(g[3], Value::Bool(true), "Physics body should step forward");
     } else {
         panic!("Expected array result");

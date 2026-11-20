@@ -209,7 +209,10 @@ impl Ray {
             };
         };
 
-        let hit_pt = Vec2::new(self.origin.x + self.dir.x * dist, self.origin.y + self.dir.y * dist);
+        let hit_pt = Vec2::new(
+            self.origin.x + self.dir.x * dist,
+            self.origin.y + self.dir.y * dist,
+        );
         let normal = Vec2::new(hit_pt.x - circle.cx, hit_pt.y - circle.cy).normalized();
 
         RaycastHit {
@@ -374,10 +377,7 @@ fn extract_ray(val: &Value) -> Option<Ray> {
 // ---------------------------------------------------------------------------
 
 pub fn integrate_map_body(map: &mut IndexMap<String, Value>, dt: f64, gravity_y: f64) {
-    let is_static = map
-        .get("is_static")
-        .map(to_bool_val)
-        .unwrap_or(false);
+    let is_static = map.get("is_static").map(to_bool_val).unwrap_or(false);
     let mass = get_f64_prop(map, "mass", 1.0);
 
     if is_static || mass <= 0.0 {
@@ -465,8 +465,16 @@ pub fn resolve_map_collision(
     let mass_a = get_f64_prop(map_a, "mass", 1.0);
     let mass_b = get_f64_prop(map_b, "mass", 1.0);
 
-    let inv_mass_a = if static_a || mass_a <= 0.0 { 0.0 } else { 1.0 / mass_a };
-    let inv_mass_b = if static_b || mass_b <= 0.0 { 0.0 } else { 1.0 / mass_b };
+    let inv_mass_a = if static_a || mass_a <= 0.0 {
+        0.0
+    } else {
+        1.0 / mass_a
+    };
+    let inv_mass_b = if static_b || mass_b <= 0.0 {
+        0.0
+    } else {
+        1.0 / mass_b
+    };
     let total_inv_mass = inv_mass_a + inv_mass_b;
 
     if total_inv_mass <= 1e-9 {
@@ -561,34 +569,54 @@ pub fn resolve_map_collision(
 
 fn physics_aabb(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     expect_args("physics.aabb", 4, &args, span)?;
-    let x = to_f64_val(&args[0]).ok_or_else(|| RuntimeError::new("physics.aabb: expected number for x".into()).at(span))?;
-    let y = to_f64_val(&args[1]).ok_or_else(|| RuntimeError::new("physics.aabb: expected number for y".into()).at(span))?;
-    let w = to_f64_val(&args[2]).ok_or_else(|| RuntimeError::new("physics.aabb: expected number for w".into()).at(span))?;
-    let h = to_f64_val(&args[3]).ok_or_else(|| RuntimeError::new("physics.aabb: expected number for h".into()).at(span))?;
+    let x = to_f64_val(&args[0])
+        .ok_or_else(|| RuntimeError::new("physics.aabb: expected number for x".into()).at(span))?;
+    let y = to_f64_val(&args[1])
+        .ok_or_else(|| RuntimeError::new("physics.aabb: expected number for y".into()).at(span))?;
+    let w = to_f64_val(&args[2])
+        .ok_or_else(|| RuntimeError::new("physics.aabb: expected number for w".into()).at(span))?;
+    let h = to_f64_val(&args[3])
+        .ok_or_else(|| RuntimeError::new("physics.aabb: expected number for h".into()).at(span))?;
     Ok(make_aabb_map(x, y, w, h))
 }
 
-fn physics_circle(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_circle(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("physics.circle", 3, &args, span)?;
-    let cx = to_f64_val(&args[0]).ok_or_else(|| RuntimeError::new("physics.circle: expected number for cx".into()).at(span))?;
-    let cy = to_f64_val(&args[1]).ok_or_else(|| RuntimeError::new("physics.circle: expected number for cy".into()).at(span))?;
-    let r = to_f64_val(&args[2]).ok_or_else(|| RuntimeError::new("physics.circle: expected number for r".into()).at(span))?;
+    let cx = to_f64_val(&args[0]).ok_or_else(|| {
+        RuntimeError::new("physics.circle: expected number for cx".into()).at(span)
+    })?;
+    let cy = to_f64_val(&args[1]).ok_or_else(|| {
+        RuntimeError::new("physics.circle: expected number for cy".into()).at(span)
+    })?;
+    let r = to_f64_val(&args[2]).ok_or_else(|| {
+        RuntimeError::new("physics.circle: expected number for r".into()).at(span)
+    })?;
     Ok(make_circle_map(cx, cy, r))
 }
 
 fn physics_point(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     expect_args("physics.point", 2, &args, span)?;
-    let x = to_f64_val(&args[0]).ok_or_else(|| RuntimeError::new("physics.point: expected number for x".into()).at(span))?;
-    let y = to_f64_val(&args[1]).ok_or_else(|| RuntimeError::new("physics.point: expected number for y".into()).at(span))?;
+    let x = to_f64_val(&args[0])
+        .ok_or_else(|| RuntimeError::new("physics.point: expected number for x".into()).at(span))?;
+    let y = to_f64_val(&args[1])
+        .ok_or_else(|| RuntimeError::new("physics.point: expected number for y".into()).at(span))?;
     Ok(make_vec2_map(x, y))
 }
 
 fn physics_ray(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     expect_args("physics.ray", 4, &args, span)?;
-    let ox = to_f64_val(&args[0]).ok_or_else(|| RuntimeError::new("physics.ray: expected number for ox".into()).at(span))?;
-    let oy = to_f64_val(&args[1]).ok_or_else(|| RuntimeError::new("physics.ray: expected number for oy".into()).at(span))?;
-    let dx = to_f64_val(&args[2]).ok_or_else(|| RuntimeError::new("physics.ray: expected number for dx".into()).at(span))?;
-    let dy = to_f64_val(&args[3]).ok_or_else(|| RuntimeError::new("physics.ray: expected number for dy".into()).at(span))?;
+    let ox = to_f64_val(&args[0])
+        .ok_or_else(|| RuntimeError::new("physics.ray: expected number for ox".into()).at(span))?;
+    let oy = to_f64_val(&args[1])
+        .ok_or_else(|| RuntimeError::new("physics.ray: expected number for oy".into()).at(span))?;
+    let dx = to_f64_val(&args[2])
+        .ok_or_else(|| RuntimeError::new("physics.ray: expected number for dx".into()).at(span))?;
+    let dy = to_f64_val(&args[3])
+        .ok_or_else(|| RuntimeError::new("physics.ray: expected number for dy".into()).at(span))?;
     Ok(make_ray_map(ox, oy, dx, dy))
 }
 
@@ -638,47 +666,105 @@ fn physics_body(_ev: &mut Evaluator, args: Vec<Value>, _span: Span) -> Result<Va
     Ok(Value::Map(Arc::new(RwLock::new(map))))
 }
 
-fn physics_aabb_intersects(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_aabb_intersects(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("physics.aabb_intersects", 2, &args, span)?;
-    let a = extract_aabb(&args[0]).ok_or_else(|| RuntimeError::new("physics.aabb_intersects: expected aabb or body for arg 1".into()).at(span))?;
-    let b = extract_aabb(&args[1]).ok_or_else(|| RuntimeError::new("physics.aabb_intersects: expected aabb or body for arg 2".into()).at(span))?;
+    let a = extract_aabb(&args[0]).ok_or_else(|| {
+        RuntimeError::new("physics.aabb_intersects: expected aabb or body for arg 1".into())
+            .at(span)
+    })?;
+    let b = extract_aabb(&args[1]).ok_or_else(|| {
+        RuntimeError::new("physics.aabb_intersects: expected aabb or body for arg 2".into())
+            .at(span)
+    })?;
     Ok(Value::Bool(a.intersects(&b)))
 }
 
-fn physics_aabb_contains_point(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_aabb_contains_point(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("physics.aabb_contains_point", 3, &args, span)?;
-    let a = extract_aabb(&args[0]).ok_or_else(|| RuntimeError::new("physics.aabb_contains_point: expected aabb or body for arg 1".into()).at(span))?;
-    let px = to_f64_val(&args[1]).ok_or_else(|| RuntimeError::new("physics.aabb_contains_point: expected number for px".into()).at(span))?;
-    let py = to_f64_val(&args[2]).ok_or_else(|| RuntimeError::new("physics.aabb_contains_point: expected number for py".into()).at(span))?;
+    let a = extract_aabb(&args[0]).ok_or_else(|| {
+        RuntimeError::new("physics.aabb_contains_point: expected aabb or body for arg 1".into())
+            .at(span)
+    })?;
+    let px = to_f64_val(&args[1]).ok_or_else(|| {
+        RuntimeError::new("physics.aabb_contains_point: expected number for px".into()).at(span)
+    })?;
+    let py = to_f64_val(&args[2]).ok_or_else(|| {
+        RuntimeError::new("physics.aabb_contains_point: expected number for py".into()).at(span)
+    })?;
     Ok(Value::Bool(a.contains_point(px, py)))
 }
 
-fn physics_circle_intersects(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_circle_intersects(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("physics.circle_intersects", 2, &args, span)?;
-    let c1 = extract_circle(&args[0]).ok_or_else(|| RuntimeError::new("physics.circle_intersects: expected circle for arg 1".into()).at(span))?;
-    let c2 = extract_circle(&args[1]).ok_or_else(|| RuntimeError::new("physics.circle_intersects: expected circle for arg 2".into()).at(span))?;
+    let c1 = extract_circle(&args[0]).ok_or_else(|| {
+        RuntimeError::new("physics.circle_intersects: expected circle for arg 1".into()).at(span)
+    })?;
+    let c2 = extract_circle(&args[1]).ok_or_else(|| {
+        RuntimeError::new("physics.circle_intersects: expected circle for arg 2".into()).at(span)
+    })?;
     Ok(Value::Bool(c1.intersects(&c2)))
 }
 
-fn physics_circle_contains_point(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_circle_contains_point(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("physics.circle_contains_point", 3, &args, span)?;
-    let c = extract_circle(&args[0]).ok_or_else(|| RuntimeError::new("physics.circle_contains_point: expected circle for arg 1".into()).at(span))?;
-    let px = to_f64_val(&args[1]).ok_or_else(|| RuntimeError::new("physics.circle_contains_point: expected number for px".into()).at(span))?;
-    let py = to_f64_val(&args[2]).ok_or_else(|| RuntimeError::new("physics.circle_contains_point: expected number for py".into()).at(span))?;
+    let c = extract_circle(&args[0]).ok_or_else(|| {
+        RuntimeError::new("physics.circle_contains_point: expected circle for arg 1".into())
+            .at(span)
+    })?;
+    let px = to_f64_val(&args[1]).ok_or_else(|| {
+        RuntimeError::new("physics.circle_contains_point: expected number for px".into()).at(span)
+    })?;
+    let py = to_f64_val(&args[2]).ok_or_else(|| {
+        RuntimeError::new("physics.circle_contains_point: expected number for py".into()).at(span)
+    })?;
     Ok(Value::Bool(c.contains_point(px, py)))
 }
 
-fn physics_circle_aabb_intersects(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_circle_aabb_intersects(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("physics.circle_aabb_intersects", 2, &args, span)?;
-    let c = extract_circle(&args[0]).ok_or_else(|| RuntimeError::new("physics.circle_aabb_intersects: expected circle for arg 1".into()).at(span))?;
-    let a = extract_aabb(&args[1]).ok_or_else(|| RuntimeError::new("physics.circle_aabb_intersects: expected aabb for arg 2".into()).at(span))?;
+    let c = extract_circle(&args[0]).ok_or_else(|| {
+        RuntimeError::new("physics.circle_aabb_intersects: expected circle for arg 1".into())
+            .at(span)
+    })?;
+    let a = extract_aabb(&args[1]).ok_or_else(|| {
+        RuntimeError::new("physics.circle_aabb_intersects: expected aabb for arg 2".into()).at(span)
+    })?;
     Ok(Value::Bool(c.intersects_aabb(&a)))
 }
 
-fn physics_ray_intersects_aabb(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_ray_intersects_aabb(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("physics.ray_intersects_aabb", 2, &args, span)?;
-    let ray = extract_ray(&args[0]).ok_or_else(|| RuntimeError::new("physics.ray_intersects_aabb: expected ray for arg 1".into()).at(span))?;
-    let aabb = extract_aabb(&args[1]).ok_or_else(|| RuntimeError::new("physics.ray_intersects_aabb: expected aabb or body for arg 2".into()).at(span))?;
+    let ray = extract_ray(&args[0]).ok_or_else(|| {
+        RuntimeError::new("physics.ray_intersects_aabb: expected ray for arg 1".into()).at(span)
+    })?;
+    let aabb = extract_aabb(&args[1]).ok_or_else(|| {
+        RuntimeError::new("physics.ray_intersects_aabb: expected aabb or body for arg 2".into())
+            .at(span)
+    })?;
     let hit = ray.intersects_aabb(&aabb);
 
     let mut map = IndexMap::new();
@@ -689,10 +775,19 @@ fn physics_ray_intersects_aabb(_ev: &mut Evaluator, args: Vec<Value>, span: Span
     Ok(Value::Map(Arc::new(RwLock::new(map))))
 }
 
-fn physics_ray_intersects_circle(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_ray_intersects_circle(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("physics.ray_intersects_circle", 2, &args, span)?;
-    let ray = extract_ray(&args[0]).ok_or_else(|| RuntimeError::new("physics.ray_intersects_circle: expected ray for arg 1".into()).at(span))?;
-    let circle = extract_circle(&args[1]).ok_or_else(|| RuntimeError::new("physics.ray_intersects_circle: expected circle for arg 2".into()).at(span))?;
+    let ray = extract_ray(&args[0]).ok_or_else(|| {
+        RuntimeError::new("physics.ray_intersects_circle: expected ray for arg 1".into()).at(span)
+    })?;
+    let circle = extract_circle(&args[1]).ok_or_else(|| {
+        RuntimeError::new("physics.ray_intersects_circle: expected circle for arg 2".into())
+            .at(span)
+    })?;
     let hit = ray.intersects_circle(&circle);
 
     let mut map = IndexMap::new();
@@ -703,7 +798,11 @@ fn physics_ray_intersects_circle(_ev: &mut Evaluator, args: Vec<Value>, span: Sp
     Ok(Value::Map(Arc::new(RwLock::new(map))))
 }
 
-fn physics_integrate_body(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_integrate_body(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.is_empty() {
         return Err(RuntimeError::new("physics.integrate_body: expected body map".into()).at(span));
     }
@@ -727,7 +826,11 @@ fn physics_integrate_body(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> 
     }
 }
 
-fn physics_resolve_collision(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_resolve_collision(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("physics.resolve_collision", 2, &args, span)?;
     match (&args[0], &args[1]) {
         (Value::Map(ma), Value::Map(mb)) => {
@@ -748,11 +851,17 @@ fn physics_resolve_collision(_ev: &mut Evaluator, args: Vec<Value>, span: Span) 
             }
             Ok(Value::Map(Arc::new(RwLock::new(out))))
         }
-        _ => Err(RuntimeError::new("physics.resolve_collision: expected two body maps".into()).at(span)),
+        _ => Err(
+            RuntimeError::new("physics.resolve_collision: expected two body maps".into()).at(span),
+        ),
     }
 }
 
-fn physics_apply_force(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_apply_force(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("physics.apply_force", 3, &args, span)?;
     let fx = to_f64_val(&args[1]).unwrap_or(0.0);
     let fy = to_f64_val(&args[2]).unwrap_or(0.0);
@@ -772,7 +881,11 @@ fn physics_apply_force(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Res
     }
 }
 
-fn physics_apply_impulse(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_apply_impulse(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("physics.apply_impulse", 3, &args, span)?;
     let jx = to_f64_val(&args[1]).unwrap_or(0.0);
     let jy = to_f64_val(&args[2]).unwrap_or(0.0);
@@ -796,7 +909,11 @@ fn physics_apply_impulse(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> R
 // Physics World Simulation Builtins
 // ---------------------------------------------------------------------------
 
-fn physics_world_new(_ev: &mut Evaluator, args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {
+fn physics_world_new(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    _span: Span,
+) -> Result<Value, RuntimeError> {
     let gravity_y = if !args.is_empty() {
         to_f64_val(&args[0]).unwrap_or(980.0)
     } else {
@@ -808,7 +925,10 @@ fn physics_world_new(_ev: &mut Evaluator, args: Vec<Value>, _span: Span) -> Resu
         gravity_y,
         bodies: Vec::new(),
     };
-    get_worlds().lock().unwrap().insert(id, Arc::new(RwLock::new(world)));
+    get_worlds()
+        .lock()
+        .unwrap()
+        .insert(id, Arc::new(RwLock::new(world)));
 
     let mut map = IndexMap::new();
     map.insert("id".to_string(), Value::Int(id as i64));
@@ -830,10 +950,15 @@ fn extract_world_id(v: &Value) -> Option<u64> {
     }
 }
 
-fn physics_world_add_body(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_world_add_body(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     expect_args("physics.world_add_body", 2, &args, span)?;
-    let wid = extract_world_id(&args[0])
-        .ok_or_else(|| RuntimeError::new("physics.world_add_body: invalid world handle".into()).at(span))?;
+    let wid = extract_world_id(&args[0]).ok_or_else(|| {
+        RuntimeError::new("physics.world_add_body: invalid world handle".into()).at(span)
+    })?;
 
     let body_arc = if let Value::Map(m) = &args[1] {
         Arc::clone(m)
@@ -846,18 +971,25 @@ fn physics_world_add_body(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> 
         .unwrap()
         .get(&wid)
         .cloned()
-        .ok_or_else(|| RuntimeError::new(format!("physics.world_add_body: world {} not found", wid)).at(span))?;
+        .ok_or_else(|| {
+            RuntimeError::new(format!("physics.world_add_body: world {} not found", wid)).at(span)
+        })?;
 
     world_arc.write().unwrap().bodies.push(body_arc);
     Ok(args[1].clone())
 }
 
-fn physics_world_step(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_world_step(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.is_empty() {
         return Err(RuntimeError::new("physics.world_step: expected world".into()).at(span));
     }
-    let wid = extract_world_id(&args[0])
-        .ok_or_else(|| RuntimeError::new("physics.world_step: invalid world handle".into()).at(span))?;
+    let wid = extract_world_id(&args[0]).ok_or_else(|| {
+        RuntimeError::new("physics.world_step: invalid world handle".into()).at(span)
+    })?;
     let dt = if args.len() > 1 {
         to_f64_val(&args[1]).unwrap_or(1.0 / 60.0)
     } else {
@@ -869,7 +1001,9 @@ fn physics_world_step(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Resu
         .unwrap()
         .get(&wid)
         .cloned()
-        .ok_or_else(|| RuntimeError::new(format!("physics.world_step: world {} not found", wid)).at(span))?;
+        .ok_or_else(|| {
+            RuntimeError::new(format!("physics.world_step: world {} not found", wid)).at(span)
+        })?;
 
     let (gravity_y, bodies) = {
         let w = world_arc.read().unwrap();
@@ -895,38 +1029,52 @@ fn physics_world_step(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Resu
     Ok(Value::Null)
 }
 
-fn physics_world_get_bodies(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_world_get_bodies(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.is_empty() {
         return Err(RuntimeError::new("physics.world_get_bodies: expected world".into()).at(span));
     }
-    let wid = extract_world_id(&args[0])
-        .ok_or_else(|| RuntimeError::new("physics.world_get_bodies: invalid world handle".into()).at(span))?;
+    let wid = extract_world_id(&args[0]).ok_or_else(|| {
+        RuntimeError::new("physics.world_get_bodies: invalid world handle".into()).at(span)
+    })?;
 
     let world_arc = get_worlds()
         .lock()
         .unwrap()
         .get(&wid)
         .cloned()
-        .ok_or_else(|| RuntimeError::new(format!("physics.world_get_bodies: world {} not found", wid)).at(span))?;
+        .ok_or_else(|| {
+            RuntimeError::new(format!("physics.world_get_bodies: world {} not found", wid)).at(span)
+        })?;
 
     let bodies = world_arc.read().unwrap().bodies.clone();
     let body_values: Vec<Value> = bodies.into_iter().map(Value::Map).collect();
     Ok(Value::Array(Arc::new(RwLock::new(body_values))))
 }
 
-fn physics_world_clear(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn physics_world_clear(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.is_empty() {
         return Err(RuntimeError::new("physics.world_clear: expected world".into()).at(span));
     }
-    let wid = extract_world_id(&args[0])
-        .ok_or_else(|| RuntimeError::new("physics.world_clear: invalid world handle".into()).at(span))?;
+    let wid = extract_world_id(&args[0]).ok_or_else(|| {
+        RuntimeError::new("physics.world_clear: invalid world handle".into()).at(span)
+    })?;
 
     let world_arc = get_worlds()
         .lock()
         .unwrap()
         .get(&wid)
         .cloned()
-        .ok_or_else(|| RuntimeError::new(format!("physics.world_clear: world {} not found", wid)).at(span))?;
+        .ok_or_else(|| {
+            RuntimeError::new(format!("physics.world_clear: world {} not found", wid)).at(span)
+        })?;
 
     world_arc.write().unwrap().bodies.clear();
     Ok(Value::Null)

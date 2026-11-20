@@ -906,8 +906,10 @@ impl VM {
                             }
                             self.stack.push(Value::Int(x % y));
                         }
-                        (Value::Float(x), Value::Float(y)) | (Value::Number(x), Value::Number(y))
-                        | (Value::Float(x), Value::Number(y)) | (Value::Number(x), Value::Float(y)) => {
+                        (Value::Float(x), Value::Float(y))
+                        | (Value::Number(x), Value::Number(y))
+                        | (Value::Float(x), Value::Number(y))
+                        | (Value::Number(x), Value::Float(y)) => {
                             if y == 0.0 {
                                 runtime_error!(self, "Modulo by zero.");
                             }

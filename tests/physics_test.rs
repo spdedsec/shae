@@ -1,11 +1,8 @@
-use shae::physics::{
-    AABB, Circle, Ray, Vec2,
-    integrate_map_body, resolve_map_collision,
-};
+use indexmap::IndexMap;
+use shae::physics::{AABB, Circle, Ray, Vec2, integrate_map_body, resolve_map_collision};
 use shae::run;
 use shae::run_vm;
 use shae::value::Value;
-use indexmap::IndexMap;
 
 #[test]
 fn test_vec2_operations() {
@@ -23,9 +20,24 @@ fn test_vec2_operations() {
 
 #[test]
 fn test_aabb_geometry_and_intersections() {
-    let box1 = AABB { x: 0.0, y: 0.0, w: 10.0, h: 10.0 };
-    let box2 = AABB { x: 5.0, y: 5.0, w: 10.0, h: 10.0 };
-    let box3 = AABB { x: 20.0, y: 20.0, w: 5.0, h: 5.0 };
+    let box1 = AABB {
+        x: 0.0,
+        y: 0.0,
+        w: 10.0,
+        h: 10.0,
+    };
+    let box2 = AABB {
+        x: 5.0,
+        y: 5.0,
+        w: 10.0,
+        h: 10.0,
+    };
+    let box3 = AABB {
+        x: 20.0,
+        y: 20.0,
+        w: 5.0,
+        h: 5.0,
+    };
 
     assert!(box1.intersects(&box2));
     assert!(box2.intersects(&box1));
@@ -37,9 +49,21 @@ fn test_aabb_geometry_and_intersections() {
 
 #[test]
 fn test_circle_geometry_and_intersections() {
-    let c1 = Circle { cx: 0.0, cy: 0.0, r: 10.0 };
-    let c2 = Circle { cx: 15.0, cy: 0.0, r: 10.0 };
-    let c3 = Circle { cx: 50.0, cy: 50.0, r: 5.0 };
+    let c1 = Circle {
+        cx: 0.0,
+        cy: 0.0,
+        r: 10.0,
+    };
+    let c2 = Circle {
+        cx: 15.0,
+        cy: 0.0,
+        r: 10.0,
+    };
+    let c3 = Circle {
+        cx: 50.0,
+        cy: 50.0,
+        r: 5.0,
+    };
 
     assert!(c1.intersects(&c2));
     assert!(!c1.intersects(&c3));
@@ -47,10 +71,20 @@ fn test_circle_geometry_and_intersections() {
     assert!(c1.contains_point(5.0, 0.0));
     assert!(!c1.contains_point(12.0, 0.0));
 
-    let box1 = AABB { x: 8.0, y: -5.0, w: 10.0, h: 10.0 };
+    let box1 = AABB {
+        x: 8.0,
+        y: -5.0,
+        w: 10.0,
+        h: 10.0,
+    };
     assert!(c1.intersects_aabb(&box1));
 
-    let box2 = AABB { x: 30.0, y: 30.0, w: 10.0, h: 10.0 };
+    let box2 = AABB {
+        x: 30.0,
+        y: 30.0,
+        w: 10.0,
+        h: 10.0,
+    };
     assert!(!c1.intersects_aabb(&box2));
 }
 
@@ -60,7 +94,12 @@ fn test_raycast_intersections() {
         origin: Vec2::new(-10.0, 5.0),
         dir: Vec2::new(1.0, 0.0),
     };
-    let aabb = AABB { x: 0.0, y: 0.0, w: 10.0, h: 10.0 };
+    let aabb = AABB {
+        x: 0.0,
+        y: 0.0,
+        w: 10.0,
+        h: 10.0,
+    };
 
     let hit = ray.intersects_aabb(&aabb);
     assert!(hit.hit);
@@ -73,7 +112,11 @@ fn test_raycast_intersections() {
     };
     assert!(!ray_miss.intersects_aabb(&aabb).hit);
 
-    let circle = Circle { cx: 10.0, cy: 0.0, r: 5.0 };
+    let circle = Circle {
+        cx: 10.0,
+        cy: 0.0,
+        r: 5.0,
+    };
     let ray_circle = Ray {
         origin: Vec2::new(0.0, 0.0),
         dir: Vec2::new(1.0, 0.0),

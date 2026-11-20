@@ -49,7 +49,9 @@ impl ShaeFont {
 
     pub fn measure_text(&self, text: &str, size_px: f32) -> (f32, f32) {
         let line_metrics = self.font.horizontal_line_metrics(size_px);
-        let line_height = line_metrics.map(|m| m.new_line_size).unwrap_or(size_px * 1.2);
+        let line_height = line_metrics
+            .map(|m| m.new_line_size)
+            .unwrap_or(size_px * 1.2);
 
         let mut max_width: f32 = 0.0;
         let mut current_width: f32 = 0.0;
@@ -103,7 +105,9 @@ impl ShaeFont {
 
         let line_metrics = self.font.horizontal_line_metrics(size_px);
         let ascent = line_metrics.map(|m| m.ascent).unwrap_or(size_px * 0.8);
-        let new_line_size = line_metrics.map(|m| m.new_line_size).unwrap_or(size_px * 1.2);
+        let new_line_size = line_metrics
+            .map(|m| m.new_line_size)
+            .unwrap_or(size_px * 1.2);
 
         let mut baseline = (sy as f32) + ascent;
         let mut pen_x = sx as f32;
@@ -125,7 +129,8 @@ impl ShaeFont {
 
             let glyph = self.get_glyph(ch, size_px);
             let gx = (pen_x + glyph.metrics.xmin as f32).round() as i64;
-            let gy = (baseline - glyph.metrics.ymin as f32 - glyph.metrics.height as f32).round() as i64;
+            let gy =
+                (baseline - glyph.metrics.ymin as f32 - glyph.metrics.height as f32).round() as i64;
 
             for row in 0..glyph.metrics.height {
                 let py = gy + row as i64;

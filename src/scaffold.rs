@@ -98,12 +98,22 @@ pub fn scaffold_project(opts: &ScaffoldOptions) -> Result<PathBuf, String> {
         }
     }
 
-    fs::create_dir_all(&target_dir)
-        .map_err(|e| format!("Failed to create directory '{}': {}", target_dir.display(), e))?;
+    fs::create_dir_all(&target_dir).map_err(|e| {
+        format!(
+            "Failed to create directory '{}': {}",
+            target_dir.display(),
+            e
+        )
+    })?;
 
     let src_dir = target_dir.join("src");
-    fs::create_dir_all(&src_dir)
-        .map_err(|e| format!("Failed to create 'src' in '{}': {}", target_dir.display(), e))?;
+    fs::create_dir_all(&src_dir).map_err(|e| {
+        format!(
+            "Failed to create 'src' in '{}': {}",
+            target_dir.display(),
+            e
+        )
+    })?;
 
     // 1. shae.toml
     let manifest_content = generate_manifest(&opts.name, opts.template);
@@ -146,19 +156,27 @@ description = "{}"
 
 fn generate_readme(name: &str, template: Template) -> String {
     let specific_guide = match template {
-        Template::Cli => r#"### CLI Options
+        Template::Cli => {
+            r#"### CLI Options
 - Run with `--help` to inspect supported arguments.
-- Pass `--name <name>` to test custom greeting logic."#,
-        Template::Game => r#"### 2D Game Controls & Architecture
+- Pass `--name <name>` to test custom greeting logic."#
+        }
+        Template::Game => {
+            r#"### 2D Game Controls & Architecture
 - Uses `std:gui` TrueColor software rasterizer running at 60 FPS.
 - Built-in bouncing orb kinematics and collision detection.
-- Press **ESC** or close the window to exit."#,
-        Template::ActorService => r#"### Actor Concurrency
+- Press **ESC** or close the window to exit."#
+        }
+        Template::ActorService => {
+            r#"### Actor Concurrency
 - Uses `std:actor` lightweight preemptive actor processes.
-- Message passing and state supervision built-in."#,
-        Template::WebApp => r#"### HTTP Service
+- Message passing and state supervision built-in."#
+        }
+        Template::WebApp => {
+            r#"### HTTP Service
 - Includes route dispatching and JSON serialization.
-- Test endpoint: `GET /api/status`."#,
+- Test endpoint: `GET /api/status`."#
+        }
     };
 
     format!(

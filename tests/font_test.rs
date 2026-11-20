@@ -1,4 +1,4 @@
-use shae::font::{load_font_file, get_font};
+use shae::font::{get_font, load_font_file};
 use shae::run;
 use shae::run_vm;
 use shae::value::Value;
@@ -7,8 +7,8 @@ const TEST_FONT_PATH: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
 
 #[test]
 fn test_font_loading_and_rasterization() {
-    let font_id = load_font_file(TEST_FONT_PATH, 24.0)
-        .expect("Loading DejaVuSans.ttf should succeed");
+    let font_id =
+        load_font_file(TEST_FONT_PATH, 24.0).expect("Loading DejaVuSans.ttf should succeed");
 
     let shae_font = get_font(font_id).expect("Font must exist in registry");
     assert_eq!(shae_font.default_size, 24.0);
@@ -16,7 +16,10 @@ fn test_font_loading_and_rasterization() {
     let glyph_a = shae_font.get_glyph('A', 24.0);
     assert!(glyph_a.metrics.width > 0);
     assert!(glyph_a.metrics.height > 0);
-    assert_eq!(glyph_a.bitmap.len(), glyph_a.metrics.width * glyph_a.metrics.height);
+    assert_eq!(
+        glyph_a.bitmap.len(),
+        glyph_a.metrics.width * glyph_a.metrics.height
+    );
     assert!(glyph_a.bitmap.iter().any(|&cov| cov > 0));
 
     // Glyph caching test

@@ -2147,7 +2147,6 @@ fn gui_simulate_key(
     Ok(Value::Null)
 }
 
-
 // -------------------------------------------------------------
 // Scalable Vector Typography Functions (TrueType / OpenType)
 // -------------------------------------------------------------
@@ -2206,12 +2205,20 @@ fn gui_load_font(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Va
     }
 }
 
-fn gui_measure_text_font(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn gui_measure_text_font(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.len() < 2 {
-        return Err(RuntimeError::new("gui.measure_text_font expects (font, text, [size_px])".into()).at(span));
+        return Err(RuntimeError::new(
+            "gui.measure_text_font expects (font, text, [size_px])".into(),
+        )
+        .at(span));
     }
-    let (font_id, default_size) = extract_font_handle(&args[0])
-        .ok_or_else(|| RuntimeError::new("gui.measure_text_font: invalid font handle".into()).at(span))?;
+    let (font_id, default_size) = extract_font_handle(&args[0]).ok_or_else(|| {
+        RuntimeError::new("gui.measure_text_font: invalid font handle".into()).at(span)
+    })?;
 
     let text = match &args[1] {
         Value::String(s) => s.clone(),
@@ -2223,32 +2230,48 @@ fn gui_measure_text_font(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> R
         default_size
     };
 
-    let font_arc = crate::font::get_font(font_id)
-        .ok_or_else(|| RuntimeError::new(format!("gui.measure_text_font: font {} not found", font_id)).at(span))?;
+    let font_arc = crate::font::get_font(font_id).ok_or_else(|| {
+        RuntimeError::new(format!("gui.measure_text_font: font {} not found", font_id)).at(span)
+    })?;
 
     let (w, h) = font_arc.measure_text(&text, size);
     let arr = vec![Value::Int(w.ceil() as i64), Value::Int(h.ceil() as i64)];
     Ok(Value::Array(Arc::new(RwLock::new(arr))))
 }
 
-fn gui_draw_text_font(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+fn gui_draw_text_font(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
     if args.len() < 5 {
         return Err(RuntimeError::new(
             "gui.draw_text_font expects (window, font, text, x, y, color, [size])".into(),
-        ).at(span));
+        )
+        .at(span));
     }
 
     let (win_id, font_arg_idx) = if let Some(wid) = to_win_id(&args[0]) {
         (wid, 1)
     } else if extract_font_handle(&args[0]).is_some() {
-        let first_win = get_registry().lock().unwrap().keys().next().copied().unwrap_or(1);
+        let first_win = get_registry()
+            .lock()
+            .unwrap()
+            .keys()
+            .next()
+            .copied()
+            .unwrap_or(1);
         (first_win, 0)
     } else {
-        return Err(RuntimeError::new("gui.draw_text_font: invalid window or font argument".into()).at(span));
+        return Err(RuntimeError::new(
+            "gui.draw_text_font: invalid window or font argument".into(),
+        )
+        .at(span));
     };
 
-    let (font_id, default_size) = extract_font_handle(&args[font_arg_idx])
-        .ok_or_else(|| RuntimeError::new("gui.draw_text_font: invalid font handle".into()).at(span))?;
+    let (font_id, default_size) = extract_font_handle(&args[font_arg_idx]).ok_or_else(|| {
+        RuntimeError::new("gui.draw_text_font: invalid font handle".into()).at(span)
+    })?;
 
     let text = match &args[font_arg_idx + 1] {
         Value::String(s) => s.clone(),
@@ -2264,8 +2287,9 @@ fn gui_draw_text_font(_ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Resu
         default_size
     };
 
-    let font_arc = crate::font::get_font(font_id)
-        .ok_or_else(|| RuntimeError::new(format!("gui.draw_text_font: font {} not found", font_id)).at(span))?;
+    let font_arc = crate::font::get_font(font_id).ok_or_else(|| {
+        RuntimeError::new(format!("gui.draw_text_font: font {} not found", font_id)).at(span)
+    })?;
 
     let mut reg = get_registry().lock().unwrap();
     if let Some(win) = reg.get_mut(&win_id) {

@@ -1,4 +1,4 @@
-use shae::scaffold::{scaffold_project, ScaffoldOptions, Template};
+use shae::scaffold::{ScaffoldOptions, Template, scaffold_project};
 use std::fs;
 use std::str::FromStr;
 
@@ -8,8 +8,14 @@ fn test_template_from_str() {
     assert_eq!(Template::from_str("default").unwrap(), Template::Cli);
     assert_eq!(Template::from_str("game").unwrap(), Template::Game);
     assert_eq!(Template::from_str("arcade").unwrap(), Template::Game);
-    assert_eq!(Template::from_str("actor-service").unwrap(), Template::ActorService);
-    assert_eq!(Template::from_str("actors").unwrap(), Template::ActorService);
+    assert_eq!(
+        Template::from_str("actor-service").unwrap(),
+        Template::ActorService
+    );
+    assert_eq!(
+        Template::from_str("actors").unwrap(),
+        Template::ActorService
+    );
     assert_eq!(Template::from_str("web-app").unwrap(), Template::WebApp);
     assert_eq!(Template::from_str("http").unwrap(), Template::WebApp);
     assert!(Template::from_str("nonexistent_tpl").is_err());
@@ -128,7 +134,10 @@ fn test_collision_detection_and_force() {
     };
 
     let err = scaffold_project(&opts_no_force);
-    assert!(err.is_err(), "Should error on non-empty directory without force");
+    assert!(
+        err.is_err(),
+        "Should error on non-empty directory without force"
+    );
 
     let opts_force = ScaffoldOptions {
         name: "collision_pkg".to_string(),

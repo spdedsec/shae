@@ -39,7 +39,9 @@ fn show_help() {
     println!(
         "  shae doc [path]            Generate documentation site & reference (-o, --format html|md|json, --serve, --port, --host, --open)"
     );
-    println!("  shae new <project_name>    Create new project (--template=<cli|game|actor-service|web-app>)");
+    println!(
+        "  shae new <project_name>    Create new project (--template=<cli|game|actor-service|web-app>)"
+    );
     println!("  shae init [name]           Initialize package manifest (shae.toml)");
     println!("  shae add <dep> <source>    Add dependency (git URL or local path)");
     println!(
@@ -117,7 +119,9 @@ fn show_tip() {
 
 fn handle_new_command(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("Usage: shae new <project_name> [--template <cli|game|actor-service|web-app>] [--force]");
+        eprintln!(
+            "Usage: shae new <project_name> [--template <cli|game|actor-service|web-app>] [--force]"
+        );
         process::exit(1);
     }
     let mut name = String::new();
@@ -135,7 +139,9 @@ fn handle_new_command(args: &[String]) {
                 template_str = args[i + 1].clone();
                 i += 2;
             } else {
-                eprintln!("Error: --template requires a template name (cli, game, actor-service, web-app)");
+                eprintln!(
+                    "Error: --template requires a template name (cli, game, actor-service, web-app)"
+                );
                 process::exit(1);
             }
         } else if let Some(stripped) = arg.strip_prefix("--template=") {
@@ -150,7 +156,9 @@ fn handle_new_command(args: &[String]) {
     }
 
     if name.is_empty() {
-        eprintln!("Usage: shae new <project_name> [--template <cli|game|actor-service|web-app>] [--force]");
+        eprintln!(
+            "Usage: shae new <project_name> [--template <cli|game|actor-service|web-app>] [--force]"
+        );
         process::exit(1);
     }
 
@@ -171,9 +179,17 @@ fn handle_new_command(args: &[String]) {
 
     match shae::scaffold::scaffold_project(&opts) {
         Ok(path) => {
-            println!("✨ Created new Shae project '{}' ({}) in '{}/'", name, template.as_str(), path.display());
+            println!(
+                "✨ Created new Shae project '{}' ({}) in '{}/'",
+                name,
+                template.as_str(),
+                path.display()
+            );
             println!("   Template: {}", template.description());
-            println!("   Run with: cd {} && shae run src/main.shae", path.display());
+            println!(
+                "   Run with: cd {} && shae run src/main.shae",
+                path.display()
+            );
         }
         Err(e) => {
             eprintln!("Error scaffolding project: {}", e);
