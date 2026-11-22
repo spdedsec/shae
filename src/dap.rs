@@ -1,5 +1,5 @@
-use crate::debugger::{Breakpoint, DebugSession, DebugStepMode, StackFrameInfo, normalize_path};
-use serde_json::{Value as JsonValue, json};
+use crate::debugger::{normalize_path, Breakpoint, DebugSession, DebugStepMode, StackFrameInfo};
+use serde_json::{json, Value as JsonValue};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
@@ -351,7 +351,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                 self.send_response(request_seq, "disconnect", json!({}))?;
             }
             _ => {
-                self.send_response(request_seq, command, json!({}))?;
+                self.send_error_response(request_seq, command, "Unknown command")?;
             }
         }
 

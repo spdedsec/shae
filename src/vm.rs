@@ -2,8 +2,8 @@ use crate::chunk::Chunk;
 use crate::gc::{GcHeap, GcStats};
 use crate::opcode::OpCode;
 use crate::value::{
-    Closure, CompiledFunction, IndexError, Upvalue, UpvalueLocation, Value, resolve_index,
-    resolve_int_index,
+    resolve_index, resolve_int_index, Closure, CompiledFunction, IndexError, Upvalue,
+    UpvalueLocation, Value,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -710,12 +710,26 @@ impl VM {
                     .as_ref()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|| "<script>".to_string());
-                let should_pause = {
+                let (should_pause, pause_cv) = {
                     let mut session = dbg.lock().unwrap();
-                    session.should_stop(&file_str, current_line, self.frames.len())
+                    let reason = session.should_stop(&file_str, current_line, self.frames.len());
+                    if let Some(ref r) = reason {
+                        session.is_stopped = true;
+                        session.stop_reason = Some(r.clone());
+                        session.snapshot_frames = crate::debugger::extract_stack_frames(self);
+                    }
+                    (reason, session.pause_hook.clone())
                 };
-                if let Some(reason) = should_pause {
-                    let _ = reason;
+                if let (Some(_reason), Some(cv)) = (should_pause, pause_cv) {
+                    let (lock, cvar) = &*cv;
+                    let mut resumed = lock.lock().unwrap();
+                    *resumed = false;
+                    while !*resumed {
+                        resumed = cvar.wait(resumed).unwrap();
+                    }
+                    let mut session = dbg.lock().unwrap();
+                    session.is_stopped = false;
+                    session.stop_reason = None;
                 }
             }
 

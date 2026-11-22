@@ -47,6 +47,11 @@ pub struct DebugSession {
     pub step_mode: DebugStepMode,
     pub last_stopped_line: usize,
     pub last_stopped_file: String,
+    pub is_stopped: bool,
+    pub stop_reason: Option<String>,
+    pub snapshot_frames: Vec<StackFrameInfo>,
+    pub pause_hook: Option<Arc<(Mutex<bool>, Condvar)>>,
+    pub is_terminated: bool,
 }
 
 impl Default for DebugSession {
@@ -63,6 +68,11 @@ impl DebugSession {
             step_mode: DebugStepMode::Continue,
             last_stopped_line: 0,
             last_stopped_file: String::new(),
+            is_stopped: false,
+            stop_reason: None,
+            snapshot_frames: Vec::new(),
+            pause_hook: None,
+            is_terminated: false,
         }
     }
 
@@ -186,7 +196,9 @@ pub fn extract_stack_frames(vm: &VM) -> Vec<StackFrameInfo> {
 
     for (idx, frame) in vm.frames.iter().enumerate().rev() {
         let chunk = &frame.closure.function.chunk;
-        let line = if frame.ip > 0 && frame.ip <= chunk.lines.len() {
+        let line = if frame.ip < chunk.lines.len() {
+            chunk.lines[frame.ip]
+        } else if frame.ip > 0 && frame.ip <= chunk.lines.len() {
             chunk.lines[frame.ip - 1]
         } else if !chunk.lines.is_empty() {
             chunk.lines[0]

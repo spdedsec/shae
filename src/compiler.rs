@@ -31,6 +31,7 @@ pub struct Compiler {
     scope_depth: usize,
     loops: Vec<LoopContext>,
     enclosing: Option<Box<Compiler>>,
+    pub current_line: usize,
 }
 
 impl Compiler {
@@ -42,6 +43,7 @@ impl Compiler {
             scope_depth: 0,
             loops: Vec::new(),
             enclosing: None,
+            current_line: 1,
         }
     }
 
@@ -52,9 +54,9 @@ impl Compiler {
             self.compile_stmt(stmt, is_last)?;
         }
         if len == 0 {
-            self.chunk.write_opcode(OpCode::Nil, 0);
+            self.chunk.write_opcode(OpCode::Nil, self.current_line);
         }
-        self.emit_return(0);
+        self.emit_return(self.current_line);
         Ok(self.chunk)
     }
 
@@ -87,6 +89,7 @@ impl Compiler {
             scope_depth: 0,
             loops: Vec::new(),
             enclosing: Some(Box::new(parent)),
+            current_line: self.current_line,
         };
 
         let fn_slot_name = name.clone().unwrap_or_default();
@@ -103,9 +106,9 @@ impl Compiler {
         }
 
         if body.is_empty() {
-            child.chunk.write_opcode(OpCode::Nil, 0);
+            child.chunk.write_opcode(OpCode::Nil, child.current_line);
         }
-        child.emit_return(0);
+        child.emit_return(child.current_line);
 
         let upvalue_descs: Vec<UpvalueDesc> = child
             .upvalues
@@ -156,9 +159,10 @@ impl Compiler {
         while let Some(local) = self.locals.last() {
             if local.depth > self.scope_depth {
                 if local.is_captured {
-                    self.chunk.write_opcode(OpCode::CloseUpvalue, 0);
+                    self.chunk
+                        .write_opcode(OpCode::CloseUpvalue, self.current_line);
                 } else {
-                    self.chunk.write_opcode(OpCode::Pop, 0);
+                    self.chunk.write_opcode(OpCode::Pop, self.current_line);
                 }
                 self.locals.pop();
             } else {
@@ -266,6 +270,7 @@ impl Compiler {
     }
 
     pub fn compile_stmt(&mut self, stmt: &Stmt, is_last: bool) -> Result<(), String> {
+        self.current_line = stmt.span.line;
         match &stmt.kind {
             StmtKind::Let {
                 pattern,
@@ -623,29 +628,30 @@ impl Compiler {
     }
 
     fn compile_binding_pattern(&mut self, pattern: &BindingPattern) -> Result<(), String> {
+        let line = self.current_line;
         match pattern {
             BindingPattern::Ident(name) => {
                 let slot = self.add_local(name.clone());
                 if self.scope_depth == 0 && self.enclosing.is_none() {
-                    self.emit_get_local(slot, 0);
+                    self.emit_get_local(slot, line);
                     let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                    self.chunk.write_opcode(OpCode::DefineGlobal, 0);
-                    self.chunk.write(name_idx as u8, 0);
+                    self.chunk.write_opcode(OpCode::DefineGlobal, line);
+                    self.chunk.write(name_idx as u8, line);
                 }
                 Ok(())
             }
             BindingPattern::Array { elements, rest } => {
                 let arr_slot = self.add_local("(destruct_arr)".to_string());
                 for (i, elem) in elements.iter().enumerate() {
-                    self.emit_get_local(arr_slot, 0);
-                    self.emit_constant(Value::Int(i as i64), 0);
-                    self.chunk.write_opcode(OpCode::IndexGetSafe, 0);
+                    self.emit_get_local(arr_slot, line);
+                    self.emit_constant(Value::Int(i as i64), line);
+                    self.chunk.write_opcode(OpCode::IndexGetSafe, line);
                     self.compile_binding_pattern(elem)?;
                 }
                 if let Some(rest_name) = rest {
-                    self.emit_get_local(arr_slot, 0);
-                    self.emit_constant(Value::Int(elements.len() as i64), 0);
-                    self.chunk.write_opcode(OpCode::ArraySlice, 0);
+                    self.emit_get_local(arr_slot, line);
+                    self.emit_constant(Value::Int(elements.len() as i64), line);
+                    self.chunk.write_opcode(OpCode::ArraySlice, line);
                     self.add_local(rest_name.clone());
                 }
                 Ok(())
@@ -653,11 +659,11 @@ impl Compiler {
             BindingPattern::Object { fields, rest } => {
                 let obj_slot = self.add_local("(destruct_obj)".to_string());
                 for (field_name, opt_sub) in fields {
-                    self.emit_get_local(obj_slot, 0);
+                    self.emit_get_local(obj_slot, line);
                     let const_idx = self.chunk.add_constant(Value::String(field_name.clone()));
-                    self.chunk.write_opcode(OpCode::GetProperty, 0);
-                    self.chunk.write(const_idx as u8, 0);
-                    self.chunk.write(1, 0); // is_safe = 1
+                    self.chunk.write_opcode(OpCode::GetProperty, line);
+                    self.chunk.write(const_idx as u8, line);
+                    self.chunk.write(1, line); // is_safe = 1
                     if let Some(sub) = opt_sub {
                         self.compile_binding_pattern(sub)?;
                     } else {
@@ -665,12 +671,12 @@ impl Compiler {
                     }
                 }
                 if let Some(rest_name) = rest {
-                    self.emit_get_local(obj_slot, 0);
+                    self.emit_get_local(obj_slot, line);
                     for (field_name, _) in fields {
-                        self.emit_constant(Value::String(field_name.clone()), 0);
+                        self.emit_constant(Value::String(field_name.clone()), line);
                     }
-                    self.chunk.write_opcode(OpCode::MapRest, 0);
-                    self.chunk.write(fields.len() as u8, 0);
+                    self.chunk.write_opcode(OpCode::MapRest, line);
+                    self.chunk.write(fields.len() as u8, line);
                     self.add_local(rest_name.clone());
                 }
                 Ok(())
@@ -707,7 +713,8 @@ impl Compiler {
     pub fn compile_expr(&mut self, expr: &Expr) -> Result<(), String> {
         match expr {
             Expr::Literal(lit) => {
-                self.compile_literal(lit, 0)?;
+                let line = self.current_line;
+                self.compile_literal(lit, line)?;
                 Ok(())
             }
             Expr::Variable { name, span } => {
@@ -850,8 +857,9 @@ impl Compiler {
                 for elem in elements {
                     self.compile_expr(elem)?;
                 }
-                self.chunk.write_opcode(OpCode::BuildList, 0);
-                self.chunk.write(elements.len() as u8, 0);
+                self.chunk
+                    .write_opcode(OpCode::BuildList, self.current_line);
+                self.chunk.write(elements.len() as u8, self.current_line);
                 Ok(())
             }
             Expr::Index {
