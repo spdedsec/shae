@@ -308,14 +308,8 @@ impl VM {
                 }
             }
             let mut out_res: i64 = 0;
-            let status = unsafe {
-                osr_fn(
-                    raw_slots.as_ptr(),
-                    raw_slots.len(),
-                    &mut out_res,
-                    target_ip,
-                )
-            };
+            let status =
+                unsafe { osr_fn(raw_slots.as_ptr(), raw_slots.len(), &mut out_res, target_ip) };
             if status == 3 {
                 return Some(Ok(Value::Float(f64::from_bits(out_res as u64))));
             } else if status == 0 {
@@ -387,14 +381,8 @@ impl VM {
 
             if can_run {
                 let mut out_res: i64 = 0;
-                let status = unsafe {
-                    osr_fn(
-                        int_slots.as_ptr(),
-                        int_slots.len(),
-                        &mut out_res,
-                        target_ip,
-                    )
-                };
+                let status =
+                    unsafe { osr_fn(int_slots.as_ptr(), int_slots.len(), &mut out_res, target_ip) };
                 if status == 0 {
                     return Some(Ok(Value::Int(out_res)));
                 } else if status == 3 {
@@ -1577,6 +1565,23 @@ impl VM {
                                     property.as_str(),
                                     "execute" | "query" | "close" | "changes" | "last_insert_id"
                                 ))
+                                || (map.contains_key("_ws_conn_id")
+                                    && matches!(
+                                        property.as_str(),
+                                        "send"
+                                            | "send_binary"
+                                            | "sendBinary"
+                                            | "recv"
+                                            | "ping"
+                                            | "close"
+                                            | "is_open"
+                                            | "isOpen"
+                                    ))
+                                || (map.contains_key("_ws_server_id")
+                                    && matches!(
+                                        property.as_str(),
+                                        "accept" | "close" | "port" | "local_addr" | "localAddr"
+                                    ))
                                 || (map.contains_key("_is_set")
                                     && matches!(
                                         property.as_str(),
@@ -2645,7 +2650,7 @@ impl VM {
                                 ip: 0,
                                 slots_offset: callee_slot,
                                 try_handlers: Vec::new(),
-            loop_count: 0,
+                                loop_count: 0,
                             });
                         }
                         Value::CompiledFunction(func) => {
@@ -2730,7 +2735,7 @@ impl VM {
                                 ip: 0,
                                 slots_offset: callee_slot,
                                 try_handlers: Vec::new(),
-            loop_count: 0,
+                                loop_count: 0,
                             });
                         }
                         Value::Builtin { name, func } => {
@@ -2999,7 +3004,7 @@ impl VM {
                                     ip: 0,
                                     slots_offset: callee_slot,
                                     try_handlers: Vec::new(),
-            loop_count: 0,
+                                    loop_count: 0,
                                 });
                             } else {
                                 let current_slots_offset = self.frames.last().unwrap().slots_offset;
@@ -3122,7 +3127,7 @@ impl VM {
                                     ip: 0,
                                     slots_offset: callee_slot,
                                     try_handlers: Vec::new(),
-            loop_count: 0,
+                                    loop_count: 0,
                                 });
                             } else {
                                 let current_slots_offset = self.frames.last().unwrap().slots_offset;

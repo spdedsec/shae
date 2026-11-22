@@ -66,8 +66,9 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "io" => Ok(crate::io_mod::build_io_module()),
         "test" => Ok(build_test_module()),
         "bench" | "benchmark" => Ok(build_bench_module()),
+        "ws" | "websocket" => Ok(crate::ws::build_ws_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:async, std:buffer, std:gui, std:ui, std:audio, std:random, std:math, std:io, std:test, std:bench",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:async, std:buffer, std:gui, std:ui, std:audio, std:random, std:math, std:io, std:test, std:bench, std:ws",
             clean_name
         ))
         .at(span)),

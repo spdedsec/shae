@@ -401,13 +401,9 @@ impl JitEngine {
         builder.seal_block(check_mode_block);
         let zero_ptr = builder.ins().iconst(pointer_type, 0);
         let is_normal = builder.ins().icmp(IntCC::Equal, is_osr_val, zero_ptr);
-        builder.ins().brif(
-            is_normal,
-            normal_entry_block,
-            &[],
-            osr_dispatch_block,
-            &[],
-        );
+        builder
+            .ins()
+            .brif(is_normal, normal_entry_block, &[], osr_dispatch_block, &[]);
 
         // --- Normal Entry Path ---
         builder.switch_to_block(normal_entry_block);
@@ -1133,7 +1129,14 @@ impl JitEngine {
             .declare_func_in_func(inner_func_id, &mut osr_builder.func);
         let osr_call = osr_builder.ins().call(
             inner_callee_osr,
-            &[o_slots, o_num_slots, o_out_val, o_zero_depth, o_one_is_osr, o_target_ip],
+            &[
+                o_slots,
+                o_num_slots,
+                o_out_val,
+                o_zero_depth,
+                o_one_is_osr,
+                o_target_ip,
+            ],
         );
         let osr_status = osr_builder.inst_results(osr_call)[0];
         osr_builder.ins().return_(&[osr_status]);

@@ -51,6 +51,7 @@ pub mod unicode;
 pub mod value;
 pub mod vm;
 pub mod wasm;
+pub mod ws;
 
 use thiserror::Error;
 

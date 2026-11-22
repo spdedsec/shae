@@ -154,7 +154,7 @@ impl Evaluator {
 
     pub fn load_module(&mut self, path_str: &str, span: Span) -> Result<Value, RuntimeError> {
         // Standard library module namespaces (std:fs, std:path, std:sys, std:time)
-        if path_str.starts_with("std:") || path_str.starts_with("std::") {
+        if path_str.starts_with("std:") || path_str.starts_with("std::") || path_str == "ws" {
             if let Some(cached) = self.module_cache.read().unwrap().get(path_str) {
                 return Ok(cached.clone());
             }
@@ -1409,6 +1409,23 @@ impl Evaluator {
                                 property.as_str(),
                                 "execute" | "query" | "close" | "changes" | "last_insert_id"
                             ))
+                            || (map.contains_key("_ws_conn_id")
+                                && matches!(
+                                    property.as_str(),
+                                    "send"
+                                        | "send_binary"
+                                        | "sendBinary"
+                                        | "recv"
+                                        | "ping"
+                                        | "close"
+                                        | "is_open"
+                                        | "isOpen"
+                                ))
+                            || (map.contains_key("_ws_server_id")
+                                && matches!(
+                                    property.as_str(),
+                                    "accept" | "close" | "port" | "local_addr" | "localAddr"
+                                ))
                             || (map.contains_key("_is_set")
                                 && matches!(
                                     property.as_str(),
@@ -3321,6 +3338,12 @@ impl Evaluator {
                         }
                         let res: Vec<Value> = out.into_iter().collect();
                         Ok(crate::stdlib::make_set_instance(res))
+                    }
+                    (Value::Map(m), method) if m.read().unwrap().contains_key("_ws_conn_id") => {
+                        crate::ws::eval_ws_conn_method(&m, method, args, span)
+                    }
+                    (Value::Map(m), method) if m.read().unwrap().contains_key("_ws_server_id") => {
+                        crate::ws::eval_ws_server_method(&m, method, args, span)
                     }
                     (Value::Map(m), "execute")
                         if m.read().unwrap().contains_key("_sqlite_handle") =>
