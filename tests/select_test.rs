@@ -488,3 +488,55 @@ fn test_select_send_typed_channel_mismatch_fails() {
     let vm_res = run_vm(script);
     assert!(vm_res.is_err(), "Expected type error in VM select send");
 }
+
+
+#[test]
+fn test_concurrent_multi_sender_select_rendezvous() {
+    let script = r#"
+        let ch1 = chan(0)
+        let ch2 = chan(0)
+
+        let t1 = spawn(fn() {
+            let k = 0
+            while k < 50 {
+                ch1 <- k
+                k = k + 1
+            }
+        })
+
+        let t2 = spawn(fn() {
+            let k = 0
+            while k < 50 {
+                ch2 <- k
+                k = k + 1
+            }
+        })
+
+        let total = 0
+        let received1 = 0
+        let received2 = 0
+
+        while total < 100 {
+            select {
+                case m = <-ch1 => {
+                    received1 = received1 + 1
+                    total = total + 1
+                }
+                case m = <-ch2 => {
+                    received2 = received2 + 1
+                    total = total + 1
+                }
+            }
+        }
+
+        join(t1)
+        join(t2)
+
+        [received1, received2, total]
+    "#;
+    let ast_res = run(script).expect("AST execution failed");
+    assert_eq!(ast_res.to_json(), json!([50, 50, 100]));
+
+    let vm_res = run_vm(script).expect("VM execution failed");
+    assert_eq!(vm_res.to_json(), json!([50, 50, 100]));
+}

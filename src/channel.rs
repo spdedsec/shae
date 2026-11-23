@@ -1075,7 +1075,7 @@ pub fn select_run(
         while guard.is_none() {
             guard = token.cond.wait(guard).unwrap();
         }
-        guard.take().unwrap()
+        guard.clone().unwrap()
     };
 
     // Clean up registered waiters across all participating channels
