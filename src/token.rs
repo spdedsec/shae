@@ -16,6 +16,10 @@ pub enum Token {
     Struct, // struct
     Enum,   // enum
     Match,  // match
+    Select, // select
+    Case,   // case
+    Default, // default
+    Chan,   // chan
 
     // Symbols
     FatArrow,   // =>
@@ -66,6 +70,7 @@ pub enum Token {
     Question,       // ?
     DoubleQuestion, // ??
     Arrow,          // ->
+    LeftArrow,      // <-
 
     // Operators
     Plus,          // +
@@ -150,6 +155,11 @@ impl fmt::Display for Token {
             Token::Question => write!(f, "'?'"),
             Token::DoubleQuestion => write!(f, "'??'"),
             Token::Arrow => write!(f, "'->'"),
+            Token::LeftArrow => write!(f, "'<-'"),
+            Token::Select => write!(f, "'select'"),
+            Token::Case => write!(f, "'case'"),
+            Token::Default => write!(f, "'default'"),
+            Token::Chan => write!(f, "'chan'"),
             Token::Plus => write!(f, "'+'"),
             Token::Minus => write!(f, "'-'"),
             Token::Star => write!(f, "'*'"),
@@ -205,6 +215,10 @@ impl Token {
             Token::As => Some("as".to_string()),
             Token::Async => Some("async".to_string()),
             Token::Await => Some("await".to_string()),
+            Token::Select => Some("select".to_string()),
+            Token::Case => Some("case".to_string()),
+            Token::Default => Some("default".to_string()),
+            Token::Chan => Some("chan".to_string()),
             _ => None,
         }
     }

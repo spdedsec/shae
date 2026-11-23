@@ -1589,7 +1589,7 @@ impl VM {
                                             | "ping"
                                             | "close"
                                             | "is_open"
-                                            | "isOpen"
+                                            | "isOpen" | "channel" | "events"
                                     ))
                                 || (map.contains_key("_ws_server_id")
                                     && matches!(
@@ -3529,6 +3529,113 @@ impl VM {
                         }
                         other => {
                             self.stack.push(other);
+                        }
+                    }
+                }
+                OpCode::ChanSend => {
+                    let val = match self.stack.pop() {
+                        Some(v) => v,
+                        None => runtime_error!(self, "Stack underflow on ChanSend (val)"),
+                    };
+                    let ch_val = match self.stack.pop() {
+                        Some(v) => v,
+                        None => runtime_error!(self, "Stack underflow on ChanSend (ch)"),
+                    };
+                    match ch_val {
+                        Value::Channel(ch) => {
+                            if let Err(e) = ch.send(val, crate::ast::Span::new(1, 1)) {
+                                runtime_error!(self, e.message);
+                            }
+                            self.stack.push(Value::Null);
+                        }
+                        other => {
+                            runtime_error!(self, format!("Expected channel on send, got {}", other.type_name()));
+                        }
+                    }
+                }
+                OpCode::ChanRecv => {
+                    let ch_val = match self.stack.pop() {
+                        Some(v) => v,
+                        None => runtime_error!(self, "Stack underflow on ChanRecv"),
+                    };
+                    let ch = match ch_val {
+                        Value::Channel(ch) => ch,
+                        Value::Map(ref m) => {
+                            let guard = m.read().unwrap();
+                            if let Some(Value::Channel(ch)) = guard.get("channel").or_else(|| guard.get("_event_channel")) {
+                                ch.clone()
+                            } else if let Some(Value::Int(id)) = guard.get("_ws_conn_id").or_else(|| guard.get("id")) {
+                                match crate::ws::ws_get_or_create_channel(*id as u64) {
+                                    Ok(ch) => ch,
+                                    Err(e) => runtime_error!(self, e.message),
+                                }
+                            } else {
+                                runtime_error!(self, "Expected channel or WebSocket connection on receive");
+                            }
+                        }
+                        other => {
+                            runtime_error!(self, format!("Expected channel on recv, got {}", other.type_name()));
+                        }
+                    };
+                    match ch.recv(None, crate::ast::Span::new(1, 1)) {
+                        Ok(val) => self.stack.push(val),
+                        Err(e) => runtime_error!(self, e.message),
+                    }
+                }
+                OpCode::Select => {
+                    let num_cases = self.read_byte() as usize;
+                    let has_default = self.read_byte() == 1;
+                    let span = crate::ast::Span::new(1, 1);
+
+                    let mut case_descriptors = Vec::with_capacity(num_cases);
+                    for _ in 0..num_cases {
+                        let tag = match self.stack.pop() {
+                            Some(Value::Int(t)) => t,
+                            _ => runtime_error!(self, "Invalid select case tag"),
+                        };
+                        let send_val = self.stack.pop().unwrap_or(Value::Null);
+                        let ch_val = self.stack.pop().unwrap_or(Value::Null);
+                        let ch = match ch_val {
+                            Value::Channel(ch) => ch,
+                            Value::Map(ref m) => {
+                                let guard = m.read().unwrap();
+                                if let Some(Value::Channel(ch)) = guard.get("channel").or_else(|| guard.get("_event_channel")) {
+                                    ch.clone()
+                                } else if let Some(Value::Int(id)) = guard.get("_ws_conn_id").or_else(|| guard.get("id")) {
+                                    match crate::ws::ws_get_or_create_channel(*id as u64) {
+                                        Ok(ch) => ch,
+                                        Err(e) => runtime_error!(self, e.message),
+                                    }
+                                } else {
+                                    runtime_error!(self, "Expected channel or WebSocket connection in select");
+                                }
+                            }
+                            other => runtime_error!(self, format!("Expected channel in select, got {}", other.type_name())),
+                        };
+                        case_descriptors.push((tag, send_val, ch));
+                    }
+                    case_descriptors.reverse();
+
+                    let mut ops = Vec::with_capacity(num_cases);
+                    for (tag, send_val, ch) in case_descriptors {
+                        if tag == 0 {
+                            ops.push(crate::channel::SelectOp::Recv { channel: ch });
+                        } else {
+                            ops.push(crate::channel::SelectOp::Send { channel: ch, value: send_val });
+                        }
+                    }
+
+                    match crate::channel::select_run(&ops, has_default, span) {
+                        Ok(crate::channel::SelectOutcome::Success { case_idx, received_value }) => {
+                            self.stack.push(received_value.unwrap_or(Value::Null));
+                            self.stack.push(Value::Int(case_idx as i64));
+                        }
+                        Ok(crate::channel::SelectOutcome::Default) => {
+                            self.stack.push(Value::Null);
+                            self.stack.push(Value::Int(-1));
+                        }
+                        Err(e) => {
+                            runtime_error!(self, e.message);
                         }
                     }
                 }

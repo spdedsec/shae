@@ -367,6 +367,13 @@ impl Lexer {
                             line: self.line,
                             col: start_col,
                         });
+                    } else if self.current_char() == Some('-') {
+                        self.advance();
+                        tokens.push(SpannedToken {
+                            token: Token::LeftArrow,
+                            line: self.line,
+                            col: start_col,
+                        });
                     } else {
                         tokens.push(SpannedToken {
                             token: Token::Lt,
@@ -915,6 +922,10 @@ impl Lexer {
             "catch" => Token::Catch,
             "async" => Token::Async,
             "await" => Token::Await,
+            "select" => Token::Select,
+            "case" => Token::Case,
+            "default" => Token::Default,
+            "chan" => Token::Chan,
             "use" => Token::Use,
             "from" => Token::From,
             "as" => Token::As,

@@ -1128,6 +1128,10 @@ pub fn eval_ws_conn_method(
                 .map_err(|e| RuntimeError::new(e).at(span))
         }
         "is_open" | "isOpen" => Ok(Value::Bool(conn.is_open())),
+        "channel" | "events" => {
+            let ch = ws_get_or_create_channel(conn_id).map_err(|e| e.at(span))?;
+            Ok(Value::Channel(ch))
+        },
         _ => Err(
             RuntimeError::new(format!("Method '{}' not found on WsConnection", method)).at(span),
         ),
@@ -1583,10 +1587,66 @@ pub fn ws_server_close(
         .map_err(|e| RuntimeError::new(e).at(span))
 }
 
+pub fn ws_get_or_create_channel(id: u64) -> Result<Arc<crate::channel::Channel>, RuntimeError> {
+    static CHANNELS: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<u64, Arc<crate::channel::Channel>>>> = std::sync::OnceLock::new();
+    let map = CHANNELS.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+    {
+        let guard = map.read().unwrap();
+        if let Some(ch) = guard.get(&id) {
+            return Ok(ch.clone());
+        }
+    }
+    let conn = get_connection(id).ok_or_else(|| {
+        RuntimeError::new(format!("WebSocket connection #{} not found", id))
+    })?;
+    let ch = crate::channel::Channel::new(Some(64));
+    let ch_clone = ch.clone();
+    let conn_clone = conn.clone();
+    std::thread::spawn(move || {
+        while conn_clone.is_open.load(std::sync::atomic::Ordering::Relaxed) {
+            match conn_clone.recv(Some(100)) {
+                Ok(Some(WsMessage::Text(s))) => {
+                    let _ = ch_clone.send(Value::String(s), Span::new(1, 1));
+                }
+                Ok(Some(WsMessage::Binary(bytes))) => {
+                    let _ = ch_clone.send(
+                        Value::ByteBuffer(Arc::new(std::sync::RwLock::new(
+                            crate::buffer::ByteBuffer::from_vec(bytes),
+                        ))),
+                        Span::new(1, 1),
+                    );
+                }
+                Ok(Some(WsMessage::Close(..))) => {
+                    break;
+                }
+                Ok(None) | Ok(Some(WsMessage::Ping(..))) | Ok(Some(WsMessage::Pong(..))) => {}
+                Err(_) => break,
+            }
+        }
+        ch_clone.close();
+    });
+    map.write().unwrap().insert(id, ch.clone());
+    Ok(ch)
+}
+
+pub fn ws_channel(
+    _ev: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    if args.is_empty() {
+        return Err(RuntimeError::new("ws.channel expects connection argument".into()).at(span));
+    }
+    let id = extract_conn_id(&args[0], span)?;
+    let ch = ws_get_or_create_channel(id).map_err(|e| e.at(span))?;
+    Ok(Value::Channel(ch))
+}
+
 pub fn build_ws_module() -> Value {
     let mut map = IndexMap::new();
     let entries: Vec<(&str, BuiltinFn)> = vec![
         ("connect", ws_connect),
+        ("channel", ws_channel),
         ("listen", ws_listen),
         ("send", ws_send),
         ("send_binary", ws_send_binary),

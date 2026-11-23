@@ -726,7 +726,13 @@ fn build_time_module() -> Value {
         ("nowMs", time_now_ms),
         ("now_ms", time_now_ms),
         ("sleep", time_sleep),
+        ("after", time_after),
+        ("timer", time_after),
     ])
+}
+
+fn time_after(ev: &mut Evaluator, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    crate::builtins::builtin_timer(ev, args, span)
 }
 
 fn time_now(_ev: &mut Evaluator, _args: Vec<Value>, _span: Span) -> Result<Value, RuntimeError> {

@@ -168,6 +168,15 @@ impl Parser {
                     "bool" | "boolean" => TypeAnnotation::Bool,
                     "null" => TypeAnnotation::Null,
                     "void" => TypeAnnotation::Void,
+                    "chan" => {
+                        if self.match_token(Token::Lt) {
+                            let inner = self.parse_type_annotation()?;
+                            self.consume(Token::Gt, "Expected '>' after channel element type.")?;
+                            TypeAnnotation::Channel(Box::new(inner))
+                        } else {
+                            TypeAnnotation::Channel(Box::new(TypeAnnotation::Any))
+                        }
+                    }
                     "map" => {
                         if self.match_token(Token::Lt) {
                             let key = self.parse_type_annotation()?;
@@ -356,12 +365,153 @@ impl Parser {
             };
             self.end_statement()?;
             stmt
+        } else if self.match_token(Token::Select) {
+            self.parse_select_statement(cur.line, cur.col)?
         } else if self.match_token(Token::Use) {
             self.parse_use_statement(cur.line, cur.col)?
         } else {
             self.parse_expression_statement()?
         };
         Ok(stmt)
+    }
+
+    fn parse_select_statement(&mut self, line: usize, col: usize) -> Result<Stmt, ParserError> {
+        if !self.match_token(Token::LBrace) {
+            return Err(ParserError::UnexpectedToken {
+                message: "Expected '{' after 'select'.".into(),
+                line: self.peek().line,
+                col: self.peek().col,
+            });
+        }
+
+        let mut cases = Vec::new();
+        let mut default_body = None;
+
+        while self.peek().token != Token::RBrace && !self.is_at_end() {
+            if self.match_token(Token::Case) {
+                let case_tok = self.tokens[self.cursor - 1].clone();
+                let case_span = Span {
+                    line: case_tok.line,
+                    col: case_tok.col,
+                };
+
+                let case_node = if matches!(self.peek().token, Token::Ident(_))
+                    && self.peek_next().map(|t| &t.token) == Some(&Token::Equals)
+                {
+                    let ident = match self.advance().token.clone() {
+                        Token::Ident(s) => s,
+                        _ => unreachable!(),
+                    };
+                    self.consume(Token::Equals, "Expected '=' after identifier in select case.")?;
+                    self.consume(Token::LeftArrow, "Expected '<-' in select receive case.")?;
+                    let ch_expr = self.parse_expression()?;
+                    crate::ast::SelectCase::Recv {
+                        binding: Some(ident),
+                        channel: ch_expr,
+                        body: Vec::new(),
+                        span: case_span,
+                    }
+                } else {
+                    let expr = self.parse_expression()?;
+                    match expr {
+                        Expr::ChanSend { channel, value, span } => {
+                            crate::ast::SelectCase::Send {
+                                channel: *channel,
+                                value: *value,
+                                body: Vec::new(),
+                                span,
+                            }
+                        }
+                        Expr::ChanRecv { channel, span } => {
+                            crate::ast::SelectCase::Recv {
+                                binding: None,
+                                channel: *channel,
+                                body: Vec::new(),
+                                span,
+                            }
+                        }
+                        other => {
+                            return Err(ParserError::UnexpectedToken {
+                                message: format!("Expected channel send or receive operation in select case, got {:?}", other),
+                                line: case_tok.line,
+                                col: case_tok.col,
+                            });
+                        }
+                    }
+                };
+
+                if !self.match_token(Token::FatArrow) && !self.match_token(Token::Colon) {
+                    return Err(ParserError::UnexpectedToken {
+                        message: "Expected '=>' after select case condition.".into(),
+                        line: self.peek().line,
+                        col: self.peek().col,
+                    });
+                }
+
+                let body = if self.match_token(Token::LBrace) {
+                    let mut stmts = Vec::new();
+                    while self.peek().token != Token::RBrace && !self.is_at_end() {
+                        stmts.push(self.parse_statement()?);
+                    }
+                    self.consume(Token::RBrace, "Expected '}' after case body.")?;
+                    stmts
+                } else {
+                    let stmt = self.parse_statement()?;
+                    vec![stmt]
+                };
+
+                let populated_case = match case_node {
+                    crate::ast::SelectCase::Recv { binding, channel, span, .. } => {
+                        crate::ast::SelectCase::Recv { binding, channel, body, span }
+                    }
+                    crate::ast::SelectCase::Send { channel, value, span, .. } => {
+                        crate::ast::SelectCase::Send { channel, value, body, span }
+                    }
+                };
+                cases.push(populated_case);
+                self.match_token(Token::Comma);
+                self.match_token(Token::Semicolon);
+            } else if self.match_token(Token::Default) {
+                let def_tok = self.tokens[self.cursor - 1].clone();
+                if !self.match_token(Token::FatArrow) && !self.match_token(Token::Colon) {
+                    return Err(ParserError::UnexpectedToken {
+                        message: "Expected '=>' after 'default' in select.".into(),
+                        line: def_tok.line,
+                        col: def_tok.col,
+                    });
+                }
+                let body = if self.match_token(Token::LBrace) {
+                    let mut stmts = Vec::new();
+                    while self.peek().token != Token::RBrace && !self.is_at_end() {
+                        stmts.push(self.parse_statement()?);
+                    }
+                    self.consume(Token::RBrace, "Expected '}' after default body.")?;
+                    stmts
+                } else {
+                    let stmt = self.parse_statement()?;
+                    vec![stmt]
+                };
+                default_body = Some(body);
+                self.match_token(Token::Comma);
+                self.match_token(Token::Semicolon);
+            } else {
+                return Err(ParserError::UnexpectedToken {
+                    message: "Expected 'case' or 'default' inside select block.".into(),
+                    line: self.peek().line,
+                    col: self.peek().col,
+                });
+            }
+        }
+
+        self.consume(Token::RBrace, "Expected '}' after select block.")?;
+
+        Ok(Stmt {
+            kind: StmtKind::Select {
+                cases,
+                default_body,
+            },
+            span: Span { line, col },
+        })
     }
 
     fn parse_use_statement(&mut self, line: usize, col: usize) -> Result<Stmt, ParserError> {
@@ -1297,6 +1447,28 @@ impl Parser {
                     col: cur.col,
                 },
             })
+        } else if let Expr::ChanSend { channel, value, span } = expr {
+            self.end_statement()?;
+            Ok(Stmt {
+                kind: StmtKind::ChanSend {
+                    channel: *channel,
+                    value: *value,
+                },
+                span,
+            })
+        } else if self.match_token(Token::LeftArrow) {
+            let value = self.parse_expression()?;
+            self.end_statement()?;
+            Ok(Stmt {
+                kind: StmtKind::ChanSend {
+                    channel: expr,
+                    value,
+                },
+                span: Span {
+                    line: cur.line,
+                    col: cur.col,
+                },
+            })
         } else {
             self.end_statement()?;
             Ok(Stmt {
@@ -1336,7 +1508,20 @@ impl Parser {
     }
 
     fn parse_expression(&mut self) -> Result<Expr, ParserError> {
-        self.parse_pipe()
+        let expr = self.parse_pipe()?;
+        if self.match_token(Token::LeftArrow) {
+            let span = Span {
+                line: self.tokens[self.cursor - 1].line,
+                col: self.tokens[self.cursor - 1].col,
+            };
+            let value = self.parse_expression()?;
+            return Ok(Expr::ChanSend {
+                channel: Box::new(expr),
+                value: Box::new(value),
+                span,
+            });
+        }
+        Ok(expr)
     }
 
     fn parse_pipe(&mut self) -> Result<Expr, ParserError> {
@@ -1618,6 +1803,17 @@ impl Parser {
                 },
             });
         }
+        if self.match_token(Token::LeftArrow) {
+            let tok = self.tokens[self.cursor - 1].clone();
+            let right = self.parse_unary()?;
+            return Ok(Expr::ChanRecv {
+                channel: Box::new(right),
+                span: Span {
+                    line: tok.line,
+                    col: tok.col,
+                },
+            });
+        }
         if self.match_token(Token::Not)
             || self.match_token(Token::Minus)
             || self.match_token(Token::Tilde)
@@ -1809,6 +2005,21 @@ impl Parser {
             Token::FloatLit(n) => Ok(Expr::Literal(Literal::Float(n))),
             Token::NumberLit(n) => Ok(Expr::Literal(Literal::Float(n))),
             Token::StringLit(s) => Ok(Expr::Literal(Literal::String(s))),
+            Token::Chan => {
+                if self.match_token(Token::Lt) {
+                    let _inner = self.parse_type_annotation()?;
+                    self.consume(Token::Gt, "Expected '>' after channel type.")?;
+                }
+                Ok(Expr::Variable { name: "chan".into(), span })
+            }
+            Token::Select => {
+                let stmt = self.parse_select_statement(cur.line, cur.col)?;
+                if let StmtKind::Select { cases, default_body } = stmt.kind {
+                    Ok(Expr::Select { cases, default_body, span })
+                } else {
+                    unreachable!()
+                }
+            }
             Token::Ident(name) => Ok(Expr::Variable { name, span }),
             Token::LParen => {
                 let expr = self.parse_expression()?;

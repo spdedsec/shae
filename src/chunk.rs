@@ -87,7 +87,7 @@ impl Chunk {
         }
 
         let op_byte = self.code[offset];
-        if op_byte > OpCode::Await as u8 {
+        if op_byte > OpCode::Select as u8 {
             return (
                 format!("{:04} {} UnknownOp(0x{:02x})", offset, line_str, op_byte),
                 offset + 1,
@@ -134,10 +134,23 @@ impl Chunk {
             | OpCode::Dup
             | OpCode::ImportModule
             | OpCode::ImportStar
-            | OpCode::Await => (
+            | OpCode::Await
+            | OpCode::ChanSend
+            | OpCode::ChanRecv => (
                 format!("{:04} {} {:?}", offset, line_str, opcode),
                 offset + 1,
             ),
+            OpCode::Select => {
+                let cases = self.code.get(offset + 1).copied().unwrap_or(0);
+                let def = self.code.get(offset + 2).copied().unwrap_or(0);
+                (
+                    format!(
+                        "{:04} {} {:<16} cases: {}, default: {}",
+                        offset, line_str, "Select", cases, def
+                    ),
+                    offset + 3,
+                )
+            }
             OpCode::Constant => {
                 let const_idx = self.code.get(offset + 1).copied().unwrap_or(0) as usize;
                 let val_str = self

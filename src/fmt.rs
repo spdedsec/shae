@@ -241,6 +241,92 @@ impl Formatter {
                 self.write_indent();
                 self.output.push('}');
             }
+            StmtKind::Select { cases, default_body } => {
+                self.write_indent();
+                self.output.push_str("select {\n");
+                self.indent_level += 1;
+                for case in cases {
+                    self.write_indent();
+                    match case {
+                        crate::ast::SelectCase::Recv { binding, channel, body, .. } => {
+                            self.output.push_str("case ");
+                            if let Some(b) = binding {
+                                let _ = write!(self.output, "{} = ", b);
+                            }
+                            self.output.push_str("<-");
+                            self.format_expr(channel, 0);
+                            self.output.push_str(" => ");
+                            if body.len() == 1 && matches!(body[0].kind, StmtKind::Expr(_)) {
+                                if let StmtKind::Expr(ref e) = body[0].kind {
+                                    self.format_expr(e, 0);
+                                }
+                            } else {
+                                self.output.push_str("{\n");
+                                self.indent_level += 1;
+                                for s in body {
+                                    self.format_stmt(s);
+                                    self.output.push('\n');
+                                }
+                                self.indent_level -= 1;
+                                self.write_indent();
+                                self.output.push('}');
+                            }
+                        }
+                        crate::ast::SelectCase::Send { channel, value, body, .. } => {
+                            self.output.push_str("case ");
+                            self.format_expr(channel, 0);
+                            self.output.push_str(" <- ");
+                            self.format_expr(value, 0);
+                            self.output.push_str(" => ");
+                            if body.len() == 1 && matches!(body[0].kind, StmtKind::Expr(_)) {
+                                if let StmtKind::Expr(ref e) = body[0].kind {
+                                    self.format_expr(e, 0);
+                                }
+                            } else {
+                                self.output.push_str("{\n");
+                                self.indent_level += 1;
+                                for s in body {
+                                    self.format_stmt(s);
+                                    self.output.push('\n');
+                                }
+                                self.indent_level -= 1;
+                                self.write_indent();
+                                self.output.push('}');
+                            }
+                        }
+                    }
+                    self.output.push('\n');
+                }
+                if let Some(def) = default_body {
+                    self.write_indent();
+                    self.output.push_str("default => ");
+                    if def.len() == 1 && matches!(def[0].kind, StmtKind::Expr(_)) {
+                        if let StmtKind::Expr(ref e) = def[0].kind {
+                            self.format_expr(e, 0);
+                        }
+                    } else {
+                        self.output.push_str("{\n");
+                        self.indent_level += 1;
+                        for s in def {
+                            self.format_stmt(s);
+                            self.output.push('\n');
+                        }
+                        self.indent_level -= 1;
+                        self.write_indent();
+                        self.output.push('}');
+                    }
+                    self.output.push('\n');
+                }
+                self.indent_level -= 1;
+                self.write_indent();
+                self.output.push('}');
+            }
+            StmtKind::ChanSend { channel, value } => {
+                self.write_indent();
+                self.format_expr(channel, 0);
+                self.output.push_str(" <- ");
+                self.format_expr(value, 0);
+            }
             StmtKind::Use { imports, path } => {
                 self.write_indent();
                 if imports.len() == 1 && imports[0].name == "*" && imports[0].alias.is_none() {
@@ -548,6 +634,18 @@ impl Formatter {
                 self.indent_level -= 1;
                 self.write_indent();
                 self.output.push('}');
+            }
+            Expr::ChanSend { channel, value, .. } => {
+                self.format_expr(channel, 0);
+                self.output.push_str(" <- ");
+                self.format_expr(value, 0);
+            }
+            Expr::ChanRecv { channel, .. } => {
+                self.output.push_str("<-");
+                self.format_expr(channel, 0);
+            }
+            Expr::Select { .. } => {
+                self.output.push_str("select { ... }");
             }
             Expr::Await { expr, .. } => {
                 self.output.push_str("await ");

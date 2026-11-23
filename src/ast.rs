@@ -63,6 +63,7 @@ pub enum TypeAnnotation {
     Custom(String),
     Union(Vec<TypeAnnotation>),
     Nullable(Box<TypeAnnotation>),
+    Channel(Box<TypeAnnotation>),
 }
 
 impl std::fmt::Display for TypeAnnotation {
@@ -98,6 +99,7 @@ impl std::fmt::Display for TypeAnnotation {
                 write!(f, "{}", u)
             }
             TypeAnnotation::Nullable(inner) => write!(f, "{}?", inner),
+            TypeAnnotation::Channel(inner) => write!(f, "chan<{}>", inner),
         }
     }
 }
@@ -112,6 +114,31 @@ pub struct Param {
 pub struct StructField {
     pub name: String,
     pub type_ann: Option<TypeAnnotation>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SelectCase {
+    Recv {
+        binding: Option<String>,
+        channel: Expr,
+        body: Vec<Stmt>,
+        span: Span,
+    },
+    Send {
+        channel: Expr,
+        value: Expr,
+        body: Vec<Stmt>,
+        span: Span,
+    },
+}
+
+impl SelectCase {
+    pub fn span(&self) -> Span {
+        match self {
+            SelectCase::Recv { span, .. } => *span,
+            SelectCase::Send { span, .. } => *span,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -167,6 +194,14 @@ pub enum StmtKind {
     Use {
         imports: Vec<UseItem>,
         path: String,
+    },
+    Select {
+        cases: Vec<SelectCase>,
+        default_body: Option<Vec<Stmt>>,
+    },
+    ChanSend {
+        channel: Expr,
+        value: Expr,
     },
 }
 
@@ -270,6 +305,20 @@ pub enum Expr {
         expr: Box<Expr>,
         span: Span,
     },
+    ChanSend {
+        channel: Box<Expr>,
+        value: Box<Expr>,
+        span: Span,
+    },
+    ChanRecv {
+        channel: Box<Expr>,
+        span: Span,
+    },
+    Select {
+        cases: Vec<SelectCase>,
+        default_body: Option<Vec<Stmt>>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -283,6 +332,9 @@ impl Expr {
             Expr::Index { span, .. } => Some(*span),
             Expr::Lambda { span, .. } => Some(*span),
             Expr::Await { span, .. } => Some(*span),
+            Expr::ChanSend { span, .. } => Some(*span),
+            Expr::ChanRecv { span, .. } => Some(*span),
+            Expr::Select { span, .. } => Some(*span),
 
             Expr::StructInit { span, .. } => Some(*span),
             Expr::Match { span, .. } => Some(*span),

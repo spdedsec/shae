@@ -106,7 +106,7 @@ impl JitEngine {
         let mut offset = 0;
         while offset < chunk.code.len() {
             let op_byte = chunk.code[offset];
-            if op_byte > OpCode::Await as u8 {
+            if op_byte > OpCode::Select as u8 {
                 return false;
             }
             let opcode: OpCode = op_byte.into();

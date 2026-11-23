@@ -386,6 +386,11 @@ impl TypeChecker {
             return true;
         }
 
+        // Channel assignment
+        if let (TypeAnnotation::Channel(actual_inner), TypeAnnotation::Channel(expected_inner)) = (actual, expected) {
+            return self.is_assignable_to(actual_inner, expected_inner);
+        }
+
         // Numeric widening: int -> float
         if expected == &TypeAnnotation::Float && actual == &TypeAnnotation::Int {
             return true;
@@ -656,6 +661,73 @@ impl TypeChecker {
             }
             StmtKind::Expr(expr) => {
                 self.infer_expr(expr);
+            }
+            StmtKind::Select { cases, default_body } => {
+                for case in cases {
+                    match case {
+                        crate::ast::SelectCase::Recv { binding, channel, body, .. } => {
+                            let ch_ty = self.infer_expr(channel);
+                            let elem_ty = match ch_ty {
+                                TypeAnnotation::Channel(inner) => *inner,
+                                _ => TypeAnnotation::Any,
+                            };
+                            self.push_scope();
+                            if let Some(b) = binding {
+                                self.declare_var(b, elem_ty);
+                            }
+                            for s in body {
+                                self.check_stmt(s);
+                            }
+                            self.pop_scope();
+                        }
+                        crate::ast::SelectCase::Send { channel, value, body, span } => {
+                            let ch_ty = self.infer_expr(channel);
+                            let val_ty = self.infer_expr(value);
+                            if let TypeAnnotation::Channel(inner) = &ch_ty {
+                                if !self.is_assignable_to(&val_ty, inner) {
+                                    self.diagnostics.push(Diagnostic {
+                                        severity: DiagnosticSeverity::Error,
+                                        message: format!(
+                                            "Cannot send value of type '{}' to channel of type '{}'",
+                                            val_ty, ch_ty
+                                        ),
+                                        hint: None,
+                                        span: *span,
+                                    });
+                                }
+                            }
+                            self.push_scope();
+                            for s in body {
+                                self.check_stmt(s);
+                            }
+                            self.pop_scope();
+                        }
+                    }
+                }
+                if let Some(def) = default_body {
+                    self.push_scope();
+                    for s in def {
+                        self.check_stmt(s);
+                    }
+                    self.pop_scope();
+                }
+            }
+            StmtKind::ChanSend { channel, value } => {
+                let ch_ty = self.infer_expr(channel);
+                let val_ty = self.infer_expr(value);
+                if let TypeAnnotation::Channel(inner) = &ch_ty {
+                    if !self.is_assignable_to(&val_ty, inner) {
+                        self.diagnostics.push(Diagnostic {
+                            severity: DiagnosticSeverity::Error,
+                            message: format!(
+                                "Cannot send value of type '{}' to channel of type '{}'",
+                                val_ty, ch_ty
+                            ),
+                            hint: None,
+                            span: stmt.span,
+                        });
+                    }
+                }
             }
             StmtKind::StructDef { .. }
             | StmtKind::EnumDef { .. }
@@ -1118,6 +1190,32 @@ impl TypeChecker {
                     return_type: Box::new(actual_ret),
                 }
             }
+            Expr::ChanSend { channel, value, span } => {
+                let ch_ty = self.infer_expr(channel);
+                let val_ty = self.infer_expr(value);
+                if let TypeAnnotation::Channel(inner) = &ch_ty {
+                    if !self.is_assignable_to(&val_ty, inner) {
+                        self.diagnostics.push(Diagnostic {
+                            severity: DiagnosticSeverity::Error,
+                            message: format!(
+                                "Cannot send value of type '{}' to channel of type '{}'",
+                                val_ty, ch_ty
+                            ),
+                            hint: None,
+                            span: *span,
+                        });
+                    }
+                }
+                TypeAnnotation::Void
+            }
+            Expr::ChanRecv { channel, .. } => {
+                let ch_ty = self.infer_expr(channel);
+                match ch_ty {
+                    TypeAnnotation::Channel(inner) => *inner,
+                    _ => TypeAnnotation::Any,
+                }
+            }
+            Expr::Select { .. } => TypeAnnotation::Any,
             Expr::Await { expr, span: _ } => self.infer_expr(expr),
             Expr::Use { .. } => TypeAnnotation::Any,
         }

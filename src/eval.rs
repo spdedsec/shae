@@ -622,6 +622,15 @@ impl Evaluator {
             StmtKind::Return(None) => Ok(Signal::Return(Value::Null)),
             StmtKind::Break => Ok(Signal::Break),
             StmtKind::Continue => Ok(Signal::Continue),
+            StmtKind::ChanSend { channel, value } => {
+                let ch_val = self.eval_expr(channel, env).map_err(|e| e.or_at(stmt.span))?;
+                let val = self.eval_expr(value, env).map_err(|e| e.or_at(stmt.span))?;
+                self.do_chan_send(ch_val, val, stmt.span)?;
+                Ok(Signal::None)
+            }
+            StmtKind::Select { cases, default_body } => {
+                self.eval_select(cases, default_body, stmt.span, env)
+            }
             StmtKind::Use { imports, path } => {
                 let mod_val = self.load_module(path, stmt.span)?;
                 match mod_val {
@@ -658,6 +667,80 @@ impl Evaluator {
         }
     }
 
+
+    pub fn resolve_channel(&self, val: Value, span: Span) -> Result<std::sync::Arc<crate::channel::Channel>, RuntimeError> {
+        match val {
+            Value::Channel(ch) => Ok(ch),
+            Value::Map(ref m) => {
+                let guard = m.read().unwrap();
+                if let Some(Value::Channel(ch)) = guard.get("channel").or_else(|| guard.get("_event_channel")) {
+                    Ok(ch.clone())
+                } else if let Some(Value::Int(id)) = guard.get("_ws_conn_id").or_else(|| guard.get("id")) {
+                    crate::ws::ws_get_or_create_channel(*id as u64).map_err(|e| e.at(span))
+                } else {
+                    Err(RuntimeError::new("Expected channel or WebSocket connection".into()).at(span))
+                }
+            }
+            other => Err(RuntimeError::new(format!("Expected channel, got {}", other.type_name())).at(span)),
+        }
+    }
+
+    pub fn do_chan_send(&self, ch_val: Value, val: Value, span: Span) -> Result<(), RuntimeError> {
+        let ch = self.resolve_channel(ch_val, span)?;
+        ch.send(val, span)
+    }
+
+    pub fn do_chan_recv(&self, ch_val: Value, span: Span) -> Result<Value, RuntimeError> {
+        let ch = self.resolve_channel(ch_val, span)?;
+        ch.recv(None, span)
+    }
+
+    pub fn eval_select(
+        &mut self,
+        cases: &[crate::ast::SelectCase],
+        default_body: &Option<Vec<Stmt>>,
+        span: Span,
+        env: &std::sync::Arc<std::sync::RwLock<crate::env::Environment>>,
+    ) -> Result<Signal, RuntimeError> {
+        let mut ops = Vec::with_capacity(cases.len());
+        for case in cases {
+            match case {
+                crate::ast::SelectCase::Recv { channel, .. } => {
+                    let ch_val = self.eval_expr(channel, env)?;
+                    let ch = self.resolve_channel(ch_val, span)?;
+                    ops.push(crate::channel::SelectOp::Recv { channel: ch });
+                }
+                crate::ast::SelectCase::Send { channel, value, .. } => {
+                    let ch_val = self.eval_expr(channel, env)?;
+                    let ch = self.resolve_channel(ch_val, span)?;
+                    let val = self.eval_expr(value, env)?;
+                    ops.push(crate::channel::SelectOp::Send { channel: ch, value: val });
+                }
+            }
+        }
+
+        match crate::channel::select_run(&ops, default_body.is_some(), span)? {
+            crate::channel::SelectOutcome::Success { case_idx, received_value } => {
+                let case = &cases[case_idx];
+                let case_env = std::sync::Arc::new(std::sync::RwLock::new(
+                    crate::env::Environment::new_with_parent(env.clone()),
+                ));
+                if let crate::ast::SelectCase::Recv { binding: Some(name), .. } = case {
+                    case_env.write().unwrap().define(name.clone(), received_value.unwrap_or(Value::Null));
+                }
+                match case {
+                    crate::ast::SelectCase::Recv { body, .. } => self.eval_block(body, &case_env),
+                    crate::ast::SelectCase::Send { body, .. } => self.eval_block(body, &case_env),
+                }
+            }
+            crate::channel::SelectOutcome::Default => {
+                let def_env = std::sync::Arc::new(std::sync::RwLock::new(
+                    crate::env::Environment::new_with_parent(env.clone()),
+                ));
+                self.eval_block(default_body.as_ref().unwrap(), &def_env)
+            }
+        }
+    }
     fn eval_block(
         &mut self,
         block: &[Stmt],
@@ -1314,6 +1397,23 @@ impl Evaluator {
                     is_async: *is_async,
                 })
             }
+            Expr::ChanSend { channel, value, span } => {
+                let ch_val = self.eval_expr(channel, env).map_err(|e| e.or_at(*span))?;
+                let val = self.eval_expr(value, env).map_err(|e| e.or_at(*span))?;
+                self.do_chan_send(ch_val, val, *span)?;
+                Ok(Value::Null)
+            }
+            Expr::ChanRecv { channel, span } => {
+                let ch_val = self.eval_expr(channel, env).map_err(|e| e.or_at(*span))?;
+                self.do_chan_recv(ch_val, *span)
+            }
+            Expr::Select { cases, default_body, span } => {
+                match self.eval_select(cases, default_body, *span, env)? {
+                    Signal::Value(v) => Ok(v),
+                    Signal::Return(v) => Ok(v),
+                    _ => Ok(Value::Null),
+                }
+            }
             Expr::Await { expr, span } => {
                 let val = self.eval_expr(expr, env).map_err(|e| e.or_at(*span))?;
                 match val {
@@ -1419,7 +1519,7 @@ impl Evaluator {
                                         | "ping"
                                         | "close"
                                         | "is_open"
-                                        | "isOpen"
+                                        | "isOpen" | "channel" | "events"
                                 ))
                             || (map.contains_key("_ws_server_id")
                                 && matches!(

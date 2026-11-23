@@ -372,6 +372,43 @@ impl Linter {
                     self.declare_var(name, stmt.span, false);
                 }
             }
+            StmtKind::Select { cases, default_body } => {
+                for case in cases {
+                    match case {
+                        crate::ast::SelectCase::Recv { binding, channel, body, span } => {
+                            self.lint_expr(channel);
+                            self.push_scope();
+                            if let Some(b) = binding {
+                                self.declare_var(b, *span, false);
+                            }
+                            for s in body {
+                                self.lint_stmt(s);
+                            }
+                            self.pop_scope();
+                        }
+                        crate::ast::SelectCase::Send { channel, value, body, .. } => {
+                            self.lint_expr(channel);
+                            self.lint_expr(value);
+                            self.push_scope();
+                            for s in body {
+                                self.lint_stmt(s);
+                            }
+                            self.pop_scope();
+                        }
+                    }
+                }
+                if let Some(def) = default_body {
+                    self.push_scope();
+                    for s in def {
+                        self.lint_stmt(s);
+                    }
+                    self.pop_scope();
+                }
+            }
+            StmtKind::ChanSend { channel, value } => {
+                self.lint_expr(channel);
+                self.lint_expr(value);
+            }
             StmtKind::Use { imports, .. } => {
                 for item in imports {
                     if item.name != "*" {
@@ -517,6 +554,46 @@ impl Linter {
                 }
                 self.lint_stmt_block(body);
                 self.pop_scope();
+            }
+            Expr::ChanSend { channel, value, .. } => {
+                self.lint_expr(channel);
+                self.lint_expr(value);
+            }
+            Expr::ChanRecv { channel, .. } => {
+                self.lint_expr(channel);
+            }
+            Expr::Select { cases, default_body, .. } => {
+                for case in cases {
+                    match case {
+                        crate::ast::SelectCase::Recv { binding, channel, body, span } => {
+                            self.lint_expr(channel);
+                            self.push_scope();
+                            if let Some(b) = binding {
+                                self.declare_var(b, *span, false);
+                            }
+                            for s in body {
+                                self.lint_stmt(s);
+                            }
+                            self.pop_scope();
+                        }
+                        crate::ast::SelectCase::Send { channel, value, body, .. } => {
+                            self.lint_expr(channel);
+                            self.lint_expr(value);
+                            self.push_scope();
+                            for s in body {
+                                self.lint_stmt(s);
+                            }
+                            self.pop_scope();
+                        }
+                    }
+                }
+                if let Some(def) = default_body {
+                    self.push_scope();
+                    for s in def {
+                        self.lint_stmt(s);
+                    }
+                    self.pop_scope();
+                }
             }
             Expr::Await { expr, .. } => {
                 self.lint_expr(expr);

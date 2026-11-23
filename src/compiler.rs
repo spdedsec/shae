@@ -600,6 +600,19 @@ impl Compiler {
                 }
                 Ok(())
             }
+            StmtKind::ChanSend { channel, value } => {
+                self.compile_expr(channel)?;
+                self.compile_expr(value)?;
+                self.chunk.write_opcode(OpCode::ChanSend, stmt.span.line);
+                self.chunk.write_opcode(OpCode::Pop, stmt.span.line);
+                if is_last {
+                    self.chunk.write_opcode(OpCode::Nil, stmt.span.line);
+                }
+                Ok(())
+            }
+            StmtKind::Select { cases, default_body } => {
+                self.compile_select_block(cases, default_body, stmt.span.line, is_last, false)
+            }
             StmtKind::Use { imports, path } => {
                 self.emit_constant(Value::String(path.clone()), stmt.span.line);
                 self.chunk
@@ -627,6 +640,141 @@ impl Compiler {
         }
     }
 
+
+    fn compile_select_block(
+        &mut self,
+        cases: &[crate::ast::SelectCase],
+        default_body: &Option<Vec<Stmt>>,
+        line: usize,
+        is_last: bool,
+        is_expr: bool,
+    ) -> Result<(), String> {
+        self.chunk.write_opcode(OpCode::Nil, line);
+        let res_slot = self.add_local("(select_res)".to_string());
+
+        for case in cases {
+            match case {
+                crate::ast::SelectCase::Recv { channel, .. } => {
+                    self.compile_expr(channel)?;
+                    self.chunk.write_opcode(OpCode::Nil, line);
+                    self.emit_constant(Value::Int(0), line);
+                }
+                crate::ast::SelectCase::Send { channel, value, .. } => {
+                    self.compile_expr(channel)?;
+                    self.compile_expr(value)?;
+                    self.emit_constant(Value::Int(1), line);
+                }
+            }
+        }
+
+        self.chunk.write_opcode(OpCode::Select, line);
+        self.chunk.write(cases.len() as u8, line);
+        self.chunk.write(if default_body.is_some() { 1 } else { 0 }, line);
+
+        let val_slot = self.add_local("(select_val)".to_string());
+        let winner_slot = self.add_local("(select_winner)".to_string());
+
+        let mut end_jumps = Vec::new();
+
+        for (idx, case) in cases.iter().enumerate() {
+            self.emit_get_local(winner_slot, line);
+            self.emit_constant(Value::Int(idx as i64), line);
+            self.chunk.write_opcode(OpCode::Equal, line);
+            let next_case_jump = self.emit_jump(OpCode::JumpIfFalse, line);
+            self.chunk.write_opcode(OpCode::Pop, line);
+
+            match case {
+                crate::ast::SelectCase::Recv { binding, body, .. } => {
+                    self.begin_scope();
+                    if let Some(b) = binding {
+                        self.emit_get_local(val_slot, line);
+                        self.add_local(b.clone());
+                    }
+                    let total = body.len();
+                    for (i, s) in body.iter().enumerate() {
+                        if is_expr && i == total - 1 {
+                            if let StmtKind::Expr(ref e) = s.kind {
+                                self.compile_expr(e)?;
+                                self.emit_set_local(res_slot, line);
+                                self.chunk.write_opcode(OpCode::Pop, line);
+                            } else {
+                                self.compile_stmt(s, false)?;
+                            }
+                        } else {
+                            self.compile_stmt(s, false)?;
+                        }
+                    }
+                    self.end_scope();
+                }
+                crate::ast::SelectCase::Send { body, .. } => {
+                    self.begin_scope();
+                    let total = body.len();
+                    for (i, s) in body.iter().enumerate() {
+                        if is_expr && i == total - 1 {
+                            if let StmtKind::Expr(ref e) = s.kind {
+                                self.compile_expr(e)?;
+                                self.emit_set_local(res_slot, line);
+                                self.chunk.write_opcode(OpCode::Pop, line);
+                            } else {
+                                self.compile_stmt(s, false)?;
+                            }
+                        } else {
+                            self.compile_stmt(s, false)?;
+                        }
+                    }
+                    self.end_scope();
+                }
+            }
+
+            let end_jump = self.emit_jump(OpCode::Jump, line);
+            end_jumps.push(end_jump);
+
+            self.patch_jump(next_case_jump)?;
+            self.chunk.write_opcode(OpCode::Pop, line);
+        }
+
+        if let Some(def) = default_body {
+            self.begin_scope();
+            let total = def.len();
+            for (i, s) in def.iter().enumerate() {
+                if is_expr && i == total - 1 {
+                    if let StmtKind::Expr(ref e) = s.kind {
+                        self.compile_expr(e)?;
+                        self.emit_set_local(res_slot, line);
+                        self.chunk.write_opcode(OpCode::Pop, line);
+                    } else {
+                        self.compile_stmt(s, false)?;
+                    }
+                } else {
+                    self.compile_stmt(s, false)?;
+                }
+            }
+            self.end_scope();
+            let end_jump = self.emit_jump(OpCode::Jump, line);
+            end_jumps.push(end_jump);
+        }
+
+        for j in end_jumps {
+            self.patch_jump(j)?;
+        }
+
+        self.locals.pop();
+        self.chunk.write_opcode(OpCode::Pop, line);
+        self.locals.pop();
+        self.chunk.write_opcode(OpCode::Pop, line);
+
+        if is_expr {
+            self.locals.pop();
+        } else {
+            self.locals.pop();
+            self.chunk.write_opcode(OpCode::Pop, line);
+            if is_last {
+                self.chunk.write_opcode(OpCode::Nil, line);
+            }
+        }
+
+        Ok(())
+    }
     fn compile_binding_pattern(&mut self, pattern: &BindingPattern) -> Result<(), String> {
         let line = self.current_line;
         match pattern {
@@ -1041,6 +1189,20 @@ impl Compiler {
                 self.compile_expr(path)?;
                 self.chunk.write_opcode(OpCode::ImportModule, span.line);
                 Ok(())
+            }
+            Expr::ChanSend { channel, value, span } => {
+                self.compile_expr(channel)?;
+                self.compile_expr(value)?;
+                self.chunk.write_opcode(OpCode::ChanSend, span.line);
+                Ok(())
+            }
+            Expr::ChanRecv { channel, span } => {
+                self.compile_expr(channel)?;
+                self.chunk.write_opcode(OpCode::ChanRecv, span.line);
+                Ok(())
+            }
+            Expr::Select { cases, default_body, span } => {
+                self.compile_select_block(cases, default_body, span.line, false, true)
             }
             Expr::Await { expr, span } => {
                 self.compile_expr(expr)?;

@@ -68,6 +68,9 @@ pub enum OpCode {
     SetLocalLong,
     TailCall,
     Await,
+    ChanSend,
+    ChanRecv,
+    Select,
 }
 
 impl From<u8> for OpCode {

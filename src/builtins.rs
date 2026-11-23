@@ -56,6 +56,8 @@ pub fn register(env: &mut Environment) {
         ("spawn", builtin_spawn),
         ("join", builtin_join),
         ("channel", builtin_channel),
+        ("chan", builtin_chan),
+        ("timer", builtin_timer),
         ("send", builtin_send),
         ("recv", builtin_recv),
         ("try_recv", builtin_try_recv),
@@ -1459,6 +1461,56 @@ fn builtin_channel(
         _ => return Err(RuntimeError::new("channel expects 0 or 1 argument".into()).at(span)),
     };
     Ok(Value::Channel(crate::channel::Channel::new(capacity)))
+}
+
+pub fn builtin_chan(
+    _eval: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    let capacity = match args.len() {
+        0 => Some(0), // chan() defaults to 0 (unbuffered rendezvous)
+        1 => match args[0] {
+            Value::Int(n) => {
+                if n < 0 {
+                    return Err(
+                        RuntimeError::new("chan capacity must be non-negative".into()).at(span),
+                    );
+                }
+                Some(n as usize)
+            }
+            Value::Null => Some(0),
+            _ => return Err(RuntimeError::new("chan expects integer capacity".into()).at(span)),
+        },
+        _ => return Err(RuntimeError::new("chan expects 0 or 1 argument".into()).at(span)),
+    };
+    Ok(Value::Channel(crate::channel::Channel::new(capacity)))
+}
+
+pub fn builtin_timer(
+    _eval: &mut Evaluator,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<Value, RuntimeError> {
+    expect_args("timer", 1, &args, span)?;
+    let ms = match args[0] {
+        Value::Int(n) => {
+            if n < 0 {
+                return Err(RuntimeError::new("timer duration must be non-negative".into()).at(span));
+            }
+            n
+        }
+        _ => return Err(RuntimeError::new("timer expects integer milliseconds".into()).at(span)),
+    };
+    let ch = crate::channel::Channel::new(Some(1));
+    let ch_clone = ch.clone();
+    std::thread::spawn(move || {
+        if ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+        }
+        let _ = ch_clone.send(Value::Int(ms), Span::new(1, 1));
+    });
+    Ok(Value::Channel(ch))
 }
 
 fn builtin_send(
