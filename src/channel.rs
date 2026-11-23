@@ -14,6 +14,12 @@ fn next_waiter_id() -> u64 {
     NEXT_WAITER_ID.fetch_add(1, Ordering::Relaxed)
 }
 
+static NEXT_TOKEN_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_token_id() -> u64 {
+    NEXT_TOKEN_ID.fetch_add(1, Ordering::Relaxed)
+}
+
 #[derive(Clone)]
 pub struct SelectWinner {
     pub case_idx: usize,
@@ -21,6 +27,7 @@ pub struct SelectWinner {
 }
 
 pub struct SelectToken {
+    pub id: u64,
     pub state: Mutex<Option<SelectWinner>>,
     pub cond: Condvar,
 }
@@ -28,9 +35,174 @@ pub struct SelectToken {
 impl SelectToken {
     pub fn new() -> Self {
         Self {
+            id: next_token_id(),
             state: Mutex::new(None),
             cond: Condvar::new(),
         }
+    }
+}
+
+#[derive(Debug)]
+enum RendezvousResult<T> {
+    Success(T),
+    CallerAlreadyWon,
+    WaiterDead,
+}
+
+fn try_rendezvous_recv(
+    recv_tok: &Arc<SelectToken>,
+    recv_case: usize,
+    sw: &SenderWaiter,
+) -> RendezvousResult<Value> {
+    if *sw.is_closed_err.lock().unwrap() {
+        return RendezvousResult::WaiterDead;
+    }
+
+    if let Some(ref send_tok) = sw.token {
+        if Arc::ptr_eq(recv_tok, send_tok) || recv_tok.id == send_tok.id {
+            return RendezvousResult::WaiterDead;
+        }
+
+        // Canonical total lock ordering: always lock lower ID token first, higher ID second.
+        if recv_tok.id < send_tok.id {
+            let mut recv_guard = recv_tok.state.lock().unwrap();
+            if recv_guard.is_some() {
+                return RendezvousResult::CallerAlreadyWon;
+            }
+            let mut send_guard = send_tok.state.lock().unwrap();
+            if send_guard.is_some() {
+                return RendezvousResult::WaiterDead;
+            }
+            let val = sw.val.clone();
+            *recv_guard = Some(SelectWinner {
+                case_idx: recv_case,
+                value: Some(val.clone()),
+            });
+            *send_guard = Some(SelectWinner {
+                case_idx: sw.case_idx,
+                value: None,
+            });
+            drop(send_guard);
+            drop(recv_guard);
+            send_tok.cond.notify_one();
+            recv_tok.cond.notify_one();
+            RendezvousResult::Success(val)
+        } else {
+            let mut send_guard = send_tok.state.lock().unwrap();
+            if send_guard.is_some() {
+                return RendezvousResult::WaiterDead;
+            }
+            let mut recv_guard = recv_tok.state.lock().unwrap();
+            if recv_guard.is_some() {
+                return RendezvousResult::CallerAlreadyWon;
+            }
+            let val = sw.val.clone();
+            *recv_guard = Some(SelectWinner {
+                case_idx: recv_case,
+                value: Some(val.clone()),
+            });
+            *send_guard = Some(SelectWinner {
+                case_idx: sw.case_idx,
+                value: None,
+            });
+            drop(recv_guard);
+            drop(send_guard);
+            send_tok.cond.notify_one();
+            recv_tok.cond.notify_one();
+            RendezvousResult::Success(val)
+        }
+    } else {
+        // Plain sender waiter (non-select)
+        let mut recv_guard = recv_tok.state.lock().unwrap();
+        if recv_guard.is_some() {
+            return RendezvousResult::CallerAlreadyWon;
+        }
+        let val = sw.val.clone();
+        *sw.done_mutex.lock().unwrap() = true;
+        sw.done_cond.notify_one();
+        *recv_guard = Some(SelectWinner {
+            case_idx: recv_case,
+            value: Some(val.clone()),
+        });
+        drop(recv_guard);
+        recv_tok.cond.notify_one();
+        RendezvousResult::Success(val)
+    }
+}
+
+fn try_rendezvous_send(
+    send_tok: &Arc<SelectToken>,
+    send_case: usize,
+    val: Value,
+    rw: &ReceiverWaiter,
+) -> RendezvousResult<()> {
+    if let Some(ref recv_tok) = rw.token {
+        if Arc::ptr_eq(send_tok, recv_tok) || send_tok.id == recv_tok.id {
+            return RendezvousResult::WaiterDead;
+        }
+
+        // Canonical total lock ordering: always lock lower ID token first, higher ID second.
+        if send_tok.id < recv_tok.id {
+            let mut send_guard = send_tok.state.lock().unwrap();
+            if send_guard.is_some() {
+                return RendezvousResult::CallerAlreadyWon;
+            }
+            let mut recv_guard = recv_tok.state.lock().unwrap();
+            if recv_guard.is_some() {
+                return RendezvousResult::WaiterDead;
+            }
+            *send_guard = Some(SelectWinner {
+                case_idx: send_case,
+                value: None,
+            });
+            *recv_guard = Some(SelectWinner {
+                case_idx: rw.case_idx,
+                value: Some(val),
+            });
+            drop(recv_guard);
+            drop(send_guard);
+            recv_tok.cond.notify_one();
+            send_tok.cond.notify_one();
+            RendezvousResult::Success(())
+        } else {
+            let mut recv_guard = recv_tok.state.lock().unwrap();
+            if recv_guard.is_some() {
+                return RendezvousResult::WaiterDead;
+            }
+            let mut send_guard = send_tok.state.lock().unwrap();
+            if send_guard.is_some() {
+                return RendezvousResult::CallerAlreadyWon;
+            }
+            *send_guard = Some(SelectWinner {
+                case_idx: send_case,
+                value: None,
+            });
+            *recv_guard = Some(SelectWinner {
+                case_idx: rw.case_idx,
+                value: Some(val),
+            });
+            drop(send_guard);
+            drop(recv_guard);
+            recv_tok.cond.notify_one();
+            send_tok.cond.notify_one();
+            RendezvousResult::Success(())
+        }
+    } else {
+        // Plain receiver waiter (non-select)
+        let mut send_guard = send_tok.state.lock().unwrap();
+        if send_guard.is_some() {
+            return RendezvousResult::CallerAlreadyWon;
+        }
+        *rw.slot.lock().unwrap() = Some(val);
+        *rw.done_mutex.lock().unwrap() = true;
+        rw.done_cond.notify_one();
+        *send_guard = Some(SelectWinner {
+            case_idx: send_case,
+            value: None,
+        });
+        drop(send_guard);
+        send_tok.cond.notify_one();
+        RendezvousResult::Success(())
     }
 }
 
@@ -74,6 +246,7 @@ impl SenderWaiter {
                     case_idx: self.case_idx,
                     value: None,
                 });
+                drop(guard);
                 tok.cond.notify_one();
                 true
             } else {
@@ -113,6 +286,7 @@ impl ReceiverWaiter {
                     case_idx: self.case_idx,
                     value: Some(val),
                 });
+                drop(guard);
                 tok.cond.notify_one();
                 true
             } else {
@@ -503,35 +677,37 @@ impl Channel {
         if inner.capacity != Some(0) {
             if let Some(val) = inner.queue.pop_front() {
                 let mut guard = token.state.lock().unwrap();
-                if guard.is_none() {
-                    let mut skipped = Vec::new();
-                    while let Some(sw) = inner.pop_active_send_waiter() {
-                        if let Some(ref sw_tok) = sw.token {
-                            if Arc::ptr_eq(sw_tok, token) {
-                                skipped.push(sw);
-                                continue;
-                            }
-                        }
-                        let s_val = sw.val.clone();
-                        if sw.wake() {
-                            inner.queue.push_back(s_val);
-                            break;
-                        }
-                    }
-                    for s in skipped.into_iter().rev() {
-                        inner.send_waiters.push_front(s);
-                    }
-                    self.not_full.notify_one();
-                    *guard = Some(SelectWinner {
-                        case_idx,
-                        value: Some(val.clone()),
-                    });
-                    return Some(val);
-                } else {
+                if guard.is_some() {
                     // Token already claimed elsewhere, put back
                     inner.queue.push_front(val);
                     return None;
                 }
+                *guard = Some(SelectWinner {
+                    case_idx,
+                    value: Some(val.clone()),
+                });
+                drop(guard);
+                token.cond.notify_one();
+
+                let mut skipped = Vec::new();
+                while let Some(sw) = inner.pop_active_send_waiter() {
+                    if let Some(ref sw_tok) = sw.token {
+                        if Arc::ptr_eq(sw_tok, token) {
+                            skipped.push(sw);
+                            continue;
+                        }
+                    }
+                    let s_val = sw.val.clone();
+                    if sw.wake() {
+                        inner.queue.push_back(s_val);
+                        break;
+                    }
+                }
+                for s in skipped.into_iter().rev() {
+                    inner.send_waiters.push_front(s);
+                }
+                self.not_full.notify_one();
+                return Some(val);
             }
         }
 
@@ -544,25 +720,23 @@ impl Channel {
                     continue;
                 }
             }
-            let mut guard = token.state.lock().unwrap();
-            if guard.is_none() {
-                let val = sw.val.clone();
-                if sw.wake() {
+            match try_rendezvous_recv(token, case_idx, &sw) {
+                RendezvousResult::Success(val) => {
                     for s in skipped.into_iter().rev() {
                         inner.send_waiters.push_front(s);
                     }
-                    *guard = Some(SelectWinner {
-                        case_idx,
-                        value: Some(val.clone()),
-                    });
                     return Some(val);
                 }
-            } else {
-                inner.send_waiters.push_front(sw);
-                for s in skipped.into_iter().rev() {
-                    inner.send_waiters.push_front(s);
+                RendezvousResult::CallerAlreadyWon => {
+                    inner.send_waiters.push_front(sw);
+                    for s in skipped.into_iter().rev() {
+                        inner.send_waiters.push_front(s);
+                    }
+                    return None;
                 }
-                return None;
+                RendezvousResult::WaiterDead => {
+                    continue;
+                }
             }
         }
         for s in skipped.into_iter().rev() {
@@ -577,6 +751,8 @@ impl Channel {
                     case_idx,
                     value: Some(Value::Null),
                 });
+                drop(guard);
+                token.cond.notify_one();
                 return Some(Value::Null);
             } else {
                 return None;
@@ -602,7 +778,7 @@ impl Channel {
         if let Some(ref expected) = inner.elem_type {
             if !check_value_type(&val, expected) {
                 return Err(RuntimeError::new(format!(
-                    "Type error: channel expects element type '{}', but got '{}'",
+                    "Type error: channel expects element type {}, but got {}",
                     expected,
                     val.type_name()
                 ))
@@ -619,24 +795,23 @@ impl Channel {
                     continue;
                 }
             }
-            let mut guard = token.state.lock().unwrap();
-            if guard.is_none() {
-                if rw.deliver(val.clone()) {
+            match try_rendezvous_send(token, case_idx, val.clone(), &rw) {
+                RendezvousResult::Success(_) => {
                     for r in skipped.into_iter().rev() {
                         inner.recv_waiters.push_front(r);
                     }
-                    *guard = Some(SelectWinner {
-                        case_idx,
-                        value: None,
-                    });
                     return Ok(true);
                 }
-            } else {
-                inner.recv_waiters.push_front(rw);
-                for r in skipped.into_iter().rev() {
-                    inner.recv_waiters.push_front(r);
+                RendezvousResult::CallerAlreadyWon => {
+                    inner.recv_waiters.push_front(rw);
+                    for r in skipped.into_iter().rev() {
+                        inner.recv_waiters.push_front(r);
+                    }
+                    return Ok(false);
                 }
-                return Ok(false);
+                RendezvousResult::WaiterDead => {
+                    continue;
+                }
             }
         }
         for r in skipped.into_iter().rev() {
@@ -659,6 +834,8 @@ impl Channel {
                         case_idx,
                         value: None,
                     });
+                    drop(guard);
+                    token.cond.notify_one();
                     return Ok(true);
                 } else {
                     return Ok(false);
@@ -696,27 +873,23 @@ impl Channel {
                         continue;
                     }
                 }
-                let mut guard = token.state.lock().unwrap();
-                if guard.is_none() {
-                    let val = sw.val.clone();
-                    if sw.wake() {
+                match try_rendezvous_recv(&token, case_idx, &sw) {
+                    RendezvousResult::Success(_) => {
                         for s in skipped.into_iter().rev() {
                             inner.send_waiters.push_front(s);
                         }
-                        *guard = Some(SelectWinner {
-                            case_idx,
-                            value: Some(val),
-                        });
-                        drop(guard);
-                        token.cond.notify_one();
                         return 0;
                     }
-                } else {
-                    inner.send_waiters.push_front(sw);
-                    for s in skipped.into_iter().rev() {
-                        inner.send_waiters.push_front(s);
+                    RendezvousResult::CallerAlreadyWon => {
+                        inner.send_waiters.push_front(sw);
+                        for s in skipped.into_iter().rev() {
+                            inner.send_waiters.push_front(s);
+                        }
+                        return 0;
                     }
-                    return 0;
+                    RendezvousResult::WaiterDead => {
+                        continue;
+                    }
                 }
             }
             for s in skipped.into_iter().rev() {
@@ -727,6 +900,13 @@ impl Channel {
             if let Some(val) = inner.queue.pop_front() {
                 let mut guard = token.state.lock().unwrap();
                 if guard.is_none() {
+                    *guard = Some(SelectWinner {
+                        case_idx,
+                        value: Some(val),
+                    });
+                    drop(guard);
+                    token.cond.notify_one();
+
                     let mut skipped = Vec::new();
                     while let Some(sw) = inner.pop_active_send_waiter() {
                         if let Some(ref sw_tok) = sw.token {
@@ -745,12 +925,6 @@ impl Channel {
                         inner.send_waiters.push_front(s);
                     }
                     self.not_full.notify_one();
-                    *guard = Some(SelectWinner {
-                        case_idx,
-                        value: Some(val),
-                    });
-                    drop(guard);
-                    token.cond.notify_one();
                     return 0;
                 } else {
                     inner.queue.push_front(val);
@@ -767,27 +941,23 @@ impl Channel {
                         continue;
                     }
                 }
-                let mut guard = token.state.lock().unwrap();
-                if guard.is_none() {
-                    let val = sw.val.clone();
-                    if sw.wake() {
+                match try_rendezvous_recv(&token, case_idx, &sw) {
+                    RendezvousResult::Success(_) => {
                         for s in skipped.into_iter().rev() {
                             inner.send_waiters.push_front(s);
                         }
-                        *guard = Some(SelectWinner {
-                            case_idx,
-                            value: Some(val),
-                        });
-                        drop(guard);
-                        token.cond.notify_one();
                         return 0;
                     }
-                } else {
-                    inner.send_waiters.push_front(sw);
-                    for s in skipped.into_iter().rev() {
-                        inner.send_waiters.push_front(s);
+                    RendezvousResult::CallerAlreadyWon => {
+                        inner.send_waiters.push_front(sw);
+                        for s in skipped.into_iter().rev() {
+                            inner.send_waiters.push_front(s);
+                        }
+                        return 0;
                     }
-                    return 0;
+                    RendezvousResult::WaiterDead => {
+                        continue;
+                    }
                 }
             }
             for s in skipped.into_iter().rev() {
@@ -821,7 +991,7 @@ impl Channel {
         if let Some(ref expected) = inner.elem_type {
             if !check_value_type(&val, expected) {
                 return Err(RuntimeError::new(format!(
-                    "Type error: channel expects element type '{}', but got '{}'",
+                    "Type error: channel expects element type {}, but got {}",
                     expected,
                     val.type_name()
                 ))
@@ -844,26 +1014,23 @@ impl Channel {
                         continue;
                     }
                 }
-                let mut guard = token.state.lock().unwrap();
-                if guard.is_none() {
-                    if rw.deliver(val.clone()) {
+                match try_rendezvous_send(&token, case_idx, val.clone(), &rw) {
+                    RendezvousResult::Success(_) => {
                         for r in skipped.into_iter().rev() {
                             inner.recv_waiters.push_front(r);
                         }
-                        *guard = Some(SelectWinner {
-                            case_idx,
-                            value: None,
-                        });
-                        drop(guard);
-                        token.cond.notify_one();
                         return Ok(0);
                     }
-                } else {
-                    inner.recv_waiters.push_front(rw);
-                    for r in skipped.into_iter().rev() {
-                        inner.recv_waiters.push_front(r);
+                    RendezvousResult::CallerAlreadyWon => {
+                        inner.recv_waiters.push_front(rw);
+                        for r in skipped.into_iter().rev() {
+                            inner.recv_waiters.push_front(r);
+                        }
+                        return Ok(0);
                     }
-                    return Ok(0);
+                    RendezvousResult::WaiterDead => {
+                        continue;
+                    }
                 }
             }
             for r in skipped.into_iter().rev() {
@@ -885,26 +1052,23 @@ impl Channel {
                         continue;
                     }
                 }
-                let mut guard = token.state.lock().unwrap();
-                if guard.is_none() {
-                    if rw.deliver(val.clone()) {
+                match try_rendezvous_send(&token, case_idx, val.clone(), &rw) {
+                    RendezvousResult::Success(_) => {
                         for r in skipped.into_iter().rev() {
                             inner.recv_waiters.push_front(r);
                         }
-                        *guard = Some(SelectWinner {
-                            case_idx,
-                            value: None,
-                        });
-                        drop(guard);
-                        token.cond.notify_one();
                         return Ok(0);
                     }
-                } else {
-                    inner.recv_waiters.push_front(rw);
-                    for r in skipped.into_iter().rev() {
-                        inner.recv_waiters.push_front(r);
+                    RendezvousResult::CallerAlreadyWon => {
+                        inner.recv_waiters.push_front(rw);
+                        for r in skipped.into_iter().rev() {
+                            inner.recv_waiters.push_front(r);
+                        }
+                        return Ok(0);
                     }
-                    return Ok(0);
+                    RendezvousResult::WaiterDead => {
+                        continue;
+                    }
                 }
             }
             for r in skipped.into_iter().rev() {

@@ -1,5 +1,11 @@
 use serde_json::json;
 use shae::{run, run_vm};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::thread;
+use shae::ast::Span;
+use shae::channel::{select_run, Channel, SelectOp, SelectOutcome};
+use shae::value::Value;
 
 #[test]
 fn test_unbuffered_rendezvous_direct_handover() {
@@ -539,4 +545,59 @@ fn test_concurrent_multi_sender_select_rendezvous() {
 
     let vm_res = run_vm(script).expect("VM execution failed");
     assert_eq!(vm_res.to_json(), json!([50, 50, 100]));
+}
+
+
+#[test]
+fn test_concurrent_mpmc_cross_traffic_select_rendezvous() {
+    for _pass in 1..=5 {
+        let channels: Vec<Arc<Channel>> = (0..4).map(|_| Channel::new(Some(0))).collect();
+        let total = Arc::new(AtomicUsize::new(0));
+        let active = Arc::new(AtomicUsize::new(4));
+        let mut receivers = Vec::new();
+        for _ in 0..4 {
+            let chans = channels.clone();
+            let tot = total.clone();
+            receivers.push(thread::spawn(move || {
+                let dummy = Span::new(1, 1);
+                loop {
+                    let ops: Vec<SelectOp> = chans.iter().map(|ch| SelectOp::Recv { channel: ch.clone() }).collect();
+                    match select_run(&ops, false, dummy) {
+                        Ok(SelectOutcome::Success { received_value: Some(Value::Null), .. }) => break,
+                        Ok(SelectOutcome::Success { received_value: Some(_), .. }) => {
+                            tot.fetch_add(1, Ordering::SeqCst);
+                        }
+                        _ => {}
+                    }
+                }
+            }));
+        }
+        let mut senders = Vec::new();
+        for s in 0..4 {
+            let chans = channels.clone();
+            let act = active.clone();
+            senders.push(thread::spawn(move || {
+                let dummy = Span::new(1, 1);
+                for i in 0..100 {
+                    let ops = vec![
+                        SelectOp::Send { channel: chans[s % 4].clone(), value: Value::Int(i) },
+                        SelectOp::Send { channel: chans[(s + 1) % 4].clone(), value: Value::Int(i) },
+                    ];
+                    let _ = select_run(&ops, false, dummy).unwrap();
+                }
+                if act.fetch_sub(1, Ordering::SeqCst) == 1 {
+                    for ch in &chans {
+                        ch.close();
+                    }
+                }
+            }));
+        }
+        for h in senders {
+            h.join().unwrap();
+        }
+        for h in receivers {
+            h.join().unwrap();
+        }
+        assert_eq!(total.load(Ordering::SeqCst), 400);
+    }
 }
