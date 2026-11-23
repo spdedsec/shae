@@ -128,7 +128,10 @@ impl Scheduler {
     /// Notifies one sleeping worker that work is available.
     fn wake_one(&self) {
         if self.sleeping_count.load(Ordering::SeqCst) > 0 {
-            let _guard = self.park_lock.lock().unwrap();
+            let _guard = match self.park_lock.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
             self.park_cvar.notify_one();
         }
     }
@@ -136,7 +139,10 @@ impl Scheduler {
     /// Signals shutdown to all worker threads.
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::SeqCst);
-        let _guard = self.park_lock.lock().unwrap();
+        let _guard = match self.park_lock.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
         self.park_cvar.notify_all();
     }
 }

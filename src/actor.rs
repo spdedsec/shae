@@ -1734,7 +1734,7 @@ impl SupervisorRef {
         let loop_inner = Arc::clone(&inner);
         let thread_name = format!("shae-sup-{}", id_str);
         let handle = match thread::Builder::new().name(thread_name).spawn(move || {
-            *loop_inner.supervisor_thread_id.lock().unwrap() = Some(thread::current().id());
+            *loop_inner.supervisor_thread_id.lock().unwrap_or_else(|p| p.into_inner()) = Some(thread::current().id());
             supervisor_monitor_loop(loop_inner, rx);
         }) {
             Ok(h) => h,
@@ -1988,7 +1988,16 @@ impl SupervisorRef {
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
             };
-            if let Some(child) = state.get_mut(id) {
+            let sup_alive = match self.inner.status.read() {
+                Ok(s) => s.is_alive(),
+                Err(p) => p.into_inner().is_alive(),
+            };
+            if !sup_alive {
+                if let Some(child) = state.get_mut(id) {
+                    child.explicitly_restarting = false;
+                }
+                false
+            } else if let Some(child) = state.get_mut(id) {
                 if child.explicitly_restarting && Arc::ptr_eq(&child.actor, &old_actor) {
                     child.actor = Arc::clone(&new_actor);
                     child.restart_count += 1;
@@ -2006,6 +2015,13 @@ impl SupervisorRef {
             new_actor.stop();
             let _ = new_actor.join();
             new_actor.inner.mailbox.clear();
+            let sup_alive = match self.inner.status.read() {
+                Ok(s) => s.is_alive(),
+                Err(p) => p.into_inner().is_alive(),
+            };
+            if !sup_alive {
+                return Err(SupervisorError::SupervisorNotAlive);
+            }
             return Err(SupervisorError::ChildNotFound(id.to_string()));
         }
 
@@ -2056,7 +2072,7 @@ impl SupervisorRef {
         self.inner.cascade_stop_all();
 
         let current_tid = thread::current().id();
-        let sup_tid = *self.inner.supervisor_thread_id.lock().unwrap();
+        let sup_tid = *self.inner.supervisor_thread_id.lock().unwrap_or_else(|p| p.into_inner());
         if Some(current_tid) != sup_tid {
             let handle = {
                 let mut guard = match self.inner.thread_handle.lock() {
@@ -2075,7 +2091,7 @@ impl SupervisorRef {
 
     pub fn join(&self) -> Result<(), SupervisorError> {
         let current_tid = thread::current().id();
-        let sup_tid = *self.inner.supervisor_thread_id.lock().unwrap();
+        let sup_tid = *self.inner.supervisor_thread_id.lock().unwrap_or_else(|p| p.into_inner());
         if Some(current_tid) == sup_tid {
             return Ok(());
         }

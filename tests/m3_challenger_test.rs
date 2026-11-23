@@ -1,8 +1,15 @@
 use serde_json::json;
 use shae::{run, run_vm};
 use std::fs;
+use std::thread;
+use std::time::Duration;
 
 fn get_thread_count() -> usize {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let _ = shae::scheduler::global_scheduler();
+        thread::sleep(Duration::from_millis(25));
+    });
     if let Ok(status) = fs::read_to_string("/proc/self/status") {
         for line in status.lines() {
             if line.starts_with("Threads:") {

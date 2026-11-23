@@ -13,9 +13,17 @@
 
 use serde_json::json;
 use shae::{run, run_vm};
+use std::thread;
+use std::time::Duration;
+
 static SERIAL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn get_os_threads() -> Option<usize> {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let _ = shae::scheduler::global_scheduler();
+        thread::sleep(Duration::from_millis(25));
+    });
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
         for line in status.lines() {
             if line.starts_with("Threads:") {
@@ -333,7 +341,7 @@ leaf_sup.stop()
 
 #[test]
 fn test_no_thread_leak_rapid_spawn_stop() {
-    let _lock = SERIAL_TEST_LOCK.lock().unwrap();
+    let _lock = SERIAL_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let threads_before = get_os_threads();
 
     let script = r#"
