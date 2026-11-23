@@ -46,6 +46,9 @@ pub struct SenderWaiter {
 
 impl SenderWaiter {
     pub fn is_active(&self) -> bool {
+        if *self.is_closed_err.lock().unwrap() {
+            return false;
+        }
         if let Some(ref tok) = self.token {
             tok.state.lock().unwrap().is_none()
         } else {
@@ -53,7 +56,17 @@ impl SenderWaiter {
         }
     }
 
-    pub fn wake(&self) {
+    pub fn wake(&self) -> bool {
+        if *self.is_closed_err.lock().unwrap() {
+            if self.token.is_some() {
+                // Select senders must NOT report success on closed channels
+                return false;
+            } else {
+                *self.done_mutex.lock().unwrap() = true;
+                self.done_cond.notify_one();
+                return false;
+            }
+        }
         if let Some(ref tok) = self.token {
             let mut guard = tok.state.lock().unwrap();
             if guard.is_none() {
@@ -62,10 +75,14 @@ impl SenderWaiter {
                     value: None,
                 });
                 tok.cond.notify_one();
+                true
+            } else {
+                false
             }
         } else {
             *self.done_mutex.lock().unwrap() = true;
             self.done_cond.notify_one();
+            true
         }
     }
 }
@@ -88,7 +105,7 @@ impl ReceiverWaiter {
         }
     }
 
-    pub fn deliver(&self, val: Value) {
+    pub fn deliver(&self, val: Value) -> bool {
         if let Some(ref tok) = self.token {
             let mut guard = tok.state.lock().unwrap();
             if guard.is_none() {
@@ -97,11 +114,15 @@ impl ReceiverWaiter {
                     value: Some(val),
                 });
                 tok.cond.notify_one();
+                true
+            } else {
+                false
             }
         } else {
             *self.slot.lock().unwrap() = Some(val);
             *self.done_mutex.lock().unwrap() = true;
             self.done_cond.notify_one();
+            true
         }
     }
 }
@@ -233,18 +254,7 @@ impl Channel {
         // Unbuffered rendezvous channel
         if inner.capacity == Some(0) {
             while let Some(rw) = inner.pop_active_recv_waiter() {
-                if let Some(ref tok) = rw.token {
-                    let mut guard = tok.state.lock().unwrap();
-                    if guard.is_none() {
-                        *guard = Some(SelectWinner {
-                            case_idx: rw.case_idx,
-                            value: Some(val),
-                        });
-                        tok.cond.notify_one();
-                        return Ok(());
-                    }
-                } else {
-                    rw.deliver(val);
+                if rw.deliver(val.clone()) {
                     return Ok(());
                 }
             }
@@ -285,19 +295,8 @@ impl Channel {
             }
 
             // Direct handover to waiting receiver if any
-            if let Some(rw) = inner.pop_active_recv_waiter() {
-                if let Some(ref tok) = rw.token {
-                    let mut guard = tok.state.lock().unwrap();
-                    if guard.is_none() {
-                        *guard = Some(SelectWinner {
-                            case_idx: rw.case_idx,
-                            value: Some(val),
-                        });
-                        tok.cond.notify_one();
-                        return Ok(());
-                    }
-                } else {
-                    rw.deliver(val);
+            while let Some(rw) = inner.pop_active_recv_waiter() {
+                if rw.deliver(val.clone()) {
                     return Ok(());
                 }
             }
@@ -322,18 +321,7 @@ impl Channel {
         if inner.capacity == Some(0) {
             while let Some(sw) = inner.pop_active_send_waiter() {
                 let val = sw.val.clone();
-                if let Some(ref tok) = sw.token {
-                    let mut guard = tok.state.lock().unwrap();
-                    if guard.is_none() {
-                        *guard = Some(SelectWinner {
-                            case_idx: sw.case_idx,
-                            value: None,
-                        });
-                        tok.cond.notify_one();
-                        return Ok(val);
-                    }
-                } else {
-                    sw.wake();
+                if sw.wake() {
                     return Ok(val);
                 }
             }
@@ -387,20 +375,23 @@ impl Channel {
         loop {
             if let Some(val) = inner.queue.pop_front() {
                 // Wake waiting sender if space freed
-                if let Some(sw) = inner.pop_active_send_waiter() {
+                while let Some(sw) = inner.pop_active_send_waiter() {
                     let s_val = sw.val.clone();
-                    sw.wake();
-                    inner.queue.push_back(s_val);
+                    if sw.wake() {
+                        inner.queue.push_back(s_val);
+                        break;
+                    }
                 }
                 self.not_full.notify_one();
                 return Ok(val);
             }
 
             // If queue is empty, check if sender is waiting
-            if let Some(sw) = inner.pop_active_send_waiter() {
+            while let Some(sw) = inner.pop_active_send_waiter() {
                 let val = sw.val.clone();
-                sw.wake();
-                return Ok(val);
+                if sw.wake() {
+                    return Ok(val);
+                }
             }
 
             if inner.closed {
@@ -513,10 +504,22 @@ impl Channel {
             if let Some(val) = inner.queue.pop_front() {
                 let mut guard = token.state.lock().unwrap();
                 if guard.is_none() {
-                    if let Some(sw) = inner.pop_active_send_waiter() {
+                    let mut skipped = Vec::new();
+                    while let Some(sw) = inner.pop_active_send_waiter() {
+                        if let Some(ref sw_tok) = sw.token {
+                            if Arc::ptr_eq(sw_tok, token) {
+                                skipped.push(sw);
+                                continue;
+                            }
+                        }
                         let s_val = sw.val.clone();
-                        sw.wake();
-                        inner.queue.push_back(s_val);
+                        if sw.wake() {
+                            inner.queue.push_back(s_val);
+                            break;
+                        }
+                    }
+                    for s in skipped.into_iter().rev() {
+                        inner.send_waiters.push_front(s);
                     }
                     self.not_full.notify_one();
                     *guard = Some(SelectWinner {
@@ -533,19 +536,37 @@ impl Channel {
         }
 
         // 2. Waiting sender handover
+        let mut skipped = Vec::new();
         while let Some(sw) = inner.pop_active_send_waiter() {
+            if let Some(ref sw_tok) = sw.token {
+                if Arc::ptr_eq(sw_tok, token) {
+                    skipped.push(sw);
+                    continue;
+                }
+            }
             let mut guard = token.state.lock().unwrap();
             if guard.is_none() {
                 let val = sw.val.clone();
-                sw.wake();
-                *guard = Some(SelectWinner {
-                    case_idx,
-                    value: Some(val.clone()),
-                });
-                return Some(val);
+                if sw.wake() {
+                    for s in skipped.into_iter().rev() {
+                        inner.send_waiters.push_front(s);
+                    }
+                    *guard = Some(SelectWinner {
+                        case_idx,
+                        value: Some(val.clone()),
+                    });
+                    return Some(val);
+                }
             } else {
+                inner.send_waiters.push_front(sw);
+                for s in skipped.into_iter().rev() {
+                    inner.send_waiters.push_front(s);
+                }
                 return None;
             }
+        }
+        for s in skipped.into_iter().rev() {
+            inner.send_waiters.push_front(s);
         }
 
         // 3. Closed channel
@@ -590,18 +611,36 @@ impl Channel {
         }
 
         // 1. Direct handover to waiting receiver
+        let mut skipped = Vec::new();
         while let Some(rw) = inner.pop_active_recv_waiter() {
+            if let Some(ref rw_tok) = rw.token {
+                if Arc::ptr_eq(rw_tok, token) {
+                    skipped.push(rw);
+                    continue;
+                }
+            }
             let mut guard = token.state.lock().unwrap();
             if guard.is_none() {
-                rw.deliver(val);
-                *guard = Some(SelectWinner {
-                    case_idx,
-                    value: None,
-                });
-                return Ok(true);
+                if rw.deliver(val.clone()) {
+                    for r in skipped.into_iter().rev() {
+                        inner.recv_waiters.push_front(r);
+                    }
+                    *guard = Some(SelectWinner {
+                        case_idx,
+                        value: None,
+                    });
+                    return Ok(true);
+                }
             } else {
+                inner.recv_waiters.push_front(rw);
+                for r in skipped.into_iter().rev() {
+                    inner.recv_waiters.push_front(r);
+                }
                 return Ok(false);
             }
+        }
+        for r in skipped.into_iter().rev() {
+            inner.recv_waiters.push_front(r);
         }
 
         // 2. Buffered room
@@ -632,6 +671,131 @@ impl Channel {
 
     pub fn register_recv_waiter(&self, token: Arc<SelectToken>, case_idx: usize) -> u64 {
         let mut inner = self.inner.lock().unwrap();
+
+        // 1. Closed channel: immediately satisfy with Null
+        if inner.closed {
+            let mut guard = token.state.lock().unwrap();
+            if guard.is_none() {
+                *guard = Some(SelectWinner {
+                    case_idx,
+                    value: Some(Value::Null),
+                });
+                drop(guard);
+                token.cond.notify_one();
+            }
+            return 0;
+        }
+
+        // 2. Unbuffered rendezvous: check if active sender is present
+        if inner.capacity == Some(0) {
+            let mut skipped = Vec::new();
+            while let Some(sw) = inner.pop_active_send_waiter() {
+                if let Some(ref sw_tok) = sw.token {
+                    if Arc::ptr_eq(sw_tok, &token) {
+                        skipped.push(sw);
+                        continue;
+                    }
+                }
+                let mut guard = token.state.lock().unwrap();
+                if guard.is_none() {
+                    let val = sw.val.clone();
+                    if sw.wake() {
+                        for s in skipped.into_iter().rev() {
+                            inner.send_waiters.push_front(s);
+                        }
+                        *guard = Some(SelectWinner {
+                            case_idx,
+                            value: Some(val),
+                        });
+                        drop(guard);
+                        token.cond.notify_one();
+                        return 0;
+                    }
+                } else {
+                    inner.send_waiters.push_front(sw);
+                    for s in skipped.into_iter().rev() {
+                        inner.send_waiters.push_front(s);
+                    }
+                    return 0;
+                }
+            }
+            for s in skipped.into_iter().rev() {
+                inner.send_waiters.push_front(s);
+            }
+        } else {
+            // 3. Buffered channel: check queue or waiting senders
+            if let Some(val) = inner.queue.pop_front() {
+                let mut guard = token.state.lock().unwrap();
+                if guard.is_none() {
+                    let mut skipped = Vec::new();
+                    while let Some(sw) = inner.pop_active_send_waiter() {
+                        if let Some(ref sw_tok) = sw.token {
+                            if Arc::ptr_eq(sw_tok, &token) {
+                                skipped.push(sw);
+                                continue;
+                            }
+                        }
+                        let s_val = sw.val.clone();
+                        if sw.wake() {
+                            inner.queue.push_back(s_val);
+                            break;
+                        }
+                    }
+                    for s in skipped.into_iter().rev() {
+                        inner.send_waiters.push_front(s);
+                    }
+                    self.not_full.notify_one();
+                    *guard = Some(SelectWinner {
+                        case_idx,
+                        value: Some(val),
+                    });
+                    drop(guard);
+                    token.cond.notify_one();
+                    return 0;
+                } else {
+                    inner.queue.push_front(val);
+                    return 0;
+                }
+            }
+
+            // Queue empty, check if sender is waiting
+            let mut skipped = Vec::new();
+            while let Some(sw) = inner.pop_active_send_waiter() {
+                if let Some(ref sw_tok) = sw.token {
+                    if Arc::ptr_eq(sw_tok, &token) {
+                        skipped.push(sw);
+                        continue;
+                    }
+                }
+                let mut guard = token.state.lock().unwrap();
+                if guard.is_none() {
+                    let val = sw.val.clone();
+                    if sw.wake() {
+                        for s in skipped.into_iter().rev() {
+                            inner.send_waiters.push_front(s);
+                        }
+                        *guard = Some(SelectWinner {
+                            case_idx,
+                            value: Some(val),
+                        });
+                        drop(guard);
+                        token.cond.notify_one();
+                        return 0;
+                    }
+                } else {
+                    inner.send_waiters.push_front(sw);
+                    for s in skipped.into_iter().rev() {
+                        inner.send_waiters.push_front(s);
+                    }
+                    return 0;
+                }
+            }
+            for s in skipped.into_iter().rev() {
+                inner.send_waiters.push_front(s);
+            }
+        }
+
+        // 4. No ready counterpart: append waiter
         let id = next_waiter_id();
         inner.recv_waiters.push_back(ReceiverWaiter {
             id,
@@ -649,8 +813,123 @@ impl Channel {
         token: Arc<SelectToken>,
         case_idx: usize,
         val: Value,
-    ) -> u64 {
+        span: Span,
+    ) -> Result<u64, RuntimeError> {
         let mut inner = self.inner.lock().unwrap();
+
+        // 1. Type validation
+        if let Some(ref expected) = inner.elem_type {
+            if !check_value_type(&val, expected) {
+                return Err(RuntimeError::new(format!(
+                    "Type error: channel expects element type '{}', but got '{}'",
+                    expected,
+                    val.type_name()
+                ))
+                .at(span));
+            }
+        }
+
+        // 2. Closed channel: cannot send on closed channel!
+        if inner.closed {
+            return Err(RuntimeError::new("Cannot send on a closed channel".into()).at(span));
+        }
+
+        // 3. Unbuffered rendezvous: direct handover to waiting receiver
+        if inner.capacity == Some(0) {
+            let mut skipped = Vec::new();
+            while let Some(rw) = inner.pop_active_recv_waiter() {
+                if let Some(ref rw_tok) = rw.token {
+                    if Arc::ptr_eq(rw_tok, &token) {
+                        skipped.push(rw);
+                        continue;
+                    }
+                }
+                let mut guard = token.state.lock().unwrap();
+                if guard.is_none() {
+                    if rw.deliver(val.clone()) {
+                        for r in skipped.into_iter().rev() {
+                            inner.recv_waiters.push_front(r);
+                        }
+                        *guard = Some(SelectWinner {
+                            case_idx,
+                            value: None,
+                        });
+                        drop(guard);
+                        token.cond.notify_one();
+                        return Ok(0);
+                    }
+                } else {
+                    inner.recv_waiters.push_front(rw);
+                    for r in skipped.into_iter().rev() {
+                        inner.recv_waiters.push_front(r);
+                    }
+                    return Ok(0);
+                }
+            }
+            for r in skipped.into_iter().rev() {
+                inner.recv_waiters.push_front(r);
+            }
+        } else {
+            // 4. Buffered channel
+            let has_space = match inner.capacity {
+                Some(cap) => inner.queue.len() < cap,
+                None => true,
+            };
+
+            // First check if receiver is waiting
+            let mut skipped = Vec::new();
+            while let Some(rw) = inner.pop_active_recv_waiter() {
+                if let Some(ref rw_tok) = rw.token {
+                    if Arc::ptr_eq(rw_tok, &token) {
+                        skipped.push(rw);
+                        continue;
+                    }
+                }
+                let mut guard = token.state.lock().unwrap();
+                if guard.is_none() {
+                    if rw.deliver(val.clone()) {
+                        for r in skipped.into_iter().rev() {
+                            inner.recv_waiters.push_front(r);
+                        }
+                        *guard = Some(SelectWinner {
+                            case_idx,
+                            value: None,
+                        });
+                        drop(guard);
+                        token.cond.notify_one();
+                        return Ok(0);
+                    }
+                } else {
+                    inner.recv_waiters.push_front(rw);
+                    for r in skipped.into_iter().rev() {
+                        inner.recv_waiters.push_front(r);
+                    }
+                    return Ok(0);
+                }
+            }
+            for r in skipped.into_iter().rev() {
+                inner.recv_waiters.push_front(r);
+            }
+
+            if has_space {
+                let mut guard = token.state.lock().unwrap();
+                if guard.is_none() {
+                    inner.queue.push_back(val.clone());
+                    self.not_empty.notify_one();
+                    *guard = Some(SelectWinner {
+                        case_idx,
+                        value: None,
+                    });
+                    drop(guard);
+                    token.cond.notify_one();
+                    return Ok(0);
+                } else {
+                    return Ok(0);
+                }
+            }
+        }
+
+        // 5. No receiver available and no buffer space: register as waiting sender
         let id = next_waiter_id();
         inner.send_waiters.push_back(SenderWaiter {
             id,
@@ -661,10 +940,13 @@ impl Channel {
             done_mutex: Arc::new(Mutex::new(false)),
             is_closed_err: Arc::new(Mutex::new(false)),
         });
-        id
+        Ok(id)
     }
 
     pub fn remove_waiter(&self, id: u64) {
+        if id == 0 {
+            return;
+        }
         let mut inner = self.inner.lock().unwrap();
         inner.send_waiters.retain(|w| w.id != id);
         inner.recv_waiters.retain(|w| w.id != id);
@@ -759,14 +1041,30 @@ pub fn select_run(
     let mut registrations: Vec<(Arc<Channel>, u64)> = Vec::with_capacity(cases.len());
 
     for (idx, op) in cases.iter().enumerate() {
+        if token.state.lock().unwrap().is_some() {
+            break;
+        }
         match op {
             SelectOp::Recv { channel } => {
                 let id = channel.register_recv_waiter(token.clone(), idx);
-                registrations.push((channel.clone(), id));
+                if id != 0 {
+                    registrations.push((channel.clone(), id));
+                }
             }
             SelectOp::Send { channel, value } => {
-                let id = channel.register_send_waiter(token.clone(), idx, value.clone());
-                registrations.push((channel.clone(), id));
+                match channel.register_send_waiter(token.clone(), idx, value.clone(), span) {
+                    Ok(id) => {
+                        if id != 0 {
+                            registrations.push((channel.clone(), id));
+                        }
+                    }
+                    Err(err) => {
+                        for (ch, wid) in registrations {
+                            ch.remove_waiter(wid);
+                        }
+                        return Err(err);
+                    }
+                }
             }
         }
     }

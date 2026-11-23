@@ -380,3 +380,111 @@ winner
     let vm_res = run_vm(script).expect("VM execution failed");
     assert_eq!(vm_res.to_json(), json!("fast"));
 }
+
+
+#[test]
+fn test_concurrent_ping_pong_select_deadlock_free() {
+    let script = r#"
+        let ch1 = chan(0)
+        let ch2 = chan(0)
+        let t = spawn(fn() {
+            let i = 0
+            while i < 100 {
+                ch1 <- i
+                let reply = <-ch2
+                i = i + 1
+            }
+        })
+        let count = 0
+        while count < 100 {
+            select {
+                case val = <-ch1 => {
+                    count = count + 1
+                    ch2 <- val
+                }
+            }
+        }
+        join(t)
+        assert(count == 100)
+    "#;
+    let res = run(script);
+    assert!(res.is_ok(), "AST ping pong select failed: {:?}", res);
+    let res_vm = run_vm(script);
+    assert!(res_vm.is_ok(), "VM ping pong select failed: {:?}", res_vm);
+}
+
+#[test]
+fn test_select_channel_closed_while_send_waiting() {
+    let script = r#"
+        let ch = chan(0)
+        let t = spawn(fn() {
+            <-timer(10)
+            ch.close()
+        })
+        let branch = "none"
+        select {
+            case ch <- 99 => {
+                branch = "sent"
+            }
+            case <-timer(60) => {
+                branch = "timeout"
+            }
+        }
+        join(t)
+        branch
+    "#;
+    let ast_res = run(script).expect("AST execution failed");
+    assert_eq!(ast_res.to_json(), json!("timeout"));
+
+    let vm_res = run_vm(script).expect("VM execution failed");
+    assert_eq!(vm_res.to_json(), json!("timeout"));
+}
+
+#[test]
+fn test_select_no_ghost_data_in_buffered_channel() {
+    let script = r#"
+        let ch_buf = chan(1)
+        ch_buf <- "existing"
+
+        let ch_other = chan(1)
+        ch_other <- "other_ready"
+
+        let branch = ""
+        select {
+            case ch_buf <- "ghost" => {
+                branch = "ghost_sent"
+            }
+            case v = <-ch_other => {
+                branch = "recv_other"
+            }
+        }
+
+        let first = <-ch_buf
+        let remaining_len = ch_buf.len()
+        [branch, first, remaining_len]
+    "#;
+    let ast_res = run(script).expect("AST execution failed");
+    assert_eq!(ast_res.to_json(), json!(["recv_other", "existing", 0]));
+
+    let vm_res = run_vm(script).expect("VM execution failed");
+    assert_eq!(vm_res.to_json(), json!(["recv_other", "existing", 0]));
+}
+
+#[test]
+fn test_select_send_typed_channel_mismatch_fails() {
+    let script = r#"
+        let ch: chan<Int> = chan(1)
+        select {
+            case ch <- "wrong_type" => {
+                "sent"
+            }
+            default => {
+                "default"
+            }
+        }
+    "#;
+    let ast_res = run(script);
+    assert!(ast_res.is_err(), "Expected type error in AST select send");
+    let vm_res = run_vm(script);
+    assert!(vm_res.is_err(), "Expected type error in VM select send");
+}
