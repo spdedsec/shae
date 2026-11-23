@@ -7,7 +7,7 @@ use crate::value::Value;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -250,12 +250,26 @@ impl Mailbox {
     }
 }
 
+pub const ACTOR_IDLE: u32 = 0;
+pub const ACTOR_SCHEDULED: u32 = 1;
+pub const ACTOR_RUNNING: u32 = 2;
+pub const ACTOR_STOPPED: u32 = 3;
+
+/// Stateful handler and execution context for an actor.
+pub struct ActorExecutionState {
+    pub current_state: Option<Value>,
+    pub handler_kind: HandlerKind,
+}
+
 /// Internal thread-shared state for an individual actor.
 pub struct ActorInner {
     pub id: String,
     pub mailbox: Mailbox,
     pub status: RwLock<ActorStatus>,
-    pub thread_handle: Mutex<Option<JoinHandle<()>>>,
+    pub sched_state: AtomicU32,
+    pub completed: Mutex<bool>,
+    pub completion_cv: Condvar,
+    pub execution_state: Mutex<ActorExecutionState>,
     pub exit_listeners: Mutex<Vec<Arc<dyn Fn(&str, &ActorStatus) + Send + Sync>>>,
 }
 
@@ -298,6 +312,31 @@ impl ActorRef {
         self.inner.mailbox.is_empty()
     }
 
+    pub(crate) fn maybe_schedule(&self) {
+        let mut current = self.inner.sched_state.load(Ordering::SeqCst);
+        loop {
+            if current == ACTOR_STOPPED {
+                break;
+            }
+            if current == ACTOR_IDLE {
+                match self.inner.sched_state.compare_exchange_weak(
+                    ACTOR_IDLE,
+                    ACTOR_SCHEDULED,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => {
+                        crate::scheduler::global_scheduler().schedule_actor(Arc::clone(&self.inner));
+                        break;
+                    }
+                    Err(actual) => current = actual,
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
     /// Signals the actor to terminate gracefully.
     /// Returns true if the status transitioned from Running to Stopped.
     pub fn stop(&self) -> bool {
@@ -307,31 +346,30 @@ impl ActorRef {
         };
         let transitioned = *status == ActorStatus::Running;
         *status = ActorStatus::Stopped;
+        drop(status);
 
-        let has_thread = match self.inner.thread_handle.lock() {
-            Ok(g) => g.is_some(),
-            Err(p) => p.into_inner().is_some(),
-        };
-        if has_thread {
+        if transitioned {
             self.inner.mailbox.push(ActorMessage::Stop);
+            self.maybe_schedule();
         }
         transitioned
     }
 
-    /// Waits for the actor thread to cleanly exit.
+    /// Waits for the actor to cleanly exit.
     pub fn join(&self) -> Result<(), ActorError> {
-        let handle = {
-            let mut guard = match self.inner.thread_handle.lock() {
+        let is_running = self.is_alive();
+        if is_running {
+            self.stop();
+        }
+        let mut comp = match self.inner.completed.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        while !*comp {
+            comp = match self.inner.completion_cv.wait(comp) {
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
             };
-            guard.take()
-        };
-        if let Some(h) = handle {
-            self.inner.mailbox.push(ActorMessage::Stop);
-            h.join().map_err(|_| {
-                ActorError::EvaluationError("Actor thread panicked during execution".into())
-            })?;
         }
         Ok(())
     }
@@ -357,6 +395,7 @@ impl ActorRef {
 
         let isolated = msg.deep_clone();
         self.inner.mailbox.push(ActorMessage::Normal(isolated));
+        self.maybe_schedule();
         Ok(())
     }
 
@@ -387,6 +426,7 @@ impl ActorRef {
             payload,
             reply_sender: Arc::clone(&reply_channel),
         });
+        self.maybe_schedule();
 
         let duration = timeout.unwrap_or(Duration::from_millis(5000));
         let timeout_ms = duration.as_millis() as u64;
@@ -455,6 +495,7 @@ impl ActorRef {
             migration_fn: payload_migration,
             reply_sender: Some(Arc::clone(&reply_channel)),
         });
+        self.maybe_schedule();
 
         let duration = timeout.unwrap_or(Duration::from_millis(5000));
         let timeout_ms = duration.as_millis() as u64;
@@ -565,29 +606,361 @@ fn cleanup_thread_local() {
     CURRENT_ACTOR.with(|cell| *cell.borrow_mut() = None);
 }
 
-struct ActorScopeGuard {
-    inner: Arc<ActorInner>,
-}
-
-impl Drop for ActorScopeGuard {
-    fn drop(&mut self) {
-        cleanup_thread_local();
-        let mut status = match self.inner.status.read() {
+impl ActorInner {
+    #[inline]
+    pub fn status(&self) -> ActorStatus {
+        match self.status.read() {
             Ok(s) => s.clone(),
             Err(p) => p.into_inner().clone(),
-        };
-        if std::thread::panicking() && status.is_alive() {
-            status = ActorStatus::Failed("Actor thread panicked unexpectedly".to_string());
-            if let Ok(mut st) = self.inner.status.write() {
-                *st = status.clone();
+        }
+    }
+
+    #[inline]
+    pub fn is_alive(&self) -> bool {
+        self.status().is_alive()
+    }
+
+    /// Executes up to `quantum` messages in the actor's mailbox.
+    /// Returns `true` if the actor yielded with more messages remaining,
+    /// or `false` if the mailbox is drained or the actor stopped/failed.
+    pub fn execute_slice(self: &Arc<Self>, quantum: usize) -> bool {
+        self.sched_state.store(ACTOR_RUNNING, Ordering::SeqCst);
+
+        let actor_ref = Arc::new(ActorRef::new(Arc::clone(self)));
+        CURRENT_ACTOR.with(|cell| {
+            *cell.borrow_mut() = Some(actor_ref);
+        });
+
+        struct CurrentActorGuard;
+        impl Drop for CurrentActorGuard {
+            fn drop(&mut self) {
+                cleanup_thread_local();
             }
         }
+        let _guard = CurrentActorGuard;
+
+        let mut reductions = 0;
+        let mut stopped_or_failed = false;
+
+        {
+            let mut exec = match self.execution_state.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+
+            while reductions < quantum {
+                let msg = match self.mailbox.try_pop() {
+                    Some(m) => m,
+                    None => break,
+                };
+
+                if self.process_message(msg, &mut exec) {
+                    stopped_or_failed = true;
+                    break;
+                }
+                reductions += 1;
+            }
+        }
+
+        if stopped_or_failed || !self.is_alive() {
+            self.sched_state.store(ACTOR_STOPPED, Ordering::SeqCst);
+            self.cleanup_on_termination();
+            return false;
+        }
+
+        if !self.mailbox.is_empty() {
+            self.sched_state.store(ACTOR_SCHEDULED, Ordering::SeqCst);
+            return true;
+        }
+
+        self.sched_state.store(ACTOR_IDLE, Ordering::SeqCst);
+
+        if !self.mailbox.is_empty() {
+            if self.sched_state.compare_exchange(
+                ACTOR_IDLE,
+                ACTOR_SCHEDULED,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ).is_ok() {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn process_message(&self, msg: ActorMessage, exec: &mut ActorExecutionState) -> bool {
+        let span = Span::new(1, 1);
+
+        if matches!(msg, ActorMessage::Stop) {
+            let mut status = match self.status.write() {
+                Ok(s) => s,
+                Err(p) => p.into_inner(),
+            };
+            *status = ActorStatus::Stopped;
+            return true;
+        }
+
+        if let ActorMessage::Reload {
+            new_handler,
+            migration_fn,
+            reply_sender,
+        } = msg
+        {
+            let mut reload_ok = true;
+            let mut reload_err = None;
+
+            let new_handler_val = match new_handler {
+                Value::String(ref code) => {
+                    let mut ev = match &exec.handler_kind {
+                        HandlerKind::Shae { evaluator, .. } => Evaluator::with_env_cache_file(
+                            evaluator.global_env.clone(),
+                            evaluator.module_cache.clone(),
+                            evaluator.current_file.clone(),
+                        ),
+                        _ => Evaluator::new(),
+                    };
+                    let trimmed = code.trim();
+                    let runnable = if trimmed.starts_with("fn(") || trimmed.starts_with("fn (") {
+                        format!("let _h = {}; _h", trimmed)
+                    } else {
+                        code.to_string()
+                    };
+                    match crate::run_in_evaluator(&runnable, &mut ev) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            reload_ok = false;
+                            reload_err = Some(format!("Failed to compile handler code: {}", e));
+                            Value::Null
+                        }
+                    }
+                }
+                other => other,
+            };
+
+            if reload_ok {
+                if let Some(mig_val) = migration_fn {
+                    if !matches!(mig_val, Value::Null) {
+                        let cur = exec.current_state.clone().unwrap_or(Value::Null);
+                        let mig_fn_val = match mig_val {
+                            Value::String(ref code) => {
+                                let mut ev = match &exec.handler_kind {
+                                    HandlerKind::Shae { evaluator, .. } => {
+                                        Evaluator::with_env_cache_file(
+                                            evaluator.global_env.clone(),
+                                            evaluator.module_cache.clone(),
+                                            evaluator.current_file.clone(),
+                                        )
+                                    }
+                                    _ => Evaluator::new(),
+                                };
+                                let trimmed = code.trim();
+                                let runnable = if trimmed.starts_with("fn(")
+                                    || trimmed.starts_with("fn (")
+                                {
+                                    format!("let _m = {}; _m", trimmed)
+                                } else {
+                                    code.to_string()
+                                };
+                                match crate::run_in_evaluator(&runnable, &mut ev) {
+                                    Ok(v) => Some(v),
+                                    Err(e) => {
+                                        reload_ok = false;
+                                        reload_err = Some(format!(
+                                            "Failed to compile migration code: {}",
+                                            e
+                                        ));
+                                        None
+                                    }
+                                }
+                            }
+                            other => Some(other),
+                        };
+
+                        if reload_ok {
+                            if let Some(mig_fn) = mig_fn_val {
+                                let mig_eval = match &mut exec.handler_kind {
+                                    HandlerKind::Shae { evaluator, .. } => evaluator
+                                        .call_value(&mig_fn, vec![cur], span)
+                                        .map_err(|e| e.to_string()),
+                                    _ => {
+                                        let mut ev = Evaluator::new();
+                                        ev.call_value(&mig_fn, vec![cur], span)
+                                            .map_err(|e| e.to_string())
+                                    }
+                                };
+                                match mig_eval {
+                                    Ok(new_st) => {
+                                        exec.current_state = Some(new_st);
+                                    }
+                                    Err(e) => {
+                                        reload_ok = false;
+                                        reload_err = Some(format!("Migration failed: {}", e));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if reload_ok {
+                match &mut exec.handler_kind {
+                    HandlerKind::Shae { handler, .. } => {
+                        *handler = new_handler_val;
+                    }
+                    _ => {
+                        exec.handler_kind = HandlerKind::Shae {
+                            evaluator: Evaluator::new(),
+                            handler: new_handler_val,
+                        };
+                    }
+                }
+            }
+
+            if let Some(reply_tx) = reply_sender {
+                let envelope = if reload_ok {
+                    Value::Array(Arc::new(RwLock::new(vec![
+                        Value::String("ok".into()),
+                        Value::Bool(true),
+                    ])))
+                } else {
+                    Value::Array(Arc::new(RwLock::new(vec![
+                        Value::String("err".into()),
+                        Value::String(reload_err.unwrap_or_else(|| "Reload failed".into())),
+                    ])))
+                };
+                let _ = reply_tx.send(envelope, span);
+            }
+
+            return false;
+        }
+
+        let (is_ask, payload, reply_sender) = match msg {
+            ActorMessage::Normal(val) => (false, val, None),
+            ActorMessage::Ask {
+                payload,
+                reply_sender,
+            } => (true, payload, Some(reply_sender)),
+            ActorMessage::Reload { .. } | ActorMessage::Stop => unreachable!(),
+        };
+
+        let eval_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            match &mut exec.handler_kind {
+                HandlerKind::NativeStateless(f) => f(payload),
+                HandlerKind::NativeStateful(f) => {
+                    let st = exec.current_state.take().unwrap_or(Value::Null);
+                    let res = f(st, payload)?;
+                    if is_ask {
+                        if let Value::Map(ref m) = res {
+                            let guard = match m.read() {
+                                Ok(g) => g,
+                                Err(p) => p.into_inner(),
+                            };
+                            if guard.contains_key("state") && guard.contains_key("reply") {
+                                let actual_state = guard.get("state").unwrap().clone();
+                                let reply = guard.get("reply").unwrap().clone();
+                                exec.current_state = Some(actual_state);
+                                return Ok(reply);
+                            }
+                        }
+                    }
+                    exec.current_state = Some(res.clone());
+                    Ok(res)
+                }
+                HandlerKind::Shae { evaluator, handler } => match &mut exec.current_state {
+                    None => evaluator
+                        .call_value(handler, vec![payload], span)
+                        .map_err(|e| e.to_string()),
+                    Some(st) => {
+                        let args = vec![st.clone(), payload];
+                        let step_result = evaluator
+                            .call_value(handler, args, span)
+                            .map_err(|e| e.to_string())?;
+                        if is_ask {
+                            if let Value::Map(ref m) = step_result {
+                                let guard = match m.read() {
+                                    Ok(g) => g,
+                                    Err(p) => p.into_inner(),
+                                };
+                                if guard.contains_key("state") && guard.contains_key("reply") {
+                                    let actual_state = guard.get("state").unwrap().clone();
+                                    let reply = guard.get("reply").unwrap().clone();
+                                    *st = actual_state;
+                                    return Ok(reply);
+                                }
+                            }
+                        }
+                        *st = step_result.clone();
+                        Ok(step_result)
+                    }
+                },
+            }
+        }));
+
+        match eval_result {
+            Ok(Ok(return_val)) => {
+                if let Some(reply_tx) = reply_sender {
+                    let envelope = Value::Array(Arc::new(RwLock::new(vec![
+                        Value::String("ok".into()),
+                        return_val.deep_clone(),
+                    ])));
+                    let _ = reply_tx.send(envelope, span);
+                }
+                false
+            }
+            Ok(Err(err_msg)) => {
+                {
+                    let mut status = match self.status.write() {
+                        Ok(s) => s,
+                        Err(p) => p.into_inner(),
+                    };
+                    *status = ActorStatus::Failed(err_msg.clone());
+                }
+                if let Some(reply_tx) = reply_sender {
+                    let err_envelope = Value::Array(Arc::new(RwLock::new(vec![
+                        Value::String("err".into()),
+                        Value::String(err_msg),
+                    ])));
+                    let _ = reply_tx.send(err_envelope, span);
+                }
+                true
+            }
+            Err(panic_payload) => {
+                let panic_msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "Actor panicked with unformatted payload".to_string()
+                };
+                {
+                    let mut status = match self.status.write() {
+                        Ok(s) => s,
+                        Err(p) => p.into_inner(),
+                    };
+                    *status = ActorStatus::Failed(panic_msg.clone());
+                }
+                if let Some(reply_tx) = reply_sender {
+                    let err_envelope = Value::Array(Arc::new(RwLock::new(vec![
+                        Value::String("err".into()),
+                        Value::String(panic_msg),
+                    ])));
+                    let _ = reply_tx.send(err_envelope, span);
+                }
+                true
+            }
+        }
+    }
+
+    pub fn cleanup_on_termination(&self) {
+        let status = self.status();
         let status_desc = match &status {
             ActorStatus::Failed(err) => err.clone(),
             _ => "Actor stopped".to_string(),
         };
         let span = Span::new(1, 1);
-        while let Some(msg) = self.inner.mailbox.try_pop() {
+        while let Some(msg) = self.mailbox.try_pop() {
             match msg {
                 ActorMessage::Ask { reply_sender, .. } => {
                     let err_envelope = Value::Array(Arc::new(RwLock::new(vec![
@@ -610,12 +983,21 @@ impl Drop for ActorScopeGuard {
             }
         }
 
-        let listeners = match self.inner.exit_listeners.lock() {
+        let listeners = match self.exit_listeners.lock() {
             Ok(g) => g.clone(),
             Err(p) => p.into_inner().clone(),
         };
         for listener in listeners {
-            listener(&self.inner.id, &status);
+            listener(&self.id, &status);
+        }
+
+        {
+            let mut comp = match self.completed.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            *comp = true;
+            self.completion_cv.notify_all();
         }
     }
 }
@@ -635,321 +1017,23 @@ impl ActorRef {
         id: String,
         custom_name: Option<&str>,
         initial_state: Option<Value>,
-        mut handler_kind: HandlerKind,
+        handler_kind: HandlerKind,
     ) -> Result<Arc<ActorRef>, ActorError> {
         let inner = Arc::new(ActorInner {
             id: id.clone(),
             mailbox: Mailbox::new(),
             status: RwLock::new(ActorStatus::Running),
-            thread_handle: Mutex::new(None),
+            sched_state: AtomicU32::new(ACTOR_IDLE),
+            completed: Mutex::new(false),
+            completion_cv: Condvar::new(),
+            execution_state: Mutex::new(ActorExecutionState {
+                current_state: initial_state,
+                handler_kind,
+            }),
             exit_listeners: Mutex::new(Vec::new()),
         });
 
         let actor_ref = Arc::new(ActorRef::new(Arc::clone(&inner)));
-        let thread_actor_ref = Arc::clone(&actor_ref);
-        let thread_inner = Arc::clone(&inner);
-        let thread_name = format!("shae-actor-{}", id);
-
-        let handle = thread::Builder::new()
-            .name(thread_name)
-            .spawn(move || {
-                CURRENT_ACTOR.with(|cell| {
-                    *cell.borrow_mut() = Some(thread_actor_ref);
-                });
-                let _guard = ActorScopeGuard {
-                    inner: Arc::clone(&thread_inner),
-                };
-
-                let mut current_state = initial_state;
-                let span = Span::new(1, 1);
-
-                loop {
-                    let msg = thread_inner.mailbox.pop();
-
-                    if matches!(msg, ActorMessage::Stop) {
-                        let mut status = match thread_inner.status.write() {
-                            Ok(s) => s,
-                            Err(p) => p.into_inner(),
-                        };
-                        *status = ActorStatus::Stopped;
-                        break;
-                    }
-
-                    if let ActorMessage::Reload {
-                        new_handler,
-                        migration_fn,
-                        reply_sender,
-                    } = msg
-                    {
-                        let mut reload_ok = true;
-                        let mut reload_err = None;
-
-                        // Compile/resolve new_handler if it is a code string
-                        let new_handler_val = match new_handler {
-                            Value::String(ref code) => {
-                                let mut ev = match &handler_kind {
-                                    HandlerKind::Shae { evaluator, .. } => {
-                                        Evaluator::with_env_cache_file(
-                                            evaluator.global_env.clone(),
-                                            evaluator.module_cache.clone(),
-                                            evaluator.current_file.clone(),
-                                        )
-                                    }
-                                    _ => Evaluator::new(),
-                                };
-                                let trimmed = code.trim();
-                                let runnable =
-                                    if trimmed.starts_with("fn(") || trimmed.starts_with("fn (") {
-                                        format!("let _h = {}; _h", trimmed)
-                                    } else {
-                                        code.to_string()
-                                    };
-                                match crate::run_in_evaluator(&runnable, &mut ev) {
-                                    Ok(v) => v,
-                                    Err(e) => {
-                                        reload_ok = false;
-                                        reload_err =
-                                            Some(format!("Failed to compile handler code: {}", e));
-                                        Value::Null
-                                    }
-                                }
-                            }
-                            other => other,
-                        };
-
-                        // If migration_fn is provided and not null, evaluate migration_fn(current_state)
-                        if reload_ok {
-                            if let Some(mig_val) = migration_fn {
-                                if !matches!(mig_val, Value::Null) {
-                                    let cur = current_state.clone().unwrap_or(Value::Null);
-                                    let mig_fn_val = match mig_val {
-                                        Value::String(ref code) => {
-                                            let mut ev = match &handler_kind {
-                                                HandlerKind::Shae { evaluator, .. } => {
-                                                    Evaluator::with_env_cache_file(
-                                                        evaluator.global_env.clone(),
-                                                        evaluator.module_cache.clone(),
-                                                        evaluator.current_file.clone(),
-                                                    )
-                                                }
-                                                _ => Evaluator::new(),
-                                            };
-                                            let trimmed = code.trim();
-                                            let runnable = if trimmed.starts_with("fn(")
-                                                || trimmed.starts_with("fn (")
-                                            {
-                                                format!("let _m = {}; _m", trimmed)
-                                            } else {
-                                                code.to_string()
-                                            };
-                                            match crate::run_in_evaluator(&runnable, &mut ev) {
-                                                Ok(v) => Some(v),
-                                                Err(e) => {
-                                                    reload_ok = false;
-                                                    reload_err = Some(format!(
-                                                        "Failed to compile migration code: {}",
-                                                        e
-                                                    ));
-                                                    None
-                                                }
-                                            }
-                                        }
-                                        other => Some(other),
-                                    };
-
-                                    if reload_ok {
-                                        if let Some(mig_fn) = mig_fn_val {
-                                            let mig_eval = match &mut handler_kind {
-                                                HandlerKind::Shae { evaluator, .. } => evaluator
-                                                    .call_value(&mig_fn, vec![cur], span)
-                                                    .map_err(|e| e.to_string()),
-                                                _ => {
-                                                    let mut ev = Evaluator::new();
-                                                    ev.call_value(&mig_fn, vec![cur], span)
-                                                        .map_err(|e| e.to_string())
-                                                }
-                                            };
-                                            match mig_eval {
-                                                Ok(new_st) => {
-                                                    current_state = Some(new_st);
-                                                }
-                                                Err(e) => {
-                                                    reload_ok = false;
-                                                    reload_err =
-                                                        Some(format!("Migration failed: {}", e));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // If reload and migration succeeded, update handler
-                        if reload_ok {
-                            match &mut handler_kind {
-                                HandlerKind::Shae { handler, .. } => {
-                                    *handler = new_handler_val;
-                                }
-                                _ => {
-                                    handler_kind = HandlerKind::Shae {
-                                        evaluator: Evaluator::new(),
-                                        handler: new_handler_val,
-                                    };
-                                }
-                            }
-                        }
-
-                        // Send reply if reply_sender is provided
-                        if let Some(reply_tx) = reply_sender {
-                            let envelope = if reload_ok {
-                                Value::Array(Arc::new(RwLock::new(vec![
-                                    Value::String("ok".into()),
-                                    Value::Bool(true),
-                                ])))
-                            } else {
-                                Value::Array(Arc::new(RwLock::new(vec![
-                                    Value::String("err".into()),
-                                    Value::String(
-                                        reload_err.unwrap_or_else(|| "Reload failed".into()),
-                                    ),
-                                ])))
-                            };
-                            let _ = reply_tx.send(envelope, span);
-                        }
-
-                        continue;
-                    }
-
-                    let (is_ask, payload, reply_sender) = match msg {
-                        ActorMessage::Normal(val) => (false, val, None),
-                        ActorMessage::Ask {
-                            payload,
-                            reply_sender,
-                        } => (true, payload, Some(reply_sender)),
-                        ActorMessage::Reload { .. } | ActorMessage::Stop => unreachable!(),
-                    };
-
-                    let eval_result =
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            match &mut handler_kind {
-                                HandlerKind::NativeStateless(f) => f(payload),
-                                HandlerKind::NativeStateful(f) => {
-                                    let st = current_state.take().unwrap_or(Value::Null);
-                                    let res = f(st, payload)?;
-                                    if is_ask {
-                                        if let Value::Map(ref m) = res {
-                                            let guard = match m.read() {
-                                                Ok(g) => g,
-                                                Err(p) => p.into_inner(),
-                                            };
-                                            if guard.contains_key("state")
-                                                && guard.contains_key("reply")
-                                            {
-                                                let actual_state =
-                                                    guard.get("state").unwrap().clone();
-                                                let reply = guard.get("reply").unwrap().clone();
-                                                current_state = Some(actual_state);
-                                                return Ok(reply);
-                                            }
-                                        }
-                                    }
-                                    current_state = Some(res.clone());
-                                    Ok(res)
-                                }
-                                HandlerKind::Shae { evaluator, handler } => {
-                                    match &mut current_state {
-                                        None => evaluator
-                                            .call_value(handler, vec![payload], span)
-                                            .map_err(|e| e.to_string()),
-                                        Some(st) => {
-                                            let args = vec![st.clone(), payload];
-                                            let step_result = evaluator
-                                                .call_value(handler, args, span)
-                                                .map_err(|e| e.to_string())?;
-                                            if is_ask {
-                                                if let Value::Map(ref m) = step_result {
-                                                    let guard = match m.read() {
-                                                        Ok(g) => g,
-                                                        Err(p) => p.into_inner(),
-                                                    };
-                                                    if guard.contains_key("state")
-                                                        && guard.contains_key("reply")
-                                                    {
-                                                        let actual_state =
-                                                            guard.get("state").unwrap().clone();
-                                                        let reply =
-                                                            guard.get("reply").unwrap().clone();
-                                                        *st = actual_state;
-                                                        return Ok(reply);
-                                                    }
-                                                }
-                                            }
-                                            *st = step_result.clone();
-                                            Ok(step_result)
-                                        }
-                                    }
-                                }
-                            }
-                        }));
-
-                    match eval_result {
-                        Ok(Ok(return_val)) => {
-                            if let Some(reply_tx) = reply_sender {
-                                let envelope = Value::Array(Arc::new(RwLock::new(vec![
-                                    Value::String("ok".into()),
-                                    return_val.deep_clone(),
-                                ])));
-                                let _ = reply_tx.send(envelope, span);
-                            }
-                        }
-                        Ok(Err(err_msg)) => {
-                            {
-                                let mut status = match thread_inner.status.write() {
-                                    Ok(s) => s,
-                                    Err(p) => p.into_inner(),
-                                };
-                                *status = ActorStatus::Failed(err_msg.clone());
-                            }
-                            if let Some(reply_tx) = reply_sender {
-                                let err_envelope = Value::Array(Arc::new(RwLock::new(vec![
-                                    Value::String("err".into()),
-                                    Value::String(err_msg),
-                                ])));
-                                let _ = reply_tx.send(err_envelope, span);
-                            }
-                            return;
-                        }
-                        Err(panic_payload) => {
-                            let panic_msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
-                                s.to_string()
-                            } else if let Some(s) = panic_payload.downcast_ref::<String>() {
-                                s.clone()
-                            } else {
-                                "Actor panicked with unformatted payload".to_string()
-                            };
-                            {
-                                let mut status = match thread_inner.status.write() {
-                                    Ok(s) => s,
-                                    Err(p) => p.into_inner(),
-                                };
-                                *status = ActorStatus::Failed(panic_msg.clone());
-                            }
-                            if let Some(reply_tx) = reply_sender {
-                                let err_envelope = Value::Array(Arc::new(RwLock::new(vec![
-                                    Value::String("err".into()),
-                                    Value::String(panic_msg),
-                                ])));
-                                let _ = reply_tx.send(err_envelope, span);
-                            }
-                            return;
-                        }
-                    }
-                }
-            })
-            .map_err(|e| ActorError::SpawnError(id.clone(), e.to_string()))?;
-
-        *inner.thread_handle.lock().unwrap() = Some(handle);
 
         if let Some(name) = custom_name {
             let _ = ActorRegistry::register(name, Arc::clone(&actor_ref));

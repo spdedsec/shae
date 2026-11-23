@@ -58,15 +58,38 @@ pub fn global_pool() -> &'static ThreadPool {
     })
 }
 
-pub fn spawn_task<F>(f: F) -> std::thread::JoinHandle<Result<Value, RuntimeError>>
+pub fn spawn_task<F>(f: F) -> crate::value::TaskHandle
 where
     F: FnOnce() -> Result<Value, RuntimeError> + Send + 'static,
 {
     let parent = std::thread::current().id();
-    thread::spawn(move || {
+    let shared = Arc::new(crate::value::TaskShared {
+        result: Mutex::new(None),
+        cv: std::sync::Condvar::new(),
+        finished: std::sync::atomic::AtomicBool::new(false),
+    });
+
+    let s = Arc::clone(&shared);
+    crate::scheduler::global_scheduler().spawn_task(move || {
         crate::test_runner::register_worker_thread(parent);
-        let res = f();
+        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
         crate::test_runner::unregister_worker_thread();
-        res
-    })
+
+        let final_res = match res {
+            Ok(r) => r,
+            Err(_) => Err(RuntimeError::new("Async task panicked".to_string())),
+        };
+
+        {
+            let mut guard = match s.result.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            *guard = Some(final_res);
+        }
+        s.finished.store(true, std::sync::atomic::Ordering::Release);
+        s.cv.notify_all();
+    });
+
+    crate::value::TaskHandle::Async(shared)
 }

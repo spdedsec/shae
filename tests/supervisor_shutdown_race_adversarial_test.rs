@@ -25,6 +25,7 @@ fn unique_id(prefix: &str) -> String {
 }
 
 fn get_os_thread_count() -> Option<usize> {
+    let _ = shae::scheduler::global_scheduler();
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
         for line in status.lines() {
             if line.starts_with("Threads:") {

@@ -1,13 +1,63 @@
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
+
+/// Thread-safe shared state container for an asynchronous task.
+pub struct TaskShared {
+    pub result: Mutex<Option<Result<Value, crate::eval::RuntimeError>>>,
+    pub cv: Condvar,
+    pub finished: AtomicBool,
+}
+
+/// Abstract handle to an asynchronous task execution.
+pub enum TaskHandle {
+    Thread(std::thread::JoinHandle<Result<Value, crate::eval::RuntimeError>>),
+    Async(Arc<TaskShared>),
+}
+
+impl TaskHandle {
+    pub fn is_finished(&self) -> bool {
+        match self {
+            TaskHandle::Thread(h) => h.is_finished(),
+            TaskHandle::Async(s) => s.finished.load(Ordering::Acquire),
+        }
+    }
+
+    pub fn join(self) -> Result<Result<Value, crate::eval::RuntimeError>, Box<dyn std::any::Any + Send + 'static>> {
+        match self {
+            TaskHandle::Thread(h) => h.join(),
+            TaskHandle::Async(s) => {
+                let mut guard = match s.result.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                while guard.is_none() {
+                    guard = match s.cv.wait(guard) {
+                        Ok(g) => g,
+                        Err(p) => p.into_inner(),
+                    };
+                }
+                Ok(guard.take().unwrap())
+            }
+        }
+    }
+}
+
+impl From<std::thread::JoinHandle<Result<Value, crate::eval::RuntimeError>>> for TaskHandle {
+    fn from(h: std::thread::JoinHandle<Result<Value, crate::eval::RuntimeError>>) -> Self {
+        TaskHandle::Thread(h)
+    }
+}
+
 /// State container for an asynchronous task or coroutine handle.
 pub struct TaskInner {
-    pub handle: Option<std::thread::JoinHandle<Result<Value, crate::eval::RuntimeError>>>,
+    pub handle: Option<TaskHandle>,
     pub cached_result: Option<Result<Value, crate::eval::RuntimeError>>,
 }
 
 impl TaskInner {
-    pub fn new(handle: std::thread::JoinHandle<Result<Value, crate::eval::RuntimeError>>) -> Self {
+    pub fn new<H: Into<TaskHandle>>(handle: H) -> Self {
         Self {
-            handle: Some(handle),
+            handle: Some(handle.into()),
             cached_result: None,
         }
     }
@@ -66,10 +116,7 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+
 
 pub type BuiltinFn =
     fn(&mut Evaluator, Vec<Value>, crate::ast::Span) -> Result<Value, RuntimeError>;

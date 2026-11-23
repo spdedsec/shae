@@ -27,6 +27,7 @@ fn unique_id(prefix: &str) -> String {
 
 /// Helper to read active OS thread count from /proc/self/status on Linux.
 fn get_os_thread_count() -> Option<usize> {
+    let _ = shae::scheduler::global_scheduler();
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
         for line in status.lines() {
             if line.starts_with("Threads:") {
@@ -52,6 +53,7 @@ static SERIAL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[test]
 fn test_stress_thread_count_stability_across_supervision_cycles() {
     let _lock = SERIAL_TEST_LOCK.lock().unwrap();
+    let _ = shae::scheduler::global_scheduler();
     let initial_threads = get_os_thread_count().expect("Must read /proc/self/status");
 
     const NUM_SUPERVISORS: usize = 15;

@@ -39,6 +39,7 @@ pub mod profiler;
 pub mod random;
 pub mod repl;
 pub mod scaffold;
+pub mod scheduler;
 pub mod sqlite;
 pub mod stdlib;
 pub mod suggest;
