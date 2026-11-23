@@ -69,6 +69,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 pub type BuiltinFn =
     fn(&mut Evaluator, Vec<Value>, crate::ast::Span) -> Result<Value, RuntimeError>;
@@ -265,6 +266,8 @@ pub enum Value {
     ClusterNode(Arc<crate::actor_cluster::ClusterNode>),
     Supervisor(Arc<crate::actor::SupervisorRef>),
     ByteBuffer(Arc<RwLock<crate::buffer::ByteBuffer>>),
+    AtomicInt(Arc<AtomicI64>),
+    AtomicBool(Arc<AtomicBool>),
 }
 
 impl Value {
@@ -298,6 +301,8 @@ impl Value {
             Value::ClusterNode(_) => "cluster_node",
             Value::Supervisor(_) => "supervisor",
             Value::ByteBuffer(_) => "buffer",
+            Value::AtomicInt(_) => "atomic_int",
+            Value::AtomicBool(_) => "atomic_bool",
         }
     }
 
@@ -343,6 +348,8 @@ impl Value {
             | Value::ClusterNode(_)
             | Value::Supervisor(_) => true,
             Value::ByteBuffer(b) => !b.read().unwrap().is_empty(),
+            Value::AtomicInt(a) => a.load(Ordering::SeqCst) != 0,
+            Value::AtomicBool(b) => b.load(Ordering::SeqCst),
         }
     }
 
@@ -452,6 +459,8 @@ impl Value {
             Value::ClusterNode(node) => node.to_string(),
             Value::Supervisor(sup) => sup.to_string(),
             Value::ByteBuffer(b) => format!("<ByteBuffer len={}>", b.read().unwrap().len()),
+            Value::AtomicInt(a) => format!("<AtomicInt: {}>", a.load(Ordering::SeqCst)),
+            Value::AtomicBool(b) => format!("<AtomicBool: {}>", b.load(Ordering::SeqCst)),
         }
     }
 
@@ -565,6 +574,8 @@ impl Value {
                         .collect(),
                 )
             }
+            Value::AtomicInt(a) => JsonValue::Number(a.load(Ordering::SeqCst).into()),
+            Value::AtomicBool(b) => JsonValue::Bool(b.load(Ordering::SeqCst)),
         }
     }
 
@@ -615,6 +626,8 @@ impl Value {
             Value::ByteBuffer(b) => {
                 Value::ByteBuffer(Arc::new(RwLock::new(b.read().unwrap().copy())))
             }
+            Value::AtomicInt(a) => Value::AtomicInt(Arc::clone(a)),
+            Value::AtomicBool(b) => Value::AtomicBool(Arc::clone(b)),
             Value::FfiLibrary(l) => Value::FfiLibrary(Arc::clone(l)),
             Value::FfiFunction(f) => Value::FfiFunction(Arc::clone(f)),
             Value::CompiledFunction(f) => Value::CompiledFunction(Arc::clone(f)),
@@ -791,6 +804,8 @@ impl Value {
             Value::ByteBuffer(b) => {
                 Value::ByteBuffer(Arc::new(RwLock::new(b.read().unwrap().copy())))
             }
+            Value::AtomicInt(a) => Value::AtomicInt(Arc::clone(a)),
+            Value::AtomicBool(b) => Value::AtomicBool(Arc::clone(b)),
             Value::FfiLibrary(l) => Value::FfiLibrary(Arc::clone(l)),
             Value::FfiFunction(f) => Value::FfiFunction(Arc::clone(f)),
             Value::CompiledFunction(f) => Value::CompiledFunction(Arc::clone(f)),
@@ -892,6 +907,8 @@ impl PartialEq for Value {
             (Value::RemoteActor(a), Value::RemoteActor(b)) => a == b,
             (Value::ClusterNode(a), Value::ClusterNode(b)) => a == b,
             (Value::Supervisor(a), Value::Supervisor(b)) => a == b,
+            (Value::AtomicInt(a), Value::AtomicInt(b)) => Arc::ptr_eq(a, b),
+            (Value::AtomicBool(a), Value::AtomicBool(b)) => Arc::ptr_eq(a, b),
             (Value::ByteBuffer(a), Value::ByteBuffer(b)) => {
                 a.read().unwrap().to_bytes() == b.read().unwrap().to_bytes()
             }
@@ -1107,6 +1124,14 @@ impl Hash for Value {
                 for byte in bytes {
                     byte.hash(state);
                 }
+            }
+            Value::AtomicInt(a) => {
+                32u8.hash(state);
+                Arc::as_ptr(a).hash(state);
+            }
+            Value::AtomicBool(b) => {
+                33u8.hash(state);
+                Arc::as_ptr(b).hash(state);
             }
         }
     }

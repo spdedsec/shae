@@ -1999,6 +1999,36 @@ impl VM {
                                 );
                             }
                         }
+                        Value::AtomicInt(ref _a) => {
+                            if crate::sync::is_atomic_int_method(&property) {
+                                self.stack.push(Value::BoundMethod {
+                                    object: Box::new(target.clone()),
+                                    method: property,
+                                });
+                            } else if is_safe {
+                                self.stack.push(Value::Null);
+                            } else {
+                                runtime_error!(
+                                    self,
+                                    format!("AtomicInt has no property or method '{}'", property)
+                                );
+                            }
+                        }
+                        Value::AtomicBool(ref _b) => {
+                            if crate::sync::is_atomic_bool_method(&property) {
+                                self.stack.push(Value::BoundMethod {
+                                    object: Box::new(target.clone()),
+                                    method: property,
+                                });
+                            } else if is_safe {
+                                self.stack.push(Value::Null);
+                            } else {
+                                runtime_error!(
+                                    self,
+                                    format!("AtomicBool has no property or method '{}'", property)
+                                );
+                            }
+                        }
                         Value::Builtin { ref name, .. } if name == "ByteBuffer" => {
                             match property.as_str() {
                                 "alloc" => self.stack.push(Value::Builtin {

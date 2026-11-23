@@ -70,6 +70,10 @@ pub fn register(env: &mut Environment) {
         ("gc", builtin_gc),
         ("jit", builtin_jit),
         ("input", builtin_input),
+        ("AtomicInt", crate::sync::sync_atomic_int),
+        ("atomic_int", crate::sync::sync_atomic_int),
+        ("AtomicBool", crate::sync::sync_atomic_bool),
+        ("atomic_bool", crate::sync::sync_atomic_bool),
     ];
     for (name, func) in builtins {
         env.define(

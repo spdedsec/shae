@@ -490,6 +490,10 @@ impl<R: Read, W: Write> LspServer<R, W> {
                 "std:buffer",
                 "Zero-copy typed binary buffers and struct memory packing (alloc, pack, unpack, slice)",
             ),
+            (
+                "std:sync",
+                "Lock-free concurrency primitives and atomics (AtomicInt, AtomicBool, CAS, memory orderings)",
+            ),
         ];
         for (mod_name, doc) in std_modules {
             items.push(json!({
@@ -687,6 +691,9 @@ impl<R: Read, W: Write> LspServer<R, W> {
             }
             "std:buffer" => {
                 "**std:buffer**\n\nZero-copy typed binary memory buffers and struct packing.\n\nFunctions:\n- `alloc(size)`, `from(bytes)`, `from_hex(str)`, `from_utf8(str)`\n- `calcsize(format)`, `pack(format, ...values)`, `unpack(format, buffer)`"
+            }
+            "std:sync" => {
+                "**std:sync**\n\nLock-free concurrency primitives and atomic synchronization.\n\nTypes & Constructors:\n- `AtomicInt(initial: Int) -> AtomicInt`\n- `AtomicBool(initial: Bool) -> AtomicBool`\n\nMethods:\n- `load([order])`, `store(val, [order])`\n- `fetch_add(val, [order])`, `fetch_sub(val, [order])`\n- `compare_and_swap(expected, desired, [order])` / `cas(...)`\n- `swap(val, [order])`\n- `fetch_and`, `fetch_or`, `fetch_xor`, `fetch_max`, `fetch_min`\n\nOrderings: `SEQ_CST`, `ACQUIRE`, `RELEASE`, `RELAXED`, `ACQ_REL`"
             }
             "fn" => "**fn keyword**\n\nDeclares a named function or lambda.",
             "let" => "**let keyword**\n\nBinds variables with optional destructuring.",

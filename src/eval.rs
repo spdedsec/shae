@@ -1797,6 +1797,38 @@ impl Evaluator {
                             .at(*span))
                         }
                     }
+                    Value::AtomicInt(atom) => {
+                        if crate::sync::is_atomic_int_method(property) {
+                            Ok(Some(Value::BoundMethod {
+                                object: Box::new(Value::AtomicInt(atom.clone())),
+                                method: property.clone(),
+                            }))
+                        } else if *safe || lenient {
+                            Ok(None)
+                        } else {
+                            Err(RuntimeError::new(format!(
+                                "AtomicInt has no property or method '{}'",
+                                property
+                            ))
+                            .at(*span))
+                        }
+                    }
+                    Value::AtomicBool(atom) => {
+                        if crate::sync::is_atomic_bool_method(property) {
+                            Ok(Some(Value::BoundMethod {
+                                object: Box::new(Value::AtomicBool(atom.clone())),
+                                method: property.clone(),
+                            }))
+                        } else if *safe || lenient {
+                            Ok(None)
+                        } else {
+                            Err(RuntimeError::new(format!(
+                                "AtomicBool has no property or method '{}'",
+                                property
+                            ))
+                            .at(*span))
+                        }
+                    }
                     Value::Builtin { name, .. } if name == "ByteBuffer" => {
                         match property.as_str() {
                             "alloc" => Ok(Some(Value::Builtin {
@@ -4391,6 +4423,12 @@ impl Evaluator {
                         }
                     }
                     (Value::ByteBuffer(b), _) => eval_buffer_bound_method(&b, &method, args, span),
+                    (Value::AtomicInt(a), _) => {
+                        crate::sync::eval_atomic_int_bound_method(&a, &method, args, span)
+                    }
+                    (Value::AtomicBool(b), _) => {
+                        crate::sync::eval_atomic_bool_bound_method(&b, &method, args, span)
+                    }
                     _ => Err(RuntimeError::new(format!("Method {} not found", method)).at(span)),
                 }
             }
