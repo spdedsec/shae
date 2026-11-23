@@ -13,13 +13,18 @@
 **A modern, strict, and ergonomic systems scripting language with Cranelift JIT compilation.**  
 *Zero ceremony, native machine code JIT, embedded SQLite, RFC 4180 CSV, coroutines, TLS/mTLS cluster mesh, pure-Shae test runner, live doc server, package registry, and standalone binary bundler.*
 
-[![Version](https://img.shields.io/badge/version-0.7.0-blue.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.8.0-blue.svg)](Cargo.toml)
 [![Tests](https://img.shields.io/badge/tests-290%2B%20passing-brightgreen.svg)]()
 [![Rust](https://img.shields.io/badge/built%20with-Rust%202024-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![VS Code](https://img.shields.io/badge/VS%20Code-v0.7.0-purple.svg)](editors/vscode)
+[![VS Code](https://img.shields.io/badge/VS%20Code-v0.8.0-purple.svg)](editors/vscode)
 
 </div>
+
+
+<p align="center">
+  <b>English</b> | <a href="README.de.md">Deutsch</a>
+</p>
 
 ---
 
