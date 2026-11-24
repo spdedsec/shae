@@ -8,12 +8,14 @@ use {
     TOKEN_FOR, TOKEN_IN, TOKEN_TRUE, TOKEN_FALSE, TOKEN_NULL, TOKEN_BREAK,
     TOKEN_CONTINUE, TOKEN_USE, TOKEN_FROM, TOKEN_AS, TOKEN_TRY, TOKEN_CATCH,
     TOKEN_ASYNC, TOKEN_AWAIT, TOKEN_STRUCT, TOKEN_ENUM, TOKEN_MATCH,
+    TOKEN_SELECT, TOKEN_CASE, TOKEN_DEFAULT, TOKEN_CHAN,
     TOKEN_LPAREN, TOKEN_RPAREN, TOKEN_LBRACE, TOKEN_RBRACE, TOKEN_LBRACKET,
     TOKEN_RBRACKET, TOKEN_COMMA, TOKEN_COLON, TOKEN_SEMICOLON, TOKEN_DOT,
     TOKEN_DOT_DOT, TOKEN_DOT_DOT_EQ, TOKEN_QUESTION, TOKEN_DOUBLE_QUESTION,
-    TOKEN_ARROW, TOKEN_FAT_ARROW, TOKEN_PIPE, TOKEN_UNDERSCORE,
+    TOKEN_ARROW, TOKEN_FAT_ARROW, TOKEN_PIPE, TOKEN_LEFT_ARROW, TOKEN_UNDERSCORE,
     TOKEN_PLUS, TOKEN_MINUS, TOKEN_STAR, TOKEN_SLASH, TOKEN_PERCENT,
-    TOKEN_EQUALS, TOKEN_PLUS_EQUALS, TOKEN_MINUS_EQUALS, TOKEN_EQ_EQ,
+    TOKEN_EQUALS, TOKEN_PLUS_EQUALS, TOKEN_MINUS_EQUALS,
+    TOKEN_STAR_EQUALS, TOKEN_SLASH_EQUALS, TOKEN_PERCENT_EQUALS, TOKEN_EQ_EQ,
     TOKEN_NOT_EQ, TOKEN_LT, TOKEN_LT_EQ, TOKEN_GT, TOKEN_GT_EQ,
     TOKEN_AND, TOKEN_OR, TOKEN_NOT, TOKEN_AMP, TOKEN_BIT_OR, TOKEN_CARET,
     TOKEN_TILDE, TOKEN_SHL, TOKEN_SHR
@@ -43,6 +45,10 @@ let KEYWORDS = {
     "struct": TOKEN_STRUCT,
     "enum": TOKEN_ENUM,
     "match": TOKEN_MATCH,
+    "select": TOKEN_SELECT,
+    "case": TOKEN_CASE,
+    "default": TOKEN_DEFAULT,
+    "chan": TOKEN_CHAN,
     "and": TOKEN_AND,
     "or": TOKEN_OR,
     "not": TOKEN_NOT
@@ -308,7 +314,9 @@ fn tokenize(source) {
                 pos = pos + 1
                 col = col + 1
             }
-            if KEYWORDS.has(ident_str) {
+            if ident_str == "_" {
+                tokens.push(make_token(TOKEN_UNDERSCORE, "_", start_line, start_col))
+            } else if KEYWORDS.has(ident_str) {
                 tokens.push(make_token(KEYWORDS[ident_str], ident_str, start_line, start_col))
             } else {
                 tokens.push(make_token(TOKEN_IDENT, ident_str, start_line, start_col))
@@ -351,7 +359,7 @@ fn tokenize(source) {
             tokens.push(make_token(TOKEN_NOT_EQ, "!=", start_line, start_col))
             continue
         }
-        // LtEq: <=, Shl: <<
+        // LtEq: <=, Shl: <<, LeftArrow: <-
         if c == "<" and pos + 1 < total_len {
             let n = chars[pos + 1]
             if n == "=" {
@@ -362,6 +370,11 @@ fn tokenize(source) {
             if n == "<" {
                 pos = pos + 2; col = col + 2
                 tokens.push(make_token(TOKEN_SHL, "<<", start_line, start_col))
+                continue
+            }
+            if n == "-" {
+                pos = pos + 2; col = col + 2
+                tokens.push(make_token(TOKEN_LEFT_ARROW, "<-", start_line, start_col))
                 continue
             }
         }
@@ -383,6 +396,24 @@ fn tokenize(source) {
         if c == "+" and pos + 1 < total_len and chars[pos + 1] == "=" {
             pos = pos + 2; col = col + 2
             tokens.push(make_token(TOKEN_PLUS_EQUALS, "+=", start_line, start_col))
+            continue
+        }
+        // StarEquals: *=
+        if c == "*" and pos + 1 < total_len and chars[pos + 1] == "=" {
+            pos = pos + 2; col = col + 2
+            tokens.push(make_token(TOKEN_STAR_EQUALS, "*=", start_line, start_col))
+            continue
+        }
+        // SlashEquals: /=
+        if c == "/" and pos + 1 < total_len and chars[pos + 1] == "=" {
+            pos = pos + 2; col = col + 2
+            tokens.push(make_token(TOKEN_SLASH_EQUALS, "/=", start_line, start_col))
+            continue
+        }
+        // PercentEquals: %=
+        if c == "%" and pos + 1 < total_len and chars[pos + 1] == "=" {
+            pos = pos + 2; col = col + 2
+            tokens.push(make_token(TOKEN_PERCENT_EQUALS, "%=", start_line, start_col))
             continue
         }
         // MinusEquals: -=, Arrow: ->

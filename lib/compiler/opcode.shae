@@ -68,6 +68,9 @@ let OP_GET_LOCAL_LONG = 63
 let OP_SET_LOCAL_LONG = 64
 let OP_TAIL_CALL = 65
 let OP_AWAIT = 66
+let OP_CHAN_SEND = 67
+let OP_CHAN_RECV = 68
+let OP_SELECT = 69
 
 let OP_NAMES = [
     "Return", "Constant", "Nil", "True", "False", "Pop", "GetLocal", "SetLocal",
@@ -80,7 +83,8 @@ let OP_NAMES = [
     "Shl", "Shr", "ForIter", "GetUpvalue", "SetUpvalue", "FormatString",
     "IndexGetSafe", "ArraySlice", "MapRest", "BuildStruct", "MatchEnum", "MatchRange",
     "MatchError", "PushTry", "PopTry", "Dup", "ImportModule", "ImportStar",
-    "ConstantLong", "GetLocalLong", "SetLocalLong", "TailCall", "Await"
+    "ConstantLong", "GetLocalLong", "SetLocalLong", "TailCall", "Await",
+    "ChanSend", "ChanRecv", "Select"
 ]
 
 fn get_op_name(code) {

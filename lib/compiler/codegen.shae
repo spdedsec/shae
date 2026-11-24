@@ -14,7 +14,8 @@ use {
     OP_INDEX_GET_SAFE, OP_ARRAY_SLICE, OP_MAP_REST, OP_BUILD_STRUCT,
     OP_MATCH_ENUM, OP_MATCH_RANGE, OP_MATCH_ERROR, OP_PUSH_TRY, OP_POP_TRY,
     OP_DUP, OP_IMPORT_MODULE, OP_IMPORT_STAR, OP_CONSTANT_LONG,
-    OP_GET_LOCAL_LONG, OP_SET_LOCAL_LONG, OP_TAIL_CALL, OP_AWAIT
+    OP_GET_LOCAL_LONG, OP_SET_LOCAL_LONG, OP_TAIL_CALL, OP_AWAIT,
+    OP_CHAN_SEND, OP_CHAN_RECV, OP_SELECT
 } from "./opcode.shae"
 
 use {
@@ -33,7 +34,8 @@ fn make_compiler(enclosing) {
         upvalues: [],
         scope_depth: 0,
         loops: [],
-        enclosing: enclosing
+        enclosing: enclosing,
+        current_line: 0
     }
 }
 
@@ -194,9 +196,9 @@ fn compile_function(parent_c, name, params, body, is_async) {
     }
 
     if body_len == 0 {
-        chunk_write_opcode(child.chunk, OP_NIL, 0)
+        chunk_write_opcode(child.chunk, OP_NIL, child.current_line)
     }
-    emit_return(child, 0)
+    emit_return(child, child.current_line)
 
     let upvalues_clone = []
     let k = 0
@@ -390,11 +392,35 @@ fn compile_expr(c, expr) {
         compile_expr(c, expr.expr)
         if expr.op == "-" {
             chunk_write_opcode(c.chunk, OP_NEGATE, line)
-        } else if expr.op == "!" {
+        } else if expr.op == "!" or expr.op == "not" {
             chunk_write_opcode(c.chunk, OP_NOT, line)
         } else if expr.op == "~" {
             chunk_write_opcode(c.chunk, OP_BIT_NOT, line)
         }
+        return null
+    }
+
+    if etype == "ChanSendExpr" {
+        compile_expr(c, expr.channel)
+        compile_expr(c, expr.value)
+        chunk_write_opcode(c.chunk, OP_CHAN_SEND, line)
+        return null
+    }
+
+    if etype == "ChanRecvExpr" {
+        compile_expr(c, expr.channel)
+        chunk_write_opcode(c.chunk, OP_CHAN_RECV, line)
+        return null
+    }
+
+    if etype == "AwaitExpr" {
+        compile_expr(c, expr.expr)
+        chunk_write_opcode(c.chunk, OP_AWAIT, line)
+        return null
+    }
+
+    if etype == "SelectExpr" {
+        compile_select_block(c, expr.cases, expr.default_body, line, true, false)
         return null
     }
 
@@ -507,9 +533,142 @@ fn compile_expr(c, expr) {
     }
 }
 
+fn compile_select_block(c, cases, default_body, line, is_expr, is_last) {
+    chunk_write_opcode(c.chunk, OP_NIL, line)
+    let res_slot = add_local(c, "(select_res)")
+
+    let i = 0
+    while i < cases.len {
+        let cs = cases[i]
+        compile_expr(c, cs.channel)
+        if cs.is_send {
+            compile_expr(c, cs.send_val)
+            emit_constant(c, 1, line)
+        } else {
+            chunk_write_opcode(c.chunk, OP_NIL, line)
+            emit_constant(c, 0, line)
+        }
+        i = i + 1
+    }
+
+    chunk_write_opcode(c.chunk, OP_SELECT, line)
+    chunk_write(c.chunk, cases.len, line)
+    if default_body != null {
+        chunk_write(c.chunk, 1, line)
+    } else {
+        chunk_write(c.chunk, 0, line)
+    }
+
+    let val_slot = add_local(c, "(select_val)")
+    let winner_slot = add_local(c, "(select_winner)")
+
+    let end_jumps = []
+
+    let idx = 0
+    while idx < cases.len {
+        let cs = cases[idx]
+        emit_get_local(c, winner_slot, line)
+        emit_constant(c, idx, line)
+        chunk_write_opcode(c.chunk, OP_EQUAL, line)
+        let next_case_jump = emit_jump(c, OP_JUMP_IF_FALSE, line)
+        chunk_write_opcode(c.chunk, OP_POP, line)
+
+        begin_scope(c)
+        if not cs.is_send and cs.binding != null {
+            emit_get_local(c, val_slot, line)
+            add_local(c, cs.binding)
+        }
+        let b = 0
+        let blen = cs.body.len
+        while b < blen {
+            let stmt = cs.body[b]
+            if is_expr and b == blen - 1 and stmt.type == "ExprStmt" {
+                compile_expr(c, stmt.expr)
+                emit_set_local(c, res_slot, line)
+                chunk_write_opcode(c.chunk, OP_POP, line)
+            } else {
+                let is_stmt_last = (b + 1) == blen
+                compile_stmt(c, stmt, is_stmt_last)
+            }
+            b = b + 1
+        }
+        end_scope(c, line)
+
+        let end_jump = emit_jump(c, OP_JUMP, line)
+        end_jumps.push(end_jump)
+
+        patch_jump(c, next_case_jump)
+        chunk_write_opcode(c.chunk, OP_POP, line)
+        idx = idx + 1
+    }
+
+    if default_body != null {
+        begin_scope(c)
+        let b = 0
+        let blen = default_body.len
+        while b < blen {
+            let stmt = default_body[b]
+            if is_expr and b == blen - 1 and stmt.type == "ExprStmt" {
+                compile_expr(c, stmt.expr)
+                emit_set_local(c, res_slot, line)
+                chunk_write_opcode(c.chunk, OP_POP, line)
+            } else {
+                let is_stmt_last = (b + 1) == blen
+                compile_stmt(c, stmt, is_stmt_last)
+            }
+            b = b + 1
+        }
+        end_scope(c, line)
+        let end_jump = emit_jump(c, OP_JUMP, line)
+        end_jumps.push(end_jump)
+    }
+
+    let j = 0
+    while j < end_jumps.len {
+        patch_jump(c, end_jumps[j])
+        j = j + 1
+    }
+
+    c.locals.pop()
+    chunk_write_opcode(c.chunk, OP_POP, line)
+    c.locals.pop()
+    chunk_write_opcode(c.chunk, OP_POP, line)
+
+    if not is_expr {
+        c.locals.pop()
+        chunk_write_opcode(c.chunk, OP_POP, line)
+        if is_last {
+            chunk_write_opcode(c.chunk, OP_NIL, line)
+        }
+    } else {
+        c.locals.pop()
+    }
+}
+
 fn compile_stmt(c, stmt, is_last) {
     let stype = stmt.type
     let line = stmt.line
+    if line != null {
+        c.current_line = line
+    } else {
+        line = c.current_line
+    }
+
+    if stype == "ChanSendStmt" {
+        compile_expr(c, stmt.channel)
+        compile_expr(c, stmt.value)
+        chunk_write_opcode(c.chunk, OP_CHAN_SEND, line)
+        chunk_write_opcode(c.chunk, OP_POP, line)
+        if is_last {
+            chunk_write_opcode(c.chunk, OP_NIL, line)
+        }
+        return null
+    }
+
+    if stype == "SelectStmt" {
+        compile_select_block(c, stmt.cases, stmt.default_body, line, false, is_last)
+        return null
+    }
 
     if stype == "LetStmt" {
         compile_expr(c, stmt.init)
@@ -860,9 +1019,9 @@ fn compile_program(program) {
         i = i + 1
     }
     if len == 0 {
-        chunk_write_opcode(c.chunk, OP_NIL, 0)
+        chunk_write_opcode(c.chunk, OP_NIL, c.current_line)
     }
-    emit_return(c, 0)
+    emit_return(c, c.current_line)
     return c.chunk
 }
 

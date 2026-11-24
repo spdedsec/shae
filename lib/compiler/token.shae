@@ -33,6 +33,10 @@ let TOKEN_AWAIT = "AWAIT"
 let TOKEN_STRUCT = "STRUCT"
 let TOKEN_ENUM = "ENUM"
 let TOKEN_MATCH = "MATCH"
+let TOKEN_SELECT = "SELECT"
+let TOKEN_CASE = "CASE"
+let TOKEN_DEFAULT = "DEFAULT"
+let TOKEN_CHAN = "CHAN"
 
 // Operators & Delimiters
 let TOKEN_LPAREN = "LPAREN"       // (
@@ -52,6 +56,7 @@ let TOKEN_DOUBLE_QUESTION = "DOUBLE_QUESTION" // ??
 let TOKEN_ARROW = "ARROW"         // ->
 let TOKEN_FAT_ARROW = "FAT_ARROW" // =>
 let TOKEN_PIPE = "PIPE"           // |>
+let TOKEN_LEFT_ARROW = "LEFT_ARROW" // <-
 let TOKEN_UNDERSCORE = "UNDERSCORE" // _
 
 // Math / Logic Operators
@@ -63,6 +68,9 @@ let TOKEN_PERCENT = "PERCENT"     // %
 let TOKEN_EQUALS = "EQUALS"       // =
 let TOKEN_PLUS_EQUALS = "PLUS_EQUALS" // +=
 let TOKEN_MINUS_EQUALS = "MINUS_EQUALS" // -=
+let TOKEN_STAR_EQUALS = "STAR_EQUALS" // *=
+let TOKEN_SLASH_EQUALS = "SLASH_EQUALS" // /=
+let TOKEN_PERCENT_EQUALS = "PERCENT_EQUALS" // %=
 let TOKEN_EQ_EQ = "EQ_EQ"         // ==
 let TOKEN_NOT_EQ = "NOT_EQ"       // !=
 let TOKEN_LT = "LT"               // <
@@ -98,7 +106,9 @@ fn token_is_keyword(kind) {
            kind == TOKEN_CONTINUE or kind == TOKEN_USE or kind == TOKEN_FROM or
            kind == TOKEN_AS or kind == TOKEN_TRY or kind == TOKEN_CATCH or
            kind == TOKEN_ASYNC or kind == TOKEN_AWAIT or kind == TOKEN_STRUCT or
-           kind == TOKEN_ENUM or kind == TOKEN_MATCH
+           kind == TOKEN_ENUM or kind == TOKEN_MATCH or
+           kind == TOKEN_SELECT or kind == TOKEN_CASE or
+           kind == TOKEN_DEFAULT or kind == TOKEN_CHAN
 }
 
 fn token_to_string(token) {

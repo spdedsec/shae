@@ -7,12 +7,14 @@ use {
     TOKEN_FOR, TOKEN_IN, TOKEN_TRUE, TOKEN_FALSE, TOKEN_NULL, TOKEN_BREAK,
     TOKEN_CONTINUE, TOKEN_USE, TOKEN_FROM, TOKEN_AS, TOKEN_TRY, TOKEN_CATCH,
     TOKEN_ASYNC, TOKEN_AWAIT, TOKEN_STRUCT, TOKEN_ENUM, TOKEN_MATCH,
+    TOKEN_SELECT, TOKEN_CASE, TOKEN_DEFAULT, TOKEN_CHAN,
     TOKEN_LPAREN, TOKEN_RPAREN, TOKEN_LBRACE, TOKEN_RBRACE, TOKEN_LBRACKET,
     TOKEN_RBRACKET, TOKEN_COMMA, TOKEN_COLON, TOKEN_SEMICOLON, TOKEN_DOT,
     TOKEN_DOT_DOT, TOKEN_DOT_DOT_EQ, TOKEN_QUESTION, TOKEN_DOUBLE_QUESTION,
-    TOKEN_ARROW, TOKEN_FAT_ARROW, TOKEN_PIPE, TOKEN_UNDERSCORE,
+    TOKEN_ARROW, TOKEN_FAT_ARROW, TOKEN_PIPE, TOKEN_LEFT_ARROW, TOKEN_UNDERSCORE,
     TOKEN_PLUS, TOKEN_MINUS, TOKEN_STAR, TOKEN_SLASH, TOKEN_PERCENT,
-    TOKEN_EQUALS, TOKEN_PLUS_EQUALS, TOKEN_MINUS_EQUALS, TOKEN_EQ_EQ,
+    TOKEN_EQUALS, TOKEN_PLUS_EQUALS, TOKEN_MINUS_EQUALS,
+    TOKEN_STAR_EQUALS, TOKEN_SLASH_EQUALS, TOKEN_PERCENT_EQUALS, TOKEN_EQ_EQ,
     TOKEN_NOT_EQ, TOKEN_LT, TOKEN_LT_EQ, TOKEN_GT, TOKEN_GT_EQ,
     TOKEN_AND, TOKEN_OR, TOKEN_NOT, TOKEN_AMP, TOKEN_BIT_OR, TOKEN_CARET,
     TOKEN_TILDE, TOKEN_SHL, TOKEN_SHR
@@ -22,11 +24,12 @@ use {
     make_program, make_let_stmt, make_assign_stmt, make_fn_stmt, make_if_stmt,
     make_while_stmt, make_for_stmt, make_return_stmt, make_break_stmt,
     make_continue_stmt, make_try_catch_stmt, make_struct_stmt, make_enum_stmt,
-    make_use_stmt, make_expr_stmt,
+    make_use_stmt, make_expr_stmt, make_select_stmt, make_chan_send_stmt,
     make_literal_expr, make_variable_expr, make_binary_expr, make_unary_expr,
     make_call_expr, make_get_expr, make_index_expr, make_array_expr,
     make_map_expr, make_lambda_expr, make_match_expr, make_struct_init_expr,
-    make_use_expr
+    make_use_expr, make_select_expr, make_chan_send_expr, make_chan_recv_expr,
+    make_await_expr
 } from "./ast.shae"
 
 // Precedence levels
@@ -48,6 +51,7 @@ let PREC_UNARY = 15      // ! not - ~
 let PREC_CALL = 16       // () [] . ?.
 
 fn get_precedence(kind) {
+    if kind == TOKEN_LEFT_ARROW { return PREC_ASSIGN }
     if kind == TOKEN_DOUBLE_QUESTION { return PREC_COALESCE }
     if kind == TOKEN_PIPE { return PREC_PIPE }
     if kind == TOKEN_OR { return PREC_OR }
@@ -122,6 +126,216 @@ fn expect_kind(p, kind, msg) {
     return null
 }
 
+// --- Type Annotations & Grammar Helpers ---
+
+fn parse_single_type(p) {
+    let tok = current_token(p)
+    if tok.kind == TOKEN_NULL {
+        advance_token(p)
+        return "null"
+    }
+    if tok.kind == TOKEN_IDENT or tok.kind == TOKEN_CHAN {
+        advance_token(p)
+        let name = tok.value
+        if match_kind(p, TOKEN_LT) {
+            parse_type_annotation(p)
+            while match_kind(p, TOKEN_COMMA) {
+                parse_type_annotation(p)
+            }
+            expect_kind(p, TOKEN_GT, "Expected '>' after type argument")
+        }
+        return name
+    }
+    if tok.kind == TOKEN_LBRACKET {
+        advance_token(p)
+        let inner = parse_type_annotation(p)
+        expect_kind(p, TOKEN_RBRACKET, "Expected ']' after array type")
+        return "[" + str(inner) + "]"
+    }
+    if tok.kind == TOKEN_LBRACE {
+        advance_token(p)
+        parse_type_annotation(p)
+        expect_kind(p, TOKEN_COLON, "Expected ':' in map type")
+        parse_type_annotation(p)
+        expect_kind(p, TOKEN_RBRACE, "Expected '\}' after map type")
+        return "map"
+    }
+    if tok.kind == TOKEN_FN {
+        advance_token(p)
+        expect_kind(p, TOKEN_LPAREN, "Expected '(' after fn in function type")
+        while not check_kind(p, TOKEN_RPAREN) and not check_kind(p, TOKEN_EOF) {
+            parse_type_annotation(p)
+            if not match_kind(p, TOKEN_COMMA) { break }
+        }
+        expect_kind(p, TOKEN_RPAREN, "Expected ')' after function type parameters")
+        if match_kind(p, TOKEN_ARROW) {
+            parse_type_annotation(p)
+        }
+        return "fn"
+    }
+    return "any"
+}
+
+fn parse_type_annotation(p) {
+    let t = parse_single_type(p)
+    while match_kind(p, TOKEN_BIT_OR) {
+        parse_single_type(p)
+    }
+    return t
+}
+
+fn parse_pattern(p) {
+    if match_kind(p, TOKEN_UNDERSCORE) {
+        return { type: "Wildcard" }
+    }
+    let tok = current_token(p)
+    if tok.kind == TOKEN_INT or tok.kind == TOKEN_FLOAT or tok.kind == TOKEN_STRING or tok.kind == TOKEN_TRUE or tok.kind == TOKEN_FALSE or tok.kind == TOKEN_NULL {
+        advance_token(p)
+        let lit_val = tok.value
+        let lit_kind = "int"
+        if tok.kind == TOKEN_FLOAT { lit_kind = "float" }
+        else if tok.kind == TOKEN_STRING { lit_kind = "string" }
+        else if tok.kind == TOKEN_TRUE or tok.kind == TOKEN_FALSE { lit_kind = "bool" }
+        else if tok.kind == TOKEN_NULL { lit_kind = "null" }
+
+        if match_kind(p, TOKEN_DOT_DOT_EQ) {
+            let end_tok = advance_token(p)
+            return { type: "Range", start: lit_val, end: end_tok.value, inclusive: true }
+        } else if match_kind(p, TOKEN_DOT_DOT) {
+            let end_tok = advance_token(p)
+            return { type: "Range", start: lit_val, end: end_tok.value, inclusive: false }
+        }
+        return { type: "Literal", kind: lit_kind, value: lit_val }
+    }
+    if tok.kind == TOKEN_IDENT {
+        advance_token(p)
+        let name = tok.value
+        if match_kind(p, TOKEN_DOT) {
+            let v_tok = expect_kind(p, TOKEN_IDENT, "Expected variant name after '.' in pattern")
+            let v_name = ""
+            if v_tok != null { v_name = v_tok.value }
+            let fields = []
+            if match_kind(p, TOKEN_LPAREN) {
+                while not check_kind(p, TOKEN_RPAREN) and not check_kind(p, TOKEN_EOF) {
+                    fields.push(parse_pattern(p))
+                    if not match_kind(p, TOKEN_COMMA) { break }
+                }
+                expect_kind(p, TOKEN_RPAREN, "Expected ')' after pattern fields")
+            }
+            return { type: "Enum", enum_name: name, variant: v_name, fields: fields }
+        }
+        return { type: "Variable", name: name }
+    }
+    advance_token(p)
+    return { type: "Wildcard" }
+}
+
+fn parse_match_expr(p) {
+    let tok = advance_token(p) // match
+    let old_allow = p.allow_struct
+    p.allow_struct = false
+    let target = parse_expression(p, PREC_LOWEST)
+    p.allow_struct = old_allow
+    expect_kind(p, TOKEN_LBRACE, "Expected '\{' after match target")
+    let arms = []
+    while not check_kind(p, TOKEN_RBRACE) and not check_kind(p, TOKEN_EOF) {
+        let pattern = parse_pattern(p)
+        let guard = null
+        if match_kind(p, TOKEN_IF) {
+            guard = parse_expression(p, PREC_LOWEST)
+        }
+        expect_kind(p, TOKEN_FAT_ARROW, "Expected '=>' after match pattern")
+        let body = parse_expression(p, PREC_LOWEST)
+        arms.push({ pattern: pattern, guard: guard, body: body })
+        match_kind(p, TOKEN_COMMA)
+    }
+    expect_kind(p, TOKEN_RBRACE, "Expected '\}' after match arms")
+    return make_match_expr(target, arms, tok.line, tok.col)
+}
+
+fn parse_select_stmt(p) {
+    let tok = advance_token(p) // select
+    expect_kind(p, TOKEN_LBRACE, "Expected '\{' after select")
+    let cases = []
+    let default_body = null
+    while not check_kind(p, TOKEN_RBRACE) and not check_kind(p, TOKEN_EOF) {
+        if match_kind(p, TOKEN_CASE) {
+            let case_line = p.tokens[p.pos - 1].line
+            let case_col = p.tokens[p.pos - 1].col
+            let binding = null
+            let channel = null
+            let is_send = false
+            let send_val = null
+
+            if check_kind(p, TOKEN_IDENT) and peek_token(p, 1).kind == TOKEN_EQUALS {
+                let id_tok = advance_token(p)
+                binding = id_tok.value
+                advance_token(p) // =
+                expect_kind(p, TOKEN_LEFT_ARROW, "Expected '<-' in select receive case")
+                channel = parse_expression(p, PREC_LOWEST)
+            } else {
+                let expr = parse_expression(p, PREC_LOWEST)
+                if expr.type == "ChanSendExpr" {
+                    is_send = true
+                    channel = expr.channel
+                    send_val = expr.value
+                } else if expr.type == "ChanRecvExpr" {
+                    channel = expr.channel
+                } else {
+                    if match_kind(p, TOKEN_LEFT_ARROW) {
+                        is_send = true
+                        channel = expr
+                        send_val = parse_expression(p, PREC_LOWEST)
+                    } else {
+                        channel = expr
+                    }
+                }
+            }
+
+            if not match_kind(p, TOKEN_FAT_ARROW) and not match_kind(p, TOKEN_COLON) {
+                p.errors.push("Expected '=>' after select case condition")
+            }
+
+            let body = []
+            if match_kind(p, TOKEN_LBRACE) {
+                body = parse_block(p)
+            } else {
+                let s = parse_statement(p)
+                if s != null { body.push(s) }
+            }
+
+            cases.push({
+                binding: binding,
+                channel: channel,
+                is_send: is_send,
+                send_val: send_val,
+                body: body,
+                line: case_line,
+                col: case_col
+            })
+            match_kind(p, TOKEN_COMMA)
+            match_kind(p, TOKEN_SEMICOLON)
+        } else if match_kind(p, TOKEN_DEFAULT) {
+            if not match_kind(p, TOKEN_FAT_ARROW) and not match_kind(p, TOKEN_COLON) {
+                p.errors.push("Expected '=>' after default in select")
+            }
+            if match_kind(p, TOKEN_LBRACE) {
+                default_body = parse_block(p)
+            } else {
+                let s = parse_statement(p)
+                if s != null { default_body = [s] }
+            }
+            match_kind(p, TOKEN_COMMA)
+            match_kind(p, TOKEN_SEMICOLON)
+        } else {
+            p.errors.push("Expected 'case' or 'default' in select statement")
+            advance_token(p)
+        }
+    }
+    expect_kind(p, TOKEN_RBRACE, "Expected '\}' after select block")
+    return make_select_stmt(cases, default_body, tok.line, tok.col)
+}
+
 // --- Expressions ---
 
 fn parse_expression(p, min_prec) {
@@ -179,6 +393,26 @@ fn parse_expression(p, min_prec) {
                 left = make_struct_init_expr(tok.value, fields, tok.line, tok.col)
             }
         }
+    } else if tok.kind == TOKEN_MATCH {
+        left = parse_match_expr(p)
+    } else if tok.kind == TOKEN_SELECT {
+        let s = parse_select_stmt(p)
+        left = make_select_expr(s.cases, s.default_body, s.line, s.col)
+    } else if tok.kind == TOKEN_CHAN {
+        advance_token(p)
+        if match_kind(p, TOKEN_LT) {
+            parse_type_annotation(p)
+            expect_kind(p, TOKEN_GT, "Expected '>' after channel type")
+        }
+        left = make_variable_expr("chan", tok.line, tok.col)
+    } else if tok.kind == TOKEN_LEFT_ARROW {
+        advance_token(p)
+        let ch = parse_expression(p, PREC_UNARY)
+        left = make_chan_recv_expr(ch, tok.line, tok.col)
+    } else if tok.kind == TOKEN_AWAIT {
+        advance_token(p)
+        let operand = parse_expression(p, PREC_UNARY)
+        left = make_await_expr(operand, tok.line, tok.col)
     } else if tok.kind == TOKEN_MINUS or tok.kind == TOKEN_NOT or tok.kind == TOKEN_TILDE {
         advance_token(p)
         let operand = parse_expression(p, PREC_UNARY)
@@ -230,17 +464,25 @@ fn parse_expression(p, min_prec) {
         let params = []
         while not check_kind(p, TOKEN_RPAREN) and not check_kind(p, TOKEN_EOF) {
             let p_tok = expect_kind(p, TOKEN_IDENT, "Expected parameter name")
+            let p_type = null
+            if match_kind(p, TOKEN_COLON) {
+                p_type = parse_type_annotation(p)
+            }
             if p_tok != null {
-                params.push({ name: p_tok.value, type_ann: null })
+                params.push({ name: p_tok.value, type_ann: p_type })
             }
             if not match_kind(p, TOKEN_COMMA) {
                 break
             }
         }
         expect_kind(p, TOKEN_RPAREN, "Expected ')' after parameters")
+        let ret_type = null
+        if match_kind(p, TOKEN_ARROW) {
+            ret_type = parse_type_annotation(p)
+        }
         expect_kind(p, TOKEN_LBRACE, "Expected '\{' before function body")
         let body = parse_block(p)
-        left = make_lambda_expr(params, null, body, false, tok.line, tok.col)
+        left = make_lambda_expr(params, ret_type, body, false, tok.line, tok.col)
     } else if tok.kind == TOKEN_USE {
         // Expression use: let mod = use "std:fs"
         advance_token(p)
@@ -258,6 +500,14 @@ fn parse_expression(p, min_prec) {
         let prec = get_precedence(cur.kind)
         if prec <= min_prec {
             break
+        }
+
+        // Channel Send: ch <- val
+        if cur.kind == TOKEN_LEFT_ARROW {
+            advance_token(p)
+            let val = parse_expression(p, PREC_ASSIGN - 1)
+            left = make_chan_send_expr(left, val, cur.line, cur.col)
+            continue
         }
 
         // Call: left(args)
@@ -331,12 +581,20 @@ fn parse_statement(p) {
 
     let tok = current_token(p)
 
+    // 0. Select statement: select { ... }
+    if tok.kind == TOKEN_SELECT {
+        return parse_select_stmt(p)
+    }
+
     // 1. Let statement: let [pattern] = init
     if tok.kind == TOKEN_LET {
         advance_token(p)
         let pat_tok = advance_token(p)
         let pattern = pat_tok.value
         let type_ann = null
+        if match_kind(p, TOKEN_COLON) {
+            type_ann = parse_type_annotation(p)
+        }
         expect_kind(p, TOKEN_EQUALS, "Expected '=' in let binding")
         let init_expr = parse_expression(p, PREC_LOWEST)
         match_kind(p, TOKEN_SEMICOLON)
@@ -355,17 +613,25 @@ fn parse_statement(p) {
         let params = []
         while not check_kind(p, TOKEN_RPAREN) and not check_kind(p, TOKEN_EOF) {
             let p_tok = expect_kind(p, TOKEN_IDENT, "Expected parameter name")
+            let p_type = null
+            if match_kind(p, TOKEN_COLON) {
+                p_type = parse_type_annotation(p)
+            }
             if p_tok != null {
-                params.push({ name: p_tok.value, type_ann: null })
+                params.push({ name: p_tok.value, type_ann: p_type })
             }
             if not match_kind(p, TOKEN_COMMA) {
                 break
             }
         }
         expect_kind(p, TOKEN_RPAREN, "Expected ')' after parameters")
+        let ret_type = null
+        if match_kind(p, TOKEN_ARROW) {
+            ret_type = parse_type_annotation(p)
+        }
         expect_kind(p, TOKEN_LBRACE, "Expected '\{' before function body")
         let body = parse_block(p)
-        return make_fn_stmt(name, params, null, body, false, tok.line, tok.col)
+        return make_fn_stmt(name, params, ret_type, body, false, tok.line, tok.col)
     }
 
     // 3. If statement: if cond { then } else { else }
@@ -474,8 +740,12 @@ fn parse_statement(p) {
         let fields = []
         while not check_kind(p, TOKEN_RBRACE) and not check_kind(p, TOKEN_EOF) {
             let f_tok = expect_kind(p, TOKEN_IDENT, "Expected struct field name")
+            let f_type = null
+            if match_kind(p, TOKEN_COLON) {
+                f_type = parse_type_annotation(p)
+            }
             if f_tok != null {
-                fields.push({ name: f_tok.value, type_ann: null })
+                fields.push({ name: f_tok.value, type_ann: f_type })
             }
             if not match_kind(p, TOKEN_COMMA) {
                 break
@@ -522,8 +792,15 @@ fn parse_statement(p) {
         let imports = []
         while not check_kind(p, TOKEN_RBRACE) and not check_kind(p, TOKEN_EOF) {
             let item_tok = expect_kind(p, TOKEN_IDENT, "Expected import identifier")
+            let alias = null
+            if match_kind(p, TOKEN_AS) {
+                let a_tok = expect_kind(p, TOKEN_IDENT, "Expected alias identifier after 'as'")
+                if a_tok != null {
+                    alias = a_tok.value
+                }
+            }
             if item_tok != null {
-                imports.push({ name: item_tok.value, alias: null })
+                imports.push({ name: item_tok.value, alias: alias })
             }
             if not match_kind(p, TOKEN_COMMA) { break }
         }
@@ -541,7 +818,19 @@ fn parse_statement(p) {
     // 12. Expression or Assignment statement
     let expr = parse_expression(p, PREC_LOWEST)
 
-    // Check assignment: target = value, target += value, target -= value
+    // Channel Send statement: ch <- val
+    if check_kind(p, TOKEN_LEFT_ARROW) {
+        advance_token(p)
+        let val = parse_expression(p, PREC_LOWEST)
+        match_kind(p, TOKEN_SEMICOLON)
+        return make_chan_send_stmt(expr, val, tok.line, tok.col)
+    }
+    if expr.type == "ChanSendExpr" {
+        match_kind(p, TOKEN_SEMICOLON)
+        return make_chan_send_stmt(expr.channel, expr.value, expr.line, expr.col)
+    }
+
+    // Check assignment: target = value, target += value, target -= value, *=, /=, %=
     if check_kind(p, TOKEN_EQUALS) {
         advance_token(p)
         let val = parse_expression(p, PREC_LOWEST)
@@ -561,6 +850,27 @@ fn parse_statement(p) {
         let sub_val = make_binary_expr(expr, "-", val, tok.line, tok.col)
         match_kind(p, TOKEN_SEMICOLON)
         return make_assign_stmt(expr, sub_val, tok.line, tok.col)
+    }
+    if check_kind(p, TOKEN_STAR_EQUALS) {
+        advance_token(p)
+        let val = parse_expression(p, PREC_LOWEST)
+        let mul_val = make_binary_expr(expr, "*", val, tok.line, tok.col)
+        match_kind(p, TOKEN_SEMICOLON)
+        return make_assign_stmt(expr, mul_val, tok.line, tok.col)
+    }
+    if check_kind(p, TOKEN_SLASH_EQUALS) {
+        advance_token(p)
+        let val = parse_expression(p, PREC_LOWEST)
+        let div_val = make_binary_expr(expr, "/", val, tok.line, tok.col)
+        match_kind(p, TOKEN_SEMICOLON)
+        return make_assign_stmt(expr, div_val, tok.line, tok.col)
+    }
+    if check_kind(p, TOKEN_PERCENT_EQUALS) {
+        advance_token(p)
+        let val = parse_expression(p, PREC_LOWEST)
+        let mod_val = make_binary_expr(expr, "%", val, tok.line, tok.col)
+        match_kind(p, TOKEN_SEMICOLON)
+        return make_assign_stmt(expr, mod_val, tok.line, tok.col)
     }
 
     match_kind(p, TOKEN_SEMICOLON)

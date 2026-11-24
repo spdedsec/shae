@@ -374,6 +374,7 @@ fn test_parallel_worker_pool_channel_pipeline() {
                             guard.insert((worker_id, tid));
                         }
                         results.send(Value::Int(job_val * 2), dummy_span)?;
+                        std::thread::yield_now();
                     }
                     _ => break,
                 }

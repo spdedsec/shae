@@ -151,6 +151,26 @@ fn make_expr_stmt(expr, line, col) {
     }
 }
 
+fn make_select_stmt(cases, default_body, line, col) {
+    return {
+        type: "SelectStmt",
+        cases: cases,
+        default_body: default_body,
+        line: line,
+        col: col
+    }
+}
+
+fn make_chan_send_stmt(channel, value, line, col) {
+    return {
+        type: "ChanSendStmt",
+        channel: channel,
+        value: value,
+        line: line,
+        col: col
+    }
+}
+
 // --- Expressions ---
 
 fn make_literal_expr(kind, value, line, col) {
@@ -278,6 +298,44 @@ fn make_use_expr(path, line, col) {
     return {
         type: "UseExpr",
         path: path,
+        line: line,
+        col: col
+    }
+}
+
+fn make_select_expr(cases, default_body, line, col) {
+    return {
+        type: "SelectExpr",
+        cases: cases,
+        default_body: default_body,
+        line: line,
+        col: col
+    }
+}
+
+fn make_chan_send_expr(channel, value, line, col) {
+    return {
+        type: "ChanSendExpr",
+        channel: channel,
+        value: value,
+        line: line,
+        col: col
+    }
+}
+
+fn make_chan_recv_expr(channel, line, col) {
+    return {
+        type: "ChanRecvExpr",
+        channel: channel,
+        line: line,
+        col: col
+    }
+}
+
+fn make_await_expr(expr, line, col) {
+    return {
+        type: "AwaitExpr",
+        expr: expr,
         line: line,
         col: col
     }

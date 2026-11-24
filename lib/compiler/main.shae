@@ -115,13 +115,16 @@ fn run_cli_driver() {
     let is_shaec = prog.contains("shaec") or prog.ends_with("shaec") or prog.ends_with("shaec.exe")
     let is_stage2_or_bytecode = (argv.len > 1 and (argv[1].ends_with(".shaec") or argv[1].contains("shaec_stage2")))
     let is_direct_compiler_script = (argv.len > 1 and (argv[1].ends_with("lib/compiler/main.shae") or argv[1] == "lib/compiler/main.shae" or argv[1] == "./lib/compiler/main.shae"))
+    let is_run_subcommand = (argv.len > 2 and argv[1] == "run" and (argv[2].ends_with(".shaec") or argv[2].contains("shaec_stage2") or argv[2].ends_with("lib/compiler/main.shae") or argv[2] == "lib/compiler/main.shae" or argv[2] == "./lib/compiler/main.shae"))
 
-    if not is_shaec and not is_stage2_or_bytecode and not is_direct_compiler_script {
+    if not is_shaec and not is_stage2_or_bytecode and not is_direct_compiler_script and not is_run_subcommand {
         return null
     }
 
     let start_idx = 1
-    if is_direct_compiler_script or is_stage2_or_bytecode {
+    if is_run_subcommand {
+        start_idx = 3
+    } else if is_direct_compiler_script or is_stage2_or_bytecode {
         start_idx = 2
     }
 
