@@ -31,6 +31,7 @@ pub mod linter;
 pub mod llvm;
 pub mod lsp;
 pub mod math;
+pub mod math3d;
 pub mod opcode;
 pub mod parser;
 pub mod physics;
