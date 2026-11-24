@@ -2,8 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+pub const STANDALONE_MAGIC: &[u8; 26] = b"SHAE_STANDALONE_PAYLOAD_V1";
 pub const BUNDLE_MAGIC: &[u8; 23] = b"SHAE_BUNDLE_PAYLOAD_V1\n";
 
 #[derive(Debug, thiserror::Error)]
@@ -171,11 +172,82 @@ pub fn collect_bundle_opts(
     Ok(archive)
 }
 
-pub fn create_standalone_binary(
-    entry_file: &Path,
-    output_binary: &Path,
-) -> Result<(), BundleError> {
-    create_standalone_binary_opts(entry_file, output_binary, true, false)
+/// Strip any existing standalone or bundle payload trailer from executable bytes.
+/// Prevents payload nesting when repackaging standalone binaries.
+pub fn strip_existing_payload(bytes: &mut Vec<u8>) {
+    // Check canonical STANDALONE_MAGIC (26 bytes)
+    let standalone_len = STANDALONE_MAGIC.len();
+    if bytes.len() > standalone_len + 8 {
+        let end_idx = bytes.len() - standalone_len;
+        if &bytes[end_idx..] == STANDALONE_MAGIC {
+            let mut len_buf = [0u8; 8];
+            len_buf.copy_from_slice(&bytes[end_idx - 8..end_idx]);
+            let old_payload_len = u64::from_be_bytes(len_buf) as usize;
+            let trailer_len = standalone_len + 8;
+            if bytes.len() >= old_payload_len + trailer_len {
+                let orig_len = bytes.len() - (old_payload_len + trailer_len);
+                bytes.truncate(orig_len);
+                return;
+            }
+        }
+    }
+
+    // Check legacy BUNDLE_MAGIC (23 bytes)
+    let bundle_len = BUNDLE_MAGIC.len();
+    if bytes.len() > bundle_len + 8 {
+        let end_idx = bytes.len() - bundle_len;
+        if &bytes[end_idx..] == BUNDLE_MAGIC {
+            let mut len_buf = [0u8; 8];
+            len_buf.copy_from_slice(&bytes[end_idx - 8..end_idx]);
+            let old_payload_len = u64::from_be_bytes(len_buf) as usize;
+            let trailer_len = bundle_len + 8;
+            if bytes.len() >= old_payload_len + trailer_len {
+                let orig_len = bytes.len() - (old_payload_len + trailer_len);
+                bytes.truncate(orig_len);
+                return;
+            }
+        }
+    }
+}
+
+/// Resolve the executable stub to use for building standalone binaries.
+/// Checks SHAE_STUB_PATH environment variable, CARGO_BIN_EXE_shae compile-time path,
+/// parent of /deps/ if running inside a cargo test runner, and finally current_exe().
+pub fn resolve_executable_stub() -> io::Result<PathBuf> {
+    // 1. SHAE_STUB_PATH environment variable
+    if let Ok(path_str) = std::env::var("SHAE_STUB_PATH") {
+        let path = PathBuf::from(path_str);
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    // 2. CARGO_BIN_EXE_shae compile-time environment variable
+    if let Some(path_str) = option_env!("CARGO_BIN_EXE_shae") {
+        let path = PathBuf::from(path_str);
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    // 3. Inspect current_exe()
+    if let Ok(exe) = std::env::current_exe() {
+        if exe.to_string_lossy().contains("/deps/") {
+            // Under `cargo test`, current_exe is in target/{debug|release}/deps/
+            if let Some(target_dir) = exe.parent().and_then(|p| p.parent()) {
+                let candidate = target_dir.join(if cfg!(windows) { "shae.exe" } else { "shae" });
+                if candidate.exists() {
+                    return Ok(candidate);
+                }
+            }
+        }
+        if exe.exists() {
+            return Ok(exe);
+        }
+    }
+
+    // 4. Fallback: std::env::current_exe() directly
+    std::env::current_exe()
 }
 
 pub fn create_standalone_binary_from_stub(
@@ -192,19 +264,7 @@ pub fn create_standalone_binary_from_stub(
     let mut exe_bytes = fs::read(stub_path)?;
 
     // If stub already has an embedded bundle payload, strip it cleanly
-    let magic_len = BUNDLE_MAGIC.len();
-    if exe_bytes.len() > magic_len + 8 {
-        let end_idx = exe_bytes.len() - magic_len;
-        if &exe_bytes[end_idx..] == BUNDLE_MAGIC {
-            let mut len_buf = [0u8; 8];
-            len_buf.copy_from_slice(&exe_bytes[end_idx - 8..end_idx]);
-            let old_payload_len = u64::from_be_bytes(len_buf) as usize;
-            if exe_bytes.len() >= old_payload_len + magic_len + 8 {
-                let orig_len = exe_bytes.len() - (old_payload_len + magic_len + 8);
-                exe_bytes.truncate(orig_len);
-            }
-        }
-    }
+    strip_existing_payload(&mut exe_bytes);
 
     if let Some(parent) = output_binary.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -217,7 +277,7 @@ pub fn create_standalone_binary_from_stub(
     out_file.write_all(&exe_bytes)?;
     out_file.write_all(&payload)?;
     out_file.write_all(&payload_len.to_be_bytes())?;
-    out_file.write_all(BUNDLE_MAGIC)?;
+    out_file.write_all(STANDALONE_MAGIC)?;
     out_file.flush()?;
 
     #[cfg(unix)]
@@ -231,20 +291,38 @@ pub fn create_standalone_binary_from_stub(
     Ok(())
 }
 
+/// Build standalone executable binary with options using resolved stub.
 pub fn create_standalone_binary_opts(
     entry_file: &Path,
     output_binary: &Path,
     compile_bytecode: bool,
     strip_source: bool,
 ) -> Result<(), BundleError> {
-    let current_exe = std::env::current_exe()?;
+    let stub_path = resolve_executable_stub()?;
     create_standalone_binary_from_stub(
-        &current_exe,
+        &stub_path,
         entry_file,
         output_binary,
         compile_bytecode,
         strip_source,
     )
+}
+
+/// Standalone packaging entry point matching the Milestone M2-PKG interface contract.
+pub fn build_standalone(
+    entry_file: &Path,
+    output_binary: &Path,
+    compile_bytecode: bool,
+    strip_source: bool,
+) -> Result<(), BundleError> {
+    create_standalone_binary_opts(entry_file, output_binary, compile_bytecode, strip_source)
+}
+
+pub fn create_standalone_binary(
+    entry_file: &Path,
+    output_binary: &Path,
+) -> Result<(), BundleError> {
+    create_standalone_binary_opts(entry_file, output_binary, true, false)
 }
 
 pub fn read_embedded_bundle(exe_path: &Path) -> io::Result<Option<BundleArchive>> {
@@ -254,36 +332,52 @@ pub fn read_embedded_bundle(exe_path: &Path) -> io::Result<Option<BundleArchive>
     };
 
     let file_len = file.metadata()?.len();
-    let magic_len = BUNDLE_MAGIC.len() as u64;
-    let trailer_len = magic_len + 8; // 8 bytes for u64 length + magic
 
-    if file_len < trailer_len {
-        return Ok(None);
+    // 1. Try canonical STANDALONE_MAGIC (26 bytes + 8 bytes length = 34 bytes trailer)
+    let standalone_magic_len = STANDALONE_MAGIC.len() as u64;
+    let standalone_trailer_len = standalone_magic_len + 8;
+    if file_len >= standalone_trailer_len {
+        file.seek(SeekFrom::End(-(standalone_trailer_len as i64)))?;
+        let mut len_bytes = [0u8; 8];
+        file.read_exact(&mut len_bytes)?;
+        let mut magic_buf = vec![0u8; standalone_magic_len as usize];
+        file.read_exact(&mut magic_buf)?;
+
+        if magic_buf == STANDALONE_MAGIC {
+            let payload_len = u64::from_be_bytes(len_bytes);
+            if file_len >= standalone_trailer_len + payload_len {
+                file.seek(SeekFrom::End(-((standalone_trailer_len + payload_len) as i64)))?;
+                let mut payload = vec![0u8; payload_len as usize];
+                file.read_exact(&mut payload)?;
+                if let Ok(archive) = serde_json::from_slice::<BundleArchive>(&payload) {
+                    return Ok(Some(archive));
+                }
+            }
+        }
     }
 
-    file.seek(SeekFrom::End(-(trailer_len as i64)))?;
+    // 2. Try legacy BUNDLE_MAGIC (23 bytes + 8 bytes length = 31 bytes trailer)
+    let bundle_magic_len = BUNDLE_MAGIC.len() as u64;
+    let bundle_trailer_len = bundle_magic_len + 8;
+    if file_len >= bundle_trailer_len {
+        file.seek(SeekFrom::End(-(bundle_trailer_len as i64)))?;
+        let mut len_bytes = [0u8; 8];
+        file.read_exact(&mut len_bytes)?;
+        let mut magic_buf = vec![0u8; bundle_magic_len as usize];
+        file.read_exact(&mut magic_buf)?;
 
-    let mut len_bytes = [0u8; 8];
-    file.read_exact(&mut len_bytes)?;
-    let payload_len = u64::from_be_bytes(len_bytes);
-
-    let mut magic_buf = vec![0u8; magic_len as usize];
-    file.read_exact(&mut magic_buf)?;
-
-    if magic_buf != BUNDLE_MAGIC {
-        return Ok(None);
+        if magic_buf == BUNDLE_MAGIC {
+            let payload_len = u64::from_be_bytes(len_bytes);
+            if file_len >= bundle_trailer_len + payload_len {
+                file.seek(SeekFrom::End(-((bundle_trailer_len + payload_len) as i64)))?;
+                let mut payload = vec![0u8; payload_len as usize];
+                file.read_exact(&mut payload)?;
+                if let Ok(archive) = serde_json::from_slice::<BundleArchive>(&payload) {
+                    return Ok(Some(archive));
+                }
+            }
+        }
     }
 
-    if file_len < trailer_len + payload_len {
-        return Ok(None);
-    }
-
-    file.seek(SeekFrom::End(-((trailer_len + payload_len) as i64)))?;
-    let mut payload = vec![0u8; payload_len as usize];
-    file.read_exact(&mut payload)?;
-
-    match serde_json::from_slice::<BundleArchive>(&payload) {
-        Ok(archive) => Ok(Some(archive)),
-        Err(_) => Ok(None),
-    }
+    Ok(None)
 }
