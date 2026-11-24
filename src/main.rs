@@ -788,15 +788,20 @@ fn handle_build_command(args: &[String]) {
 }
 
 fn main() {
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Ok(Some(archive)) = shae::bundle::read_embedded_bundle(&exe_path) {
-            let args: Vec<String> = env::args().collect();
-            run_bundled_archive(archive, &args);
-            return;
+    let args: Vec<String> = env::args().collect();
+
+    let is_toolchain_cmd = args.len() > 1
+        && (args[1] == "build" || args[1] == "bundle" || args[1] == "--shae-cli")
+        && std::env::var("SHAE_APP").is_err();
+
+    if !is_toolchain_cmd {
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Ok(Some(archive)) = shae::bundle::read_embedded_bundle(&exe_path) {
+                run_bundled_archive(archive, &args);
+                return;
+            }
         }
     }
-
-    let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
         let use_vm = should_use_vm(&args);
@@ -1630,65 +1635,7 @@ fn main() {
             handle_build_command(&args);
         }
         "bundle" => {
-            if args.len() < 3 {
-                eprintln!(
-                    "Usage: shae bundle <entry.shae> [-o <output_binary>] [--strip] [--no-bytecode]"
-                );
-                process::exit(1);
-            }
-            let entry = Path::new(&args[2]);
-            let mut output = None;
-            let mut strip_source = false;
-            let mut compile_bytecode = true;
-            let mut i = 3;
-            while i < args.len() {
-                if (args[i] == "-o" || args[i] == "--output") && i + 1 < args.len() {
-                    output = Some(args[i + 1].clone());
-                    i += 2;
-                } else if args[i] == "--strip" {
-                    strip_source = true;
-                    i += 1;
-                } else if args[i] == "--no-bytecode" {
-                    compile_bytecode = false;
-                    i += 1;
-                } else {
-                    i += 1;
-                }
-            }
-            if strip_source && !compile_bytecode {
-                eprintln!("Error: Cannot specify both --strip and --no-bytecode");
-                process::exit(1);
-            }
-            let out_path = output.unwrap_or_else(|| {
-                let stem = entry
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("bundle");
-                format!("{}.bin", stem)
-            });
-            match shae::bundle::create_standalone_binary_opts(
-                entry,
-                Path::new(&out_path),
-                compile_bytecode,
-                strip_source,
-            ) {
-                Ok(_) => {
-                    let mode_desc = match (compile_bytecode, strip_source) {
-                        (true, true) => " (bytecode only, source stripped)",
-                        (true, false) => " (bytecode + AST fallback)",
-                        (false, false) => " (source AST only)",
-                        _ => "",
-                    };
-                    println!(
-                        "✨ Successfully created standalone bundle: {}{}",
-                        out_path, mode_desc
-                    );
-                }
-                Err(e) => {
-                    eprintln!("Error bundling application: {}", e);
-                    process::exit(1);
-                }
-            }
+            handle_build_command(&args);
         }
         "link" => {
             if args.len() < 3 {
