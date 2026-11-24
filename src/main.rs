@@ -3,7 +3,7 @@ use shae::lexer;
 use shae::parser;
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 
 fn show_help() {
@@ -56,6 +56,9 @@ fn show_help() {
     );
     println!(
         "  shae pkg verify <pkg> <sha> Verify SHA-256 integrity checksum of a package archive"
+    );
+    println!(
+        "  shae build [entry.shae]    Build standalone executable or target artifact (--standalone, -o, --release, --strip, --wasm, --llvm, --bytecode)"
     );
     println!(
         "  shae bundle <entry.shae>   Bundle application into a standalone binary (--strip, --no-bytecode)"
@@ -511,6 +514,276 @@ fn run_bundled_archive(archive: shae::bundle::BundleArchive, args: &[String]) {
             );
         }
         process::exit(1);
+    }
+}
+
+fn handle_build_command(args: &[String]) {
+    let mut entry_file: Option<String> = None;
+    let mut output: Option<String> = None;
+    let mut _standalone = false;
+    let mut strip_source = false;
+    let mut compile_bytecode = true;
+    let mut target_wasm = false;
+    let mut target_llvm = false;
+    let mut target_bytecode = false;
+    let mut disasm = false;
+    let mut llvm_compile = false;
+    let mut llvm_run = false;
+
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--help" | "-h" => {
+                println!("Shae Application and Toolchain Builder\n");
+                println!("Usage: shae build [entry.shae] [options]\n");
+                println!("Options:");
+                println!("  -o, --output <PATH>     Output path for generated executable or artifact");
+                println!("  --standalone            Package into a zero-dependency standalone executable (default)");
+                println!("  --release, --strip      Strip source code from bundle (embed compiled bytecode only)");
+                println!("  --no-bytecode           Embed AST source only without bytecode compilation");
+                println!("  --bytecode              Compile entry file directly to canonical .shaec bytecode");
+                println!("  --disasm                Disassemble bytecode output (when used with --bytecode)");
+                println!("  --wasm                  Compile to WebAssembly binary module (.wasm)");
+                println!("  --llvm                  Compile via LLVM SSA backend to LLVM IR (.ll)");
+                println!("  -c, --compile           Compile LLVM IR to native binary with clang (with --llvm)");
+                println!("  -r, --run               Compile and run LLVM native binary (with --llvm)");
+                println!("  -h, --help              Show this help message");
+                return;
+            }
+            "-o" | "--output" => {
+                if i + 1 < args.len() {
+                    output = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("Error: -o requires an output path");
+                    process::exit(1);
+                }
+            }
+            "--standalone" => {
+                _standalone = true;
+                i += 1;
+            }
+            "--release" | "--strip" => {
+                strip_source = true;
+                compile_bytecode = true;
+                i += 1;
+            }
+            "--no-bytecode" => {
+                compile_bytecode = false;
+                i += 1;
+            }
+            "--wasm" => {
+                target_wasm = true;
+                i += 1;
+            }
+            "--llvm" => {
+                target_llvm = true;
+                i += 1;
+            }
+            "--bytecode" => {
+                target_bytecode = true;
+                i += 1;
+            }
+            "--disasm" => {
+                disasm = true;
+                i += 1;
+            }
+            "-c" | "--compile" => {
+                llvm_compile = true;
+                i += 1;
+            }
+            "-r" | "--run" => {
+                llvm_run = true;
+                llvm_compile = true;
+                i += 1;
+            }
+            arg if !arg.starts_with('-') && entry_file.is_none() => {
+                entry_file = Some(arg.to_string());
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    if strip_source && !compile_bytecode {
+        eprintln!("Error: Cannot specify both --strip/--release and --no-bytecode");
+        process::exit(1);
+    }
+
+    let (resolved_entry, default_name) = match entry_file {
+        Some(f) => {
+            let path = PathBuf::from(&f);
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("app")
+                .to_string();
+            (path, stem)
+        }
+        None => {
+            if let Ok(manifest) = shae::pkg::PackageManifest::load_from_dir(Path::new(".")) {
+                let entry_path = Path::new(".").join(&manifest.package.entry);
+                let actual = if entry_path.exists() {
+                    entry_path
+                } else if Path::new("src/main.shae").exists() {
+                    PathBuf::from("src/main.shae")
+                } else if Path::new("main.shae").exists() {
+                    PathBuf::from("main.shae")
+                } else {
+                    entry_path
+                };
+                (actual, manifest.package.name)
+            } else if Path::new("main.shae").exists() {
+                (PathBuf::from("main.shae"), "main".to_string())
+            } else if Path::new("src/main.shae").exists() {
+                (PathBuf::from("src/main.shae"), "main".to_string())
+            } else {
+                eprintln!(
+                    "Error: No entry file specified and no shae.toml or main.shae found in current directory."
+                );
+                eprintln!(
+                    "Usage: shae build [entry.shae] [-o <output>] [--standalone] [--release] [--wasm] [--llvm] [--bytecode]"
+                );
+                process::exit(1);
+            }
+        }
+    };
+
+    if !resolved_entry.exists() {
+        eprintln!(
+            "Error: Entry file '{}' does not exist.",
+            resolved_entry.display()
+        );
+        process::exit(1);
+    }
+
+    if target_wasm {
+        let out_path = output.unwrap_or_else(|| format!("{}.wasm", default_name));
+        let src = match fs::read_to_string(&resolved_entry) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to read file '{}': {}", resolved_entry.display(), e);
+                process::exit(1);
+            }
+        };
+        let mut compiler = shae::wasm::WasmCompiler::new();
+        match compiler.compile_source(&src) {
+            Ok(wasm_bytes) => {
+                if let Err(e) = fs::write(&out_path, &wasm_bytes) {
+                    eprintln!("Failed to write wasm file '{}': {}", out_path, e);
+                    process::exit(1);
+                }
+                println!(
+                    "🌐 Successfully compiled WebAssembly module: {} ({} bytes)",
+                    out_path,
+                    wasm_bytes.len()
+                );
+            }
+            Err(e) => {
+                eprintln!("WASM compilation error: {}", e);
+                process::exit(1);
+            }
+        }
+    } else if target_llvm {
+        let out_path = output.unwrap_or_else(|| {
+            if llvm_compile {
+                default_name.clone()
+            } else {
+                format!("{}.ll", default_name)
+            }
+        });
+        let src = match fs::read_to_string(&resolved_entry) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to read file '{}': {}", resolved_entry.display(), e);
+                process::exit(1);
+            }
+        };
+        let mut compiler = shae::llvm::LlvmCompiler::new();
+        let ir_code = match compiler.compile_source(&src) {
+            Ok(ir) => ir,
+            Err(e) => {
+                eprintln!("LLVM IR generation error: {}", e);
+                process::exit(1);
+            }
+        };
+        if llvm_compile {
+            let tmp_ll = format!("/tmp/shae_llvm_{}_{}.ll", std::process::id(), fastrand::u64(..));
+            if let Err(e) = fs::write(&tmp_ll, &ir_code) {
+                eprintln!("Failed to write temp LLVM IR: {}", e);
+                process::exit(1);
+            }
+            let clang_res = std::process::Command::new("clang")
+                .args(["-O2", &tmp_ll, "-o", &out_path, "-lm"])
+                .status();
+            let _ = fs::remove_file(&tmp_ll);
+            match clang_res {
+                Ok(status) if status.success() => {
+                    println!("⚡ Successfully compiled native LLVM executable: {}", out_path);
+                    if llvm_run {
+                        let _ = std::process::Command::new(&out_path).status();
+                    }
+                }
+                Ok(status) => {
+                    eprintln!("clang compilation failed with exit code: {}", status);
+                    process::exit(status.code().unwrap_or(1));
+                }
+                Err(e) => {
+                    eprintln!("Failed to invoke clang: {}. Ensure clang is installed.", e);
+                    process::exit(1);
+                }
+            }
+        } else {
+            if out_path == "-" {
+                println!("{}", ir_code);
+            } else {
+                if let Err(e) = fs::write(&out_path, &ir_code) {
+                    eprintln!("Failed to write LLVM IR file '{}': {}", out_path, e);
+                    process::exit(1);
+                }
+                println!("⚡ Successfully generated LLVM IR: {} ({} bytes)", out_path, ir_code.len());
+            }
+        }
+    } else if target_bytecode {
+        let out_path = output.unwrap_or_else(|| format!("{}.shaec", default_name));
+        compile_file(&resolved_entry.to_string_lossy(), Some(&out_path), disasm);
+    } else {
+        // Default / Standalone executable mode
+        let out_path = output.unwrap_or_else(|| {
+            #[cfg(windows)]
+            {
+                format!("{}.exe", default_name)
+            }
+            #[cfg(not(windows))]
+            {
+                default_name.clone()
+            }
+        });
+        match shae::bundle::create_standalone_binary_opts(
+            &resolved_entry,
+            Path::new(&out_path),
+            compile_bytecode,
+            strip_source,
+        ) {
+            Ok(_) => {
+                let mode_desc = match (compile_bytecode, strip_source) {
+                    (true, true) => " (release, bytecode only, source stripped)",
+                    (true, false) => " (bytecode + AST fallback)",
+                    (false, false) => " (source AST only)",
+                    _ => "",
+                };
+                println!(
+                    "✨ Successfully built standalone binary: {}{}",
+                    out_path, mode_desc
+                );
+            }
+            Err(e) => {
+                eprintln!("Error building standalone binary: {}", e);
+                process::exit(1);
+            }
+        }
     }
 }
 
@@ -1353,6 +1626,9 @@ fn main() {
                 process::exit(1);
             }
         }
+        "build" => {
+            handle_build_command(&args);
+        }
         "bundle" => {
             if args.len() < 3 {
                 eprintln!(
@@ -1715,7 +1991,7 @@ fn main() {
                     "  run, jit, repl, compile, check, disasm, fmt, bench, test, doc, clean,"
                 );
                 eprintln!(
-                    "  new, init, add, install, pkg, bundle, link, wasm, llvm, lsp, dap, debug, profile, serve"
+                    "  new, init, add, install, pkg, build, bundle, link, wasm, llvm, lsp, dap, debug, profile, serve"
                 );
                 eprintln!();
                 eprintln!("Did you mean to run a script?");

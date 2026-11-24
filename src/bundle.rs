@@ -178,7 +178,8 @@ pub fn create_standalone_binary(
     create_standalone_binary_opts(entry_file, output_binary, true, false)
 }
 
-pub fn create_standalone_binary_opts(
+pub fn create_standalone_binary_from_stub(
+    stub_path: &Path,
     entry_file: &Path,
     output_binary: &Path,
     compile_bytecode: bool,
@@ -188,8 +189,28 @@ pub fn create_standalone_binary_opts(
     let payload = serde_json::to_vec(&archive)?;
     let payload_len = payload.len() as u64;
 
-    let current_exe = std::env::current_exe()?;
-    let exe_bytes = fs::read(&current_exe)?;
+    let mut exe_bytes = fs::read(stub_path)?;
+
+    // If stub already has an embedded bundle payload, strip it cleanly
+    let magic_len = BUNDLE_MAGIC.len();
+    if exe_bytes.len() > magic_len + 8 {
+        let end_idx = exe_bytes.len() - magic_len;
+        if &exe_bytes[end_idx..] == BUNDLE_MAGIC {
+            let mut len_buf = [0u8; 8];
+            len_buf.copy_from_slice(&exe_bytes[end_idx - 8..end_idx]);
+            let old_payload_len = u64::from_be_bytes(len_buf) as usize;
+            if exe_bytes.len() >= old_payload_len + magic_len + 8 {
+                let orig_len = exe_bytes.len() - (old_payload_len + magic_len + 8);
+                exe_bytes.truncate(orig_len);
+            }
+        }
+    }
+
+    if let Some(parent) = output_binary.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+    }
 
     let mut out_file = fs::File::create(output_binary)?;
     use std::io::Write;
@@ -208,6 +229,22 @@ pub fn create_standalone_binary_opts(
     }
 
     Ok(())
+}
+
+pub fn create_standalone_binary_opts(
+    entry_file: &Path,
+    output_binary: &Path,
+    compile_bytecode: bool,
+    strip_source: bool,
+) -> Result<(), BundleError> {
+    let current_exe = std::env::current_exe()?;
+    create_standalone_binary_from_stub(
+        &current_exe,
+        entry_file,
+        output_binary,
+        compile_bytecode,
+        strip_source,
+    )
 }
 
 pub fn read_embedded_bundle(exe_path: &Path) -> io::Result<Option<BundleArchive>> {
