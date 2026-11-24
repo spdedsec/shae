@@ -102,6 +102,43 @@ jobs:
           path: ${{ matrix.asset_name }}
           if-no-files-found: error
 
+  build-macos-universal:
+    name: Build macOS Universal (arm64 + x86_64)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - name: Build arm64
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Build x86_64
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Create Universal Mach-O Binary
+        run: |
+          mkdir -p target/universal/release
+          lipo -create -output target/universal/release/shae \
+            target/aarch64-apple-darwin/release/shae \
+            target/x86_64-apple-darwin/release/shae
+          file target/universal/release/shae
+
+      - name: Package Universal Archive
+        run: |
+          tar -czvf shae-${{ github.ref_name }}-macos-universal.tar.gz -C target/universal/release shae
+
+      - name: Upload Universal Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-macos-universal
+          path: shae-${{ github.ref_name }}-macos-universal.tar.gz
+          if-no-files-found: error
+
   build-vscode-extension:
     name: Package VS Code Extension
     runs-on: ubuntu-latest
@@ -135,7 +172,7 @@ jobs:
 
   publish-release:
     name: Publish Release & Multi-Platform Distribution
-    needs: [build-binaries, build-vscode-extension]
+    needs: [build-binaries, build-macos-universal, build-vscode-extension]
     if: always() && !cancelled() && needs.build-vscode-extension.result == 'success'
     runs-on: ubuntu-latest
     permissions:
