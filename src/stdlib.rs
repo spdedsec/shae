@@ -66,13 +66,14 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "math3d" => Ok(crate::math3d::build_math3d_module()),
         "gui3d" | "render3d" => Ok(crate::render3d::build_gui3d_module()),
         "gpu" | "tensor" => Ok(crate::gpu::build_gpu_module()),
+        "audio:spatial" | "spatial_audio" => Ok(crate::audio_spatial::build_audio_spatial_module()),
         "io" => Ok(crate::io_mod::build_io_module()),
         "test" => Ok(build_test_module()),
         "bench" | "benchmark" => Ok(build_bench_module()),
         "ws" | "websocket" => Ok(crate::ws::build_ws_module()),
         "sync" => Ok(crate::sync::build_sync_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:async, std:buffer, std:gui, std:ui, std:audio, std:random, std:math, std:io, std:test, std:bench, std:ws, std:sync, std:math3d, std:gui3d, std:render3d, std:gpu, std:tensor",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:async, std:buffer, std:gui, std:ui, std:audio, std:random, std:math, std:io, std:test, std:bench, std:ws, std:sync, std:math3d, std:gui3d, std:render3d, std:gpu, std:tensor, std:audio:spatial, std:spatial_audio",
             clean_name
         ))
         .at(span)),
