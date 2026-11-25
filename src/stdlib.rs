@@ -42,6 +42,7 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "actor:cluster" | "cluster" => Ok(build_cluster_module()),
         "actor:gossip" | "gossip" => Ok(crate::actor_cluster_gossip::build_gossip_module()),
         "raft" | "cluster:raft" => Ok(crate::raft::build_raft_module()),
+        "actor:mesh" | "cluster:mesh" => Ok(crate::actor_cluster_mesh::build_mesh_module()),
         "async" => Ok(build_async_module()),
         "buffer" => Ok(build_buffer_module()),
         "gui" | "graphics" => Ok(crate::gui::build_gui_module()),
@@ -75,7 +76,7 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "ws" | "websocket" => Ok(crate::ws::build_ws_module()),
         "sync" => Ok(crate::sync::build_sync_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:actor:gossip, std:gossip, std:raft, std:cluster:raft, std:async, std:buffer, std:gui, std:ui, std:audio, std:random, std:math, std:io, std:test, std:bench, std:ws, std:sync, std:math3d, std:gui3d, std:render3d, std:gpu, std:tensor, std:audio:spatial, std:spatial_audio",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:actor:gossip, std:gossip, std:raft, std:cluster:raft, std:actor:mesh, std:cluster:mesh, std:async, std:buffer, std:gui, std:ui, std:audio, std:random, std:math, std:io, std:test, std:bench, std:ws, std:sync, std:math3d, std:gui3d, std:render3d, std:gpu, std:tensor, std:audio:spatial, std:spatial_audio",
             clean_name
         ))
         .at(span)),
@@ -4178,7 +4179,7 @@ fn actor_supervisor(
 }
 
 // -------------------------------------------------------------
-// std:actor:cluster, std:actor:gossip, std:gossip, std:raft, std:cluster:raft builtin functions
+// std:actor:cluster, std:actor:gossip, std:gossip, std:raft, std:cluster:raft, std:actor:mesh, std:cluster:mesh builtin functions
 // -------------------------------------------------------------
 
 fn parse_cluster_tls_from_val(
