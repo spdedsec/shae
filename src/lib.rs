@@ -38,6 +38,7 @@ pub mod math3d;
 pub mod render3d;
 pub mod gpu;
 pub mod audio_spatial;
+pub mod storage_wal;
 pub mod opcode;
 pub mod parser;
 pub mod physics;
