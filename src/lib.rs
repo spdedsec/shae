@@ -33,6 +33,7 @@ pub mod lsp;
 pub mod math;
 pub mod math3d;
 pub mod render3d;
+pub mod gpu;
 pub mod opcode;
 pub mod parser;
 pub mod physics;
