@@ -729,6 +729,28 @@ pub fn build_math3d_module() -> Value {
         name: "math3d.mat4_perspective".to_string(),
         func: shae_mat4_perspective,
     });
+    
+    // Ergonomic Matrix & Math Aliases
+    map.insert("look_at".to_string(), Value::Builtin {
+        name: "math3d.look_at".to_string(),
+        func: shae_mat4_look_at,
+    });
+    map.insert("perspective".to_string(), Value::Builtin {
+        name: "math3d.perspective".to_string(),
+        func: shae_mat4_perspective,
+    });
+    map.insert("translation".to_string(), Value::Builtin {
+        name: "math3d.translation".to_string(),
+        func: shae_mat4_translation,
+    });
+    map.insert("scaling".to_string(), Value::Builtin {
+        name: "math3d.scaling".to_string(),
+        func: shae_mat4_scaling,
+    });
+    map.insert("identity".to_string(), Value::Builtin {
+        name: "math3d.identity".to_string(),
+        func: shae_mat4_identity,
+    });
     map.insert("mat4_look_at".to_string(), Value::Builtin {
         name: "math3d.mat4_look_at".to_string(),
         func: shae_mat4_look_at,
