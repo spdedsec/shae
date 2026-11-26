@@ -40,6 +40,7 @@ pub mod gpu;
 pub mod audio_spatial;
 pub mod storage_wal;
 pub mod storage_lsm;
+pub mod storage_columnar;
 pub mod opcode;
 pub mod parser;
 pub mod physics;
