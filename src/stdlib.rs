@@ -80,8 +80,9 @@ pub fn load_std_module(name: &str, span: Span) -> Result<Value, RuntimeError> {
         "sync" => Ok(crate::sync::build_sync_module()),
         "web:http" => Ok(crate::web_http::build_web_http_module()),
         "http3" | "web:http3" => Ok(crate::web_http::build_http3_module()),
+        "vdom" | "web:vdom" => Ok(crate::web_vdom::build_vdom_module()),
         _ => Err(RuntimeError::new(format!(
-            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:actor:gossip, std:gossip, std:raft, std:cluster:raft, std:actor:mesh, std:cluster:mesh, std:async, std:buffer, std:gui, std:ui, std:audio, std:random, std:math, std:io, std:test, std:bench, std:ws, std:sync, std:math3d, std:gui3d, std:render3d, std:gpu, std:tensor, std:audio:spatial, std:spatial_audio, std:wal, std:db:wal, std:lsm, std:db:lsm, std:db, std:columnar, std:db:columnar, std:web:http, std:http3, std:web:http3",
+            "Unknown standard library module 'std:{}'. Available: std:fs, std:path, std:sys, std:time, std:crypto, std:codec, std:regex, std:http, std:env, std:cli, std:collections, std:ffi, std:csv, std:sqlite, std:unicode, std:actor, std:actor:cluster, std:actor:gossip, std:gossip, std:raft, std:cluster:raft, std:actor:mesh, std:cluster:mesh, std:async, std:buffer, std:gui, std:ui, std:audio, std:random, std:math, std:io, std:test, std:bench, std:ws, std:sync, std:math3d, std:gui3d, std:render3d, std:gpu, std:tensor, std:audio:spatial, std:spatial_audio, std:wal, std:db:wal, std:lsm, std:db:lsm, std:db, std:columnar, std:db:columnar, std:web:http, std:http3, std:web:http3, std:vdom, std:web:vdom",
             clean_name
         ))
         .at(span)),

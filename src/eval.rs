@@ -1610,6 +1610,17 @@ impl Evaluator {
                                         | "stats"
                                         | "close"
                                 ))
+                            || (map.contains_key("_vdom_signal_id")
+                                && matches!(property.as_str(), "get" | "set" | "update"))
+                            || (map.contains_key("_vdom_computed_id")
+                                && matches!(property.as_str(), "get"))
+                            || (map.contains_key("_vdom_effect_id")
+                                && matches!(property.as_str(), "dispose" | "stop" | "run_count" | "runCount"))
+                            || (map.contains_key("_vdom_app_id")
+                                && matches!(
+                                    property.as_str(),
+                                    "tree" | "html" | "patches" | "render" | "update" | "dispatch" | "render_count" | "renderCount" | "unmount" | "close"
+                                ))
                             || (map.contains_key("_is_set")
                                 && matches!(
                                     property.as_str(),
@@ -3331,6 +3342,18 @@ impl Evaluator {
                     }
                     (Value::Map(m), method) if m.read().unwrap().contains_key("_h3_client_id") => {
                         crate::web_http::eval_h3_client_method(self, &m, method, args, span)
+                    }
+                    (Value::Map(m), method) if m.read().unwrap().contains_key("_vdom_signal_id") => {
+                        crate::web_vdom::eval_vdom_signal_method(self, &m, method, args, span)
+                    }
+                    (Value::Map(m), method) if m.read().unwrap().contains_key("_vdom_computed_id") => {
+                        crate::web_vdom::eval_vdom_computed_method(self, &m, method, args, span)
+                    }
+                    (Value::Map(m), method) if m.read().unwrap().contains_key("_vdom_effect_id") => {
+                        crate::web_vdom::eval_vdom_effect_method(self, &m, method, args, span)
+                    }
+                    (Value::Map(m), method) if m.read().unwrap().contains_key("_vdom_app_id") => {
+                        crate::web_vdom::eval_vdom_app_method(self, &m, method, args, span)
                     }
                     (Value::Map(m), "keys") => {
                         if !args.is_empty() {

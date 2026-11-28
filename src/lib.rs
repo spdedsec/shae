@@ -64,6 +64,7 @@ pub mod value;
 pub mod vm;
 pub mod wasm;
 pub mod web_http;
+pub mod web_vdom;
 pub mod ws;
 
 use thiserror::Error;

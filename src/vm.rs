@@ -1045,6 +1045,17 @@ impl VM {
                         | "stats"
                         | "close"
                 ))
+            || (map.contains_key("_vdom_signal_id")
+                && matches!(property, "get" | "set" | "update"))
+            || (map.contains_key("_vdom_computed_id")
+                && matches!(property, "get"))
+            || (map.contains_key("_vdom_effect_id")
+                && matches!(property, "dispose" | "stop" | "run_count" | "runCount"))
+            || (map.contains_key("_vdom_app_id")
+                && matches!(
+                    property,
+                    "tree" | "html" | "patches" | "render" | "update" | "dispatch" | "render_count" | "renderCount" | "unmount" | "close"
+                ))
             || (map.contains_key("_is_set")
                 && matches!(
                     property,
@@ -2114,6 +2125,17 @@ impl VM {
                                             | "multiplex"
                                             | "stats"
                                             | "close"
+                                    ))
+                                || (map.contains_key("_vdom_signal_id")
+                                    && matches!(property.as_str(), "get" | "set" | "update"))
+                                || (map.contains_key("_vdom_computed_id")
+                                    && matches!(property.as_str(), "get"))
+                                || (map.contains_key("_vdom_effect_id")
+                                    && matches!(property.as_str(), "dispose" | "stop" | "run_count" | "runCount"))
+                                || (map.contains_key("_vdom_app_id")
+                                    && matches!(
+                                        property.as_str(),
+                                        "tree" | "html" | "patches" | "render" | "update" | "dispatch" | "render_count" | "renderCount" | "unmount" | "close"
                                     ))
                                 || (map.contains_key("_is_set")
                                     && matches!(
