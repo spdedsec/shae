@@ -150,3 +150,42 @@ fn test_vdom_mount_and_event_dispatch_dual_engine() {
     let r_vm = run_vm(script);
     assert!(r_vm.is_ok(), "VM mount test failed: {:?}", r_vm.err());
 }
+
+#[test]
+fn test_vdom_dynamic_branch_cleanup_and_attr_sanitization() {
+    let script = r#"
+        use { h, render_html, signal, effect } from "std:vdom";
+
+        let flag = signal(true);
+        let a = signal(1);
+        let b = signal(10);
+        let runs = [];
+
+        let eff = effect(fn() {
+            if flag.get() {
+                runs.push(a.get());
+            } else {
+                runs.push(b.get());
+            }
+        });
+
+        assert(runs.len == 1 && runs[0] == 1, "initial reads a");
+        flag.set(false);
+        assert(runs.len == 2 && runs[1] == 10, "switched to b");
+
+        // Writing stale dependency 'a' should NO LONGER re-trigger the effect
+        a.set(999);
+        assert(runs.len == 2, "stale dependency 'a' must be unsubscribed");
+
+        // Attribute names cannot inject brackets/spaces
+        let safe = render_html(h("div", { "data-id": "ok", "bad attr>": "x" }, []));
+        assert(safe == "<div data-id=\"ok\" badattr=\"x\"></div>", "attr sanitized: " + safe);
+        eff.dispose();
+    "#;
+
+    let r_ast = run(script);
+    assert!(r_ast.is_ok(), "AST dynamic branch test failed: {:?}", r_ast.err());
+
+    let r_vm = run_vm(script);
+    assert!(r_vm.is_ok(), "VM dynamic branch test failed: {:?}", r_vm.err());
+}

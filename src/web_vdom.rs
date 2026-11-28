@@ -138,13 +138,17 @@ pub fn render_vnode_to_buf(node: &VNode, out: &mut String) {
                 if v == "__false__" {
                     continue;
                 }
-                let attr_name = if k == "className" { "class" } else { k.as_str() };
+                let raw_name = if k == "className" { "class" } else { k.as_str() };
+                let attr_name = sanitize_attr_name(raw_name);
+                if attr_name.is_empty() {
+                    continue;
+                }
                 if v == "__true__" {
                     out.push(' ');
-                    out.push_str(attr_name);
+                    out.push_str(&attr_name);
                 } else {
                     out.push(' ');
-                    out.push_str(attr_name);
+                    out.push_str(&attr_name);
                     out.push_str("=\"");
                     out.push_str(&escape_html_attr(v));
                     out.push('"');
@@ -171,6 +175,12 @@ pub fn render_vnode_to_buf(node: &VNode, out: &mut String) {
             }
         }
     }
+}
+
+fn sanitize_attr_name(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == ':' || *c == '.')
+        .collect()
 }
 
 fn sanitize_tag_name(tag: &str) -> String {
@@ -1005,7 +1015,15 @@ pub fn computed_get(ev: &mut Evaluator, id: u64, span: Span) -> Result<Value, Ru
             }
         }
         comp.computing = true;
-        comp.deps.clear();
+        let prev_deps = std::mem::take(&mut comp.deps);
+        for dep_id in prev_deps {
+            if let Some(sig) = st.signals.get_mut(&dep_id) {
+                sig.subscribers.retain(|x| *x != SubscriberKind::Computed(id));
+            } else if let Some(c) = st.computeds.get_mut(&dep_id) {
+                c.subscribers.retain(|x| *x != SubscriberKind::Computed(id));
+            }
+        }
+        let comp = st.computeds.get_mut(&id).unwrap();
         comp.fn_val.clone()
     };
 
@@ -1045,13 +1063,22 @@ pub fn effect_create(ev: &mut Evaluator, fn_val: Value, span: Span) -> Result<u6
 fn run_effect(ev: &mut Evaluator, id: u64, span: Span) -> Result<(), RuntimeError> {
     let fn_val = {
         let mut st = store().lock().unwrap();
-        let eff = match st.effects.get_mut(&id) {
-            Some(e) if e.active => e,
-            _ => return Ok(()),
+        let (prev_deps, fn_val) = {
+            let eff = match st.effects.get_mut(&id) {
+                Some(e) if e.active => e,
+                _ => return Ok(()),
+            };
+            eff.run_count += 1;
+            (std::mem::take(&mut eff.deps), eff.fn_val.clone())
         };
-        eff.deps.clear();
-        eff.run_count += 1;
-        eff.fn_val.clone()
+        for dep_id in prev_deps {
+            if let Some(sig) = st.signals.get_mut(&dep_id) {
+                sig.subscribers.retain(|x| *x != SubscriberKind::Effect(id));
+            } else if let Some(c) = st.computeds.get_mut(&dep_id) {
+                c.subscribers.retain(|x| *x != SubscriberKind::Effect(id));
+            }
+        }
+        fn_val
     };
 
     push_tracker(SubscriberKind::Effect(id));
