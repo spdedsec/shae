@@ -63,6 +63,7 @@ pub mod unicode;
 pub mod value;
 pub mod vm;
 pub mod wasm;
+pub mod web_http;
 pub mod ws;
 
 use thiserror::Error;

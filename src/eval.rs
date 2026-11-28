@@ -1526,6 +1526,90 @@ impl Evaluator {
                                     property.as_str(),
                                     "accept" | "close" | "port" | "local_addr" | "localAddr"
                                 ))
+                            || (map.contains_key("_http_server_id")
+                                && matches!(
+                                    property.as_str(),
+                                    "get"
+                                        | "post"
+                                        | "put"
+                                        | "delete"
+                                        | "patch"
+                                        | "head"
+                                        | "options"
+                                        | "any"
+                                        | "route"
+                                        | "listen"
+                                        | "start"
+                                        | "serve"
+                                        | "stop"
+                                        | "close"
+                                        | "stats"
+                                        | "is_running"
+                                        | "isRunning"
+                                ))
+                            || (map.contains_key("_http_pool_id")
+                                && matches!(
+                                    property.as_str(),
+                                    "request"
+                                        | "get"
+                                        | "post"
+                                        | "put"
+                                        | "delete"
+                                        | "patch"
+                                        | "head"
+                                        | "options"
+                                        | "pipeline"
+                                        | "stats"
+                                        | "close"
+                                        | "clear"
+                                ))
+                            || (map.contains_key("_h2_conn_id")
+                                && matches!(
+                                    property.as_str(),
+                                    "request"
+                                        | "get"
+                                        | "post"
+                                        | "put"
+                                        | "delete"
+                                        | "head"
+                                        | "multiplex"
+                                        | "ping"
+                                        | "window_update"
+                                        | "windowUpdate"
+                                        | "goaway"
+                                        | "rst_stream"
+                                        | "rstStream"
+                                        | "stats"
+                                        | "close"
+                                ))
+                            || (map.contains_key("_h3_server_id")
+                                && matches!(
+                                    property.as_str(),
+                                    "get"
+                                        | "post"
+                                        | "put"
+                                        | "delete"
+                                        | "route"
+                                        | "listen"
+                                        | "start"
+                                        | "serve"
+                                        | "stop"
+                                        | "close"
+                                        | "stats"
+                                ))
+                            || (map.contains_key("_h3_client_id")
+                                && matches!(
+                                    property.as_str(),
+                                    "request"
+                                        | "get"
+                                        | "post"
+                                        | "put"
+                                        | "delete"
+                                        | "head"
+                                        | "multiplex"
+                                        | "stats"
+                                        | "close"
+                                ))
                             || (map.contains_key("_is_set")
                                 && matches!(
                                     property.as_str(),
@@ -3232,6 +3316,21 @@ impl Evaluator {
                         } else {
                             Ok(Value::Null)
                         }
+                    }
+                    (Value::Map(m), method) if m.read().unwrap().contains_key("_http_server_id") => {
+                        crate::web_http::eval_http_server_method(self, &m, method, args, span)
+                    }
+                    (Value::Map(m), method) if m.read().unwrap().contains_key("_http_pool_id") => {
+                        crate::web_http::eval_http_pool_method(self, &m, method, args, span)
+                    }
+                    (Value::Map(m), method) if m.read().unwrap().contains_key("_h2_conn_id") => {
+                        crate::web_http::eval_h2_conn_method(self, &m, method, args, span)
+                    }
+                    (Value::Map(m), method) if m.read().unwrap().contains_key("_h3_server_id") => {
+                        crate::web_http::eval_h3_server_method(self, &m, method, args, span)
+                    }
+                    (Value::Map(m), method) if m.read().unwrap().contains_key("_h3_client_id") => {
+                        crate::web_http::eval_h3_client_method(self, &m, method, args, span)
                     }
                     (Value::Map(m), "keys") => {
                         if !args.is_empty() {

@@ -573,6 +573,15 @@ impl VM {
     }
 
     fn close_upvalues_in_value(&mut self, val: &Value) {
+        let mut visited_gc = std::collections::HashSet::new();
+        self.close_upvalues_in_value_inner(val, &mut visited_gc);
+    }
+
+    fn close_upvalues_in_value_inner(
+        &mut self,
+        val: &Value,
+        visited_gc: &mut std::collections::HashSet<usize>,
+    ) {
         match val {
             Value::Closure(c) => {
                 for uv in &c.upvalues {
@@ -590,40 +599,466 @@ impl VM {
                     };
                     drop(guard);
                     if let Some(v) = captured {
-                        self.close_upvalues_in_value(&v);
+                        self.close_upvalues_in_value_inner(&v, visited_gc);
+                    }
+                }
+            }
+            Value::GcClosure(r) => {
+                if !visited_gc.insert(r.0) {
+                    return;
+                }
+                let upvalues = match self.heap.get(*r) {
+                    Some(crate::gc::GcData::Closure(c)) => c.upvalues.clone(),
+                    _ => Vec::new(),
+                };
+                for uv in &upvalues {
+                    let mut guard = uv.write().unwrap();
+                    let captured = if let UpvalueLocation::Open(slot) = guard.location {
+                        if slot < self.stack.len() {
+                            let v = self.stack[slot].clone();
+                            guard.location = UpvalueLocation::Closed(v.clone());
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    drop(guard);
+                    if let Some(v) = captured {
+                        self.close_upvalues_in_value_inner(&v, visited_gc);
                     }
                 }
             }
             Value::Array(arr) => {
                 let items = arr.read().unwrap().clone();
                 for item in &items {
-                    self.close_upvalues_in_value(item);
+                    self.close_upvalues_in_value_inner(item, visited_gc);
+                }
+            }
+            Value::GcArray(r) => {
+                if !visited_gc.insert(r.0) {
+                    return;
+                }
+                let items = self.heap.as_array(*r).cloned().unwrap_or_default();
+                for item in &items {
+                    self.close_upvalues_in_value_inner(item, visited_gc);
                 }
             }
             Value::Map(map) => {
                 let values: Vec<Value> = map.read().unwrap().values().cloned().collect();
                 for item in &values {
-                    self.close_upvalues_in_value(item);
+                    self.close_upvalues_in_value_inner(item, visited_gc);
+                }
+            }
+            Value::GcMap(r) => {
+                if !visited_gc.insert(r.0) {
+                    return;
+                }
+                let values: Vec<Value> = self
+                    .heap
+                    .as_map(*r)
+                    .map(|m| m.values().cloned().collect())
+                    .unwrap_or_default();
+                for item in &values {
+                    self.close_upvalues_in_value_inner(item, visited_gc);
                 }
             }
             Value::StructInstance { fields, .. } => {
                 let values: Vec<Value> = fields.read().unwrap().values().cloned().collect();
                 for item in &values {
-                    self.close_upvalues_in_value(item);
+                    self.close_upvalues_in_value_inner(item, visited_gc);
+                }
+            }
+            Value::GcInstance(r) => {
+                if !visited_gc.insert(r.0) {
+                    return;
+                }
+                let values: Vec<Value> = match self.heap.get(*r) {
+                    Some(crate::gc::GcData::Instance { fields, .. }) => {
+                        fields.values().cloned().collect()
+                    }
+                    _ => Vec::new(),
+                };
+                for item in &values {
+                    self.close_upvalues_in_value_inner(item, visited_gc);
                 }
             }
             Value::BoundMethod { object, .. } => {
                 let rec = object.as_ref().clone();
-                self.close_upvalues_in_value(&rec);
+                self.close_upvalues_in_value_inner(&rec, visited_gc);
             }
             Value::EnumInstance { values, .. } => {
                 let vals = values.clone();
                 for item in &vals {
-                    self.close_upvalues_in_value(item);
+                    self.close_upvalues_in_value_inner(item, visited_gc);
                 }
             }
             _ => {}
         }
+    }
+
+    fn value_contains_gc(
+        &self,
+        val: &Value,
+        visited_arcs: &mut std::collections::HashSet<usize>,
+    ) -> bool {
+        match val {
+            Value::GcArray(_)
+            | Value::GcMap(_)
+            | Value::GcClosure(_)
+            | Value::GcString(_)
+            | Value::GcInstance(_) => true,
+            Value::Array(arr) => {
+                let ptr = Arc::as_ptr(arr) as usize;
+                if !visited_arcs.insert(ptr) {
+                    return false;
+                }
+                let guard = arr.read().unwrap();
+                guard.iter().any(|v| self.value_contains_gc(v, visited_arcs))
+            }
+            Value::Map(m) => {
+                let ptr = Arc::as_ptr(m) as usize;
+                if !visited_arcs.insert(ptr) {
+                    return false;
+                }
+                let guard = m.read().unwrap();
+                guard.values().any(|v| self.value_contains_gc(v, visited_arcs))
+            }
+            Value::BoundMethod { object, .. } => self.value_contains_gc(object, visited_arcs),
+            Value::StructInstance { fields, .. } => {
+                let ptr = Arc::as_ptr(fields) as usize;
+                if !visited_arcs.insert(ptr) {
+                    return false;
+                }
+                let guard = fields.read().unwrap();
+                guard.values().any(|v| self.value_contains_gc(v, visited_arcs))
+            }
+            Value::EnumInstance { values, .. } => {
+                values.iter().any(|v| self.value_contains_gc(v, visited_arcs))
+            }
+            _ => false,
+        }
+    }
+
+    fn materialize_gc_value(&self, val: &Value) -> Value {
+        let mut visited_check = std::collections::HashSet::new();
+        if !self.value_contains_gc(val, &mut visited_check) {
+            return val.clone();
+        }
+        let mut visited_gc = std::collections::HashMap::new();
+        let mut visited_arcs = std::collections::HashMap::new();
+        self.materialize_gc_value_inner(val, &mut visited_gc, &mut visited_arcs)
+    }
+
+    fn materialize_gc_value_inner(
+        &self,
+        val: &Value,
+        visited_gc: &mut std::collections::HashMap<usize, Value>,
+        visited_arcs: &mut std::collections::HashMap<usize, Value>,
+    ) -> Value {
+        match val {
+            Value::GcString(r) => self
+                .heap
+                .as_string(*r)
+                .map(|s| Value::String(s.to_string()))
+                .unwrap_or_else(|| val.clone()),
+            Value::GcClosure(r) => {
+                if let Some(existing) = visited_gc.get(&r.0) {
+                    return existing.clone();
+                }
+                if let Some(crate::gc::GcData::Closure(c)) = self.heap.get(*r) {
+                    let v = Value::Closure(Arc::new(c.clone()));
+                    visited_gc.insert(r.0, v.clone());
+                    v
+                } else {
+                    val.clone()
+                }
+            }
+            Value::GcArray(r) => {
+                if let Some(existing) = visited_gc.get(&r.0) {
+                    return existing.clone();
+                }
+                let arc = Arc::new(RwLock::new(Vec::new()));
+                let out = Value::Array(arc.clone());
+                visited_gc.insert(r.0, out.clone());
+                if let Some(items) = self.heap.as_array(*r) {
+                    let mat: Vec<Value> = items
+                        .iter()
+                        .map(|v| self.materialize_gc_value_inner(v, visited_gc, visited_arcs))
+                        .collect();
+                    *arc.write().unwrap() = mat;
+                }
+                out
+            }
+            Value::GcMap(r) => {
+                if let Some(existing) = visited_gc.get(&r.0) {
+                    return existing.clone();
+                }
+                let arc = Arc::new(RwLock::new(indexmap::IndexMap::new()));
+                let out = Value::Map(arc.clone());
+                visited_gc.insert(r.0, out.clone());
+                if let Some(m) = self.heap.as_map(*r) {
+                    let mat: indexmap::IndexMap<String, Value> = m
+                        .iter()
+                        .map(|(k, v)| {
+                            (
+                                k.clone(),
+                                self.materialize_gc_value_inner(v, visited_gc, visited_arcs),
+                            )
+                        })
+                        .collect();
+                    *arc.write().unwrap() = mat;
+                }
+                out
+            }
+            Value::GcInstance(r) => {
+                if let Some(existing) = visited_gc.get(&r.0) {
+                    return existing.clone();
+                }
+                if let Some(crate::gc::GcData::Instance { name, fields }) = self.heap.get(*r) {
+                    let arc = Arc::new(RwLock::new(indexmap::IndexMap::new()));
+                    let out = Value::StructInstance {
+                        name: name.clone(),
+                        fields: arc.clone(),
+                    };
+                    visited_gc.insert(r.0, out.clone());
+                    let mat: indexmap::IndexMap<String, Value> = fields
+                        .iter()
+                        .map(|(k, v)| {
+                            (
+                                k.clone(),
+                                self.materialize_gc_value_inner(v, visited_gc, visited_arcs),
+                            )
+                        })
+                        .collect();
+                    *arc.write().unwrap() = mat;
+                    out
+                } else {
+                    val.clone()
+                }
+            }
+            Value::Array(arr) => {
+                let ptr = Arc::as_ptr(arr) as usize;
+                if let Some(existing) = visited_arcs.get(&ptr) {
+                    return existing.clone();
+                }
+                let arc = Arc::new(RwLock::new(Vec::new()));
+                let out = Value::Array(arc.clone());
+                visited_arcs.insert(ptr, out.clone());
+                let items = arr.read().unwrap().clone();
+                let mat: Vec<Value> = items
+                    .iter()
+                    .map(|v| self.materialize_gc_value_inner(v, visited_gc, visited_arcs))
+                    .collect();
+                *arc.write().unwrap() = mat;
+                out
+            }
+            Value::Map(m) => {
+                let ptr = Arc::as_ptr(m) as usize;
+                if let Some(existing) = visited_arcs.get(&ptr) {
+                    return existing.clone();
+                }
+                let arc = Arc::new(RwLock::new(indexmap::IndexMap::new()));
+                let out = Value::Map(arc.clone());
+                visited_arcs.insert(ptr, out.clone());
+                let entries: Vec<(String, Value)> = m
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                let mat: indexmap::IndexMap<String, Value> = entries
+                    .into_iter()
+                    .map(|(k, v)| {
+                        (
+                            k,
+                            self.materialize_gc_value_inner(&v, visited_gc, visited_arcs),
+                        )
+                    })
+                    .collect();
+                *arc.write().unwrap() = mat;
+                out
+            }
+            Value::BoundMethod { object, method } => Value::BoundMethod {
+                object: Box::new(self.materialize_gc_value_inner(
+                    object,
+                    visited_gc,
+                    visited_arcs,
+                )),
+                method: method.clone(),
+            },
+            Value::StructInstance { name, fields } => {
+                let ptr = Arc::as_ptr(fields) as usize;
+                if let Some(existing) = visited_arcs.get(&ptr) {
+                    return existing.clone();
+                }
+                let arc = Arc::new(RwLock::new(indexmap::IndexMap::new()));
+                let out = Value::StructInstance {
+                    name: name.clone(),
+                    fields: arc.clone(),
+                };
+                visited_arcs.insert(ptr, out.clone());
+                let entries: Vec<(String, Value)> = fields
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                let mat: indexmap::IndexMap<String, Value> = entries
+                    .into_iter()
+                    .map(|(k, v)| {
+                        (
+                            k,
+                            self.materialize_gc_value_inner(&v, visited_gc, visited_arcs),
+                        )
+                    })
+                    .collect();
+                *arc.write().unwrap() = mat;
+                out
+            }
+            Value::EnumInstance {
+                enum_name,
+                variant_name,
+                values,
+            } => Value::EnumInstance {
+                enum_name: enum_name.clone(),
+                variant_name: variant_name.clone(),
+                values: values
+                    .iter()
+                    .map(|v| self.materialize_gc_value_inner(v, visited_gc, visited_arcs))
+                    .collect(),
+            },
+            _ => val.clone(),
+        }
+    }
+
+    fn is_map_bound_method(map: &indexmap::IndexMap<String, Value>, property: &str) -> bool {
+        matches!(
+            property,
+            "keys" | "values" | "has" | "contains" | "get" | "delete"
+        ) || (map.contains_key("_sqlite_handle")
+            && matches!(
+                property,
+                "execute" | "query" | "close" | "changes" | "last_insert_id"
+            ))
+            || (map.contains_key("_ws_conn_id")
+                && matches!(
+                    property,
+                    "send"
+                        | "send_binary"
+                        | "sendBinary"
+                        | "recv"
+                        | "ping"
+                        | "close"
+                        | "is_open"
+                        | "isOpen"
+                        | "channel"
+                        | "events"
+                ))
+            || (map.contains_key("_ws_server_id")
+                && matches!(
+                    property,
+                    "accept" | "close" | "port" | "local_addr" | "localAddr"
+                ))
+            || (map.contains_key("_http_server_id")
+                && matches!(
+                    property,
+                    "get"
+                        | "post"
+                        | "put"
+                        | "delete"
+                        | "patch"
+                        | "head"
+                        | "options"
+                        | "any"
+                        | "route"
+                        | "listen"
+                        | "start"
+                        | "serve"
+                        | "stop"
+                        | "close"
+                        | "stats"
+                        | "is_running"
+                        | "isRunning"
+                ))
+            || (map.contains_key("_http_pool_id")
+                && matches!(
+                    property,
+                    "request"
+                        | "get"
+                        | "post"
+                        | "put"
+                        | "delete"
+                        | "patch"
+                        | "head"
+                        | "options"
+                        | "pipeline"
+                        | "stats"
+                        | "close"
+                        | "clear"
+                ))
+            || (map.contains_key("_h2_conn_id")
+                && matches!(
+                    property,
+                    "request"
+                        | "get"
+                        | "post"
+                        | "put"
+                        | "delete"
+                        | "head"
+                        | "multiplex"
+                        | "ping"
+                        | "window_update"
+                        | "windowUpdate"
+                        | "goaway"
+                        | "rst_stream"
+                        | "rstStream"
+                        | "stats"
+                        | "close"
+                ))
+            || (map.contains_key("_h3_server_id")
+                && matches!(
+                    property,
+                    "get"
+                        | "post"
+                        | "put"
+                        | "delete"
+                        | "route"
+                        | "listen"
+                        | "start"
+                        | "serve"
+                        | "stop"
+                        | "close"
+                        | "stats"
+                ))
+            || (map.contains_key("_h3_client_id")
+                && matches!(
+                    property,
+                    "request"
+                        | "get"
+                        | "post"
+                        | "put"
+                        | "delete"
+                        | "head"
+                        | "multiplex"
+                        | "stats"
+                        | "close"
+                ))
+            || (map.contains_key("_is_set")
+                && matches!(
+                    property,
+                    "add"
+                        | "has"
+                        | "contains"
+                        | "delete"
+                        | "size"
+                        | "to_array"
+                        | "clear"
+                        | "union"
+                        | "intersect"
+                        | "difference"
+                ))
     }
 
     fn handle_runtime_error(&mut self, msg: String) -> Option<InterpretResult> {
@@ -1596,6 +2031,90 @@ impl VM {
                                         property.as_str(),
                                         "accept" | "close" | "port" | "local_addr" | "localAddr"
                                     ))
+                                || (map.contains_key("_http_server_id")
+                                    && matches!(
+                                        property.as_str(),
+                                        "get"
+                                            | "post"
+                                            | "put"
+                                            | "delete"
+                                            | "patch"
+                                            | "head"
+                                            | "options"
+                                            | "any"
+                                            | "route"
+                                            | "listen"
+                                            | "start"
+                                            | "serve"
+                                            | "stop"
+                                            | "close"
+                                            | "stats"
+                                            | "is_running"
+                                            | "isRunning"
+                                    ))
+                                || (map.contains_key("_http_pool_id")
+                                    && matches!(
+                                        property.as_str(),
+                                        "request"
+                                            | "get"
+                                            | "post"
+                                            | "put"
+                                            | "delete"
+                                            | "patch"
+                                            | "head"
+                                            | "options"
+                                            | "pipeline"
+                                            | "stats"
+                                            | "close"
+                                            | "clear"
+                                    ))
+                                || (map.contains_key("_h2_conn_id")
+                                    && matches!(
+                                        property.as_str(),
+                                        "request"
+                                            | "get"
+                                            | "post"
+                                            | "put"
+                                            | "delete"
+                                            | "head"
+                                            | "multiplex"
+                                            | "ping"
+                                            | "window_update"
+                                            | "windowUpdate"
+                                            | "goaway"
+                                            | "rst_stream"
+                                            | "rstStream"
+                                            | "stats"
+                                            | "close"
+                                    ))
+                                || (map.contains_key("_h3_server_id")
+                                    && matches!(
+                                        property.as_str(),
+                                        "get"
+                                            | "post"
+                                            | "put"
+                                            | "delete"
+                                            | "route"
+                                            | "listen"
+                                            | "start"
+                                            | "serve"
+                                            | "stop"
+                                            | "close"
+                                            | "stats"
+                                    ))
+                                || (map.contains_key("_h3_client_id")
+                                    && matches!(
+                                        property.as_str(),
+                                        "request"
+                                            | "get"
+                                            | "post"
+                                            | "put"
+                                            | "delete"
+                                            | "head"
+                                            | "multiplex"
+                                            | "stats"
+                                            | "close"
+                                    ))
                                 || (map.contains_key("_is_set")
                                     && matches!(
                                         property.as_str(),
@@ -1625,16 +2144,40 @@ impl VM {
                             }
                         }
                         Value::GcMap(r) => {
-                            let val = self.heap.as_map(r).and_then(|m| m.get(&property).cloned());
-                            if let Some(v) = val {
-                                self.stack.push(v);
-                            } else if is_safe {
-                                self.stack.push(Value::Null);
-                            } else {
-                                runtime_error!(
-                                    self,
-                                    format!("Property '{}' not found in map", property)
-                                );
+                            enum GcMapProp {
+                                Found(Value),
+                                Len(usize),
+                                Bound,
+                                Missing,
+                            }
+                            let res = match self.heap.as_map(r) {
+                                Some(m) => {
+                                    if let Some(v) = m.get(&property) {
+                                        GcMapProp::Found(v.clone())
+                                    } else if property == "len" {
+                                        GcMapProp::Len(m.len())
+                                    } else if Self::is_map_bound_method(m, &property) {
+                                        GcMapProp::Bound
+                                    } else {
+                                        GcMapProp::Missing
+                                    }
+                                }
+                                None => GcMapProp::Missing,
+                            };
+                            match res {
+                                GcMapProp::Found(v) => self.stack.push(v),
+                                GcMapProp::Len(n) => self.stack.push(Value::Int(n as i64)),
+                                GcMapProp::Bound => self.stack.push(Value::BoundMethod {
+                                    object: Box::new(target.clone()),
+                                    method: property,
+                                }),
+                                GcMapProp::Missing if is_safe => self.stack.push(Value::Null),
+                                GcMapProp::Missing => {
+                                    runtime_error!(
+                                        self,
+                                        format!("Property '{}' not found in map", property)
+                                    );
+                                }
                             }
                         }
                         Value::StructInstance {
@@ -2874,6 +3417,10 @@ impl VM {
                                     _ => {}
                                 }
                             }
+                            let args: Vec<Value> = args
+                                .iter()
+                                .map(|a| self.materialize_gc_value(a))
+                                .collect();
                             let mut evaluator = crate::eval::Evaluator::new();
                             evaluator.current_file = self.current_file.clone();
                             for (k, v) in &self.globals {
@@ -2900,6 +3447,11 @@ impl VM {
                             self.open_upvalues.retain(|uv| {
                                 matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
                             });
+                            let callee = self.materialize_gc_value(&callee);
+                            let args: Vec<Value> = args
+                                .iter()
+                                .map(|a| self.materialize_gc_value(a))
+                                .collect();
                             let mut evaluator = crate::eval::Evaluator::new();
                             evaluator.current_file = self.current_file.clone();
                             for (k, v) in &self.globals {
@@ -3315,6 +3867,10 @@ impl VM {
                                     continue;
                                 }
                             }
+                            let args: Vec<Value> = args
+                                .iter()
+                                .map(|a| self.materialize_gc_value(a))
+                                .collect();
                             let mut evaluator = crate::eval::Evaluator::new();
                             evaluator.current_file = self.current_file.clone();
                             for (k, v) in &self.globals {
@@ -3353,6 +3909,11 @@ impl VM {
                             self.open_upvalues.retain(|uv| {
                                 matches!(uv.read().unwrap().location, UpvalueLocation::Open(_))
                             });
+                            let callee = self.materialize_gc_value(&callee);
+                            let args: Vec<Value> = args
+                                .iter()
+                                .map(|a| self.materialize_gc_value(a))
+                                .collect();
                             let mut evaluator = crate::eval::Evaluator::new();
                             evaluator.current_file = self.current_file.clone();
                             for (k, v) in &self.globals {

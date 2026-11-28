@@ -22,8 +22,15 @@ impl ThreadPool {
             let handle = thread::Builder::new()
                 .name("shae-worker".to_string())
                 .spawn(move || {
-                    while let Ok(job) = rx.lock().unwrap().recv() {
-                        job();
+                    loop {
+                        let job = {
+                            let guard = rx.lock().unwrap();
+                            guard.recv()
+                        };
+                        match job {
+                            Ok(job) => job(),
+                            Err(_) => break,
+                        }
                     }
                 })
                 .expect("Failed to spawn worker thread");
