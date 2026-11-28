@@ -1056,6 +1056,8 @@ impl VM {
                     property,
                     "tree" | "html" | "patches" | "render" | "update" | "dispatch" | "render_count" | "renderCount" | "unmount" | "close"
                 ))
+            || (map.contains_key("_ssr_template_id")
+                && matches!(property, "render"))
             || (map.contains_key("_is_set")
                 && matches!(
                     property,
@@ -2137,6 +2139,8 @@ impl VM {
                                         property.as_str(),
                                         "tree" | "html" | "patches" | "render" | "update" | "dispatch" | "render_count" | "renderCount" | "unmount" | "close"
                                     ))
+                                || (map.contains_key("_ssr_template_id")
+                                    && matches!(property.as_str(), "render"))
                                 || (map.contains_key("_is_set")
                                     && matches!(
                                         property.as_str(),

@@ -177,13 +177,13 @@ pub fn render_vnode_to_buf(node: &VNode, out: &mut String) {
     }
 }
 
-fn sanitize_attr_name(name: &str) -> String {
+pub fn sanitize_attr_name(name: &str) -> String {
     name.chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == ':' || *c == '.')
         .collect()
 }
 
-fn sanitize_tag_name(tag: &str) -> String {
+pub fn sanitize_tag_name(tag: &str) -> String {
     let mut s: String = tag
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')

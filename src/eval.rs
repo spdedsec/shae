@@ -1621,6 +1621,8 @@ impl Evaluator {
                                     property.as_str(),
                                     "tree" | "html" | "patches" | "render" | "update" | "dispatch" | "render_count" | "renderCount" | "unmount" | "close"
                                 ))
+                            || (map.contains_key("_ssr_template_id")
+                                && matches!(property.as_str(), "render"))
                             || (map.contains_key("_is_set")
                                 && matches!(
                                     property.as_str(),
@@ -3354,6 +3356,9 @@ impl Evaluator {
                     }
                     (Value::Map(m), method) if m.read().unwrap().contains_key("_vdom_app_id") => {
                         crate::web_vdom::eval_vdom_app_method(self, &m, method, args, span)
+                    }
+                    (Value::Map(m), method) if m.read().unwrap().contains_key("_ssr_template_id") => {
+                        crate::web_ssr::eval_ssr_template_method(self, &m, method, args, span)
                     }
                     (Value::Map(m), "keys") => {
                         if !args.is_empty() {

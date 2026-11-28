@@ -65,6 +65,7 @@ pub mod vm;
 pub mod wasm;
 pub mod web_http;
 pub mod web_vdom;
+pub mod web_ssr;
 pub mod ws;
 
 use thiserror::Error;
